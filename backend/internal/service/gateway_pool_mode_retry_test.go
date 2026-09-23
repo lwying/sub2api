@@ -54,6 +54,7 @@ func TestGatewayCompatPoolMode429AllowsSameAccountRetry(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodPost, tt.path, nil)
+			before := RequestAuditHTTPAttemptCount(c)
 			account := &Account{
 				ID:       1,
 				Name:     "pool-account",
@@ -72,6 +73,7 @@ func TestGatewayCompatPoolMode429AllowsSameAccountRetry(t *testing.T) {
 			require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 			require.True(t, failoverErr.RetryableOnSameAccount)
 			require.Equal(t, 1, upstream.callCount)
+			require.Equal(t, before+1, RequestAuditHTTPAttemptCount(c))
 			require.Empty(t, recorder.Body.String())
 		})
 	}

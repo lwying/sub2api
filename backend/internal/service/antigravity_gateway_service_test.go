@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -153,6 +154,11 @@ type queuedHTTPUpstreamStub struct {
 }
 
 func (s *queuedHTTPUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	if req != nil {
+		if err := httpattempt.Before(req.Context()); err != nil {
+			return nil, err
+		}
+	}
 	if req != nil && req.Body != nil {
 		body, _ := io.ReadAll(req.Body)
 		s.requestBodies = append(s.requestBodies, body)
@@ -163,6 +169,9 @@ func (s *queuedHTTPUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int)
 
 	idx := s.callCount
 	s.callCount++
+	if req != nil {
+		httpattempt.Increment(req.Context())
+	}
 	if s.onCall != nil {
 		s.onCall(req, s)
 	}

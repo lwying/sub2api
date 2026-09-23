@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -165,6 +166,124 @@ func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	require.Equal(t, 30, result.usage.CacheReadInputTokens)
 }
 
+func TestHandleStreamingResponse_CapturesEventSkeletonsWithoutDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
+
+	delta := `{"type":"content_block_delta","delta":{"type":"text_delta","text":"secret delta"}}`
+	start := `{"type":"message_start","message":{"usage":{"input_tokens":10}}}`
+	stop := `{"type":"message_stop"}`
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("event: message_start\ndata: " + start + "\n\n"))
+		_, _ = pw.Write([]byte("event: content_block_delta\ndata: " + delta + "\n\n"))
+		_, _ = pw.Write([]byte("event: message_stop\ndata: " + stop + "\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+	}()
+
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	_ = pr.Close()
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.GreaterOrEqual(t, len(result.sseEvents), 3)
+	require.Equal(t, "message_start", result.sseEvents[0].Type)
+	require.Equal(t, len(start), result.sseEvents[0].Bytes)
+	require.Nil(t, result.sseEvents[0].Data)
+	require.Equal(t, "content_block_delta", result.sseEvents[1].Type)
+	require.Equal(t, len(delta), result.sseEvents[1].Bytes)
+	require.Nil(t, result.sseEvents[1].Data)
+	require.Equal(t, "message_stop", result.sseEvents[2].Type)
+	for _, ev := range result.sseEvents {
+		require.Nil(t, ev.Data)
+		require.NotContains(t, ev.Type, "secret")
+	}
+}
+
+func TestHandleStreamingResponse_AuditUsesLastRepeatedEventField(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("event: message_start\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}()
+
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	_ = pr.Close()
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.sseEvents, 1)
+	require.Equal(t, "message_stop", result.sseEvents[0].Type)
+	require.Contains(t, rec.Body.String(), "event: message_stop\n")
+}
+
+func TestAppendRequestAuditSSEEventCapsEventsAndStopsFingerprinting(t *testing.T) {
+	fingerprinter, err := NewRequestAuditFingerprinter(strings.Repeat("k", 32))
+	require.NoError(t, err)
+	fp, err := fingerprinter.BeginForUser(1)
+	require.NoError(t, err)
+	ctx := WithRequestAuditFingerprint(context.Background(), fp)
+
+	var events []RequestAuditSSEEvent
+	for range requestAuditMaxSSEEvents + 5 {
+		events = appendRequestAuditSSEEvent(ctx, events, "message_delta", "x")
+	}
+
+	require.Len(t, events, requestAuditMaxSSEEvents, "truncation marker counts toward the total event cap")
+	marker := events[len(events)-1]
+	require.Equal(t, "truncated", marker.Type)
+	require.NotNil(t, marker.auditSummary)
+	require.Equal(t, requestAuditMaxSSEEvents+5, marker.auditSummary.Original)
+	require.Equal(t, requestAuditMaxSSEEvents+5, marker.auditSummary.OriginalBytes)
+	require.Equal(t, requestAuditMaxSSEEvents-1, marker.auditSummary.Kept)
+	require.Equal(t, 6, marker.auditSummary.Dropped)
+	require.Equal(t, "max_events", marker.auditSummary.Reason)
+	require.Len(t, fp.Events, marker.auditSummary.Kept, "discarded events must not be fingerprinted")
+
+	events = appendRequestAuditSSEEvent(ctx, events, "message_delta", "x")
+	require.Len(t, events, requestAuditMaxSSEEvents)
+	require.Equal(t, requestAuditMaxSSEEvents+6, events[len(events)-1].auditSummary.Original)
+	require.Equal(t, 7, events[len(events)-1].auditSummary.Dropped)
+	require.Len(t, fp.Events, marker.auditSummary.Kept, "later discarded events must not grow the fingerprint map")
+}
+
+func TestAppendRequestAuditSSEEventCapsSkeletonJSONBytes(t *testing.T) {
+	fingerprinter, err := NewRequestAuditFingerprinter(strings.Repeat("k", 32))
+	require.NoError(t, err)
+	fp, err := fingerprinter.BeginForUser(1)
+	require.NoError(t, err)
+	ctx := WithRequestAuditFingerprint(context.Background(), fp)
+
+	var events []RequestAuditSSEEvent
+	for range requestAuditMaxSSEEvents {
+		events = appendRequestAuditSSEEvent(ctx, events, "response.function_call_arguments.delta", "x")
+	}
+
+	require.LessOrEqual(t, len(events), requestAuditMaxSSEEvents)
+	require.NotEmpty(t, events)
+	marker := events[len(events)-1]
+	require.Equal(t, "truncated", marker.Type)
+	require.NotNil(t, marker.auditSummary)
+	require.Equal(t, "max_bytes", marker.auditSummary.Reason)
+	require.Equal(t, requestAuditMaxSSEEvents, marker.auditSummary.Original)
+	require.Less(t, marker.auditSummary.Kept, requestAuditMaxSSEEvents)
+	require.Len(t, fp.Events, marker.auditSummary.Kept, "events dropped by the skeleton byte cap must not be fingerprinted")
+}
+
 func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newMinimalGatewayService()
@@ -297,6 +416,55 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	require.Contains(t, body, `"type":"error"`, "data 必须含 type:error 顶层字段（Anthropic 标准）")
 	require.Contains(t, body, `"stream_read_error"`, "error.type 必须为 stream_read_error")
 	require.Contains(t, body, "upstream stream disconnected", "error.message 必须包含具体根因，Claude Code 等客户端才能显示有效错误文案")
+}
+
+func TestHandleStreamingResponse_StreamReadErrorAfterOutputMarksPartialUsageIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: &streamReadCloser{
+			payload: []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"),
+			err:     io.ErrUnexpectedEOF,
+		},
+	}
+
+	streamResult, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	require.Error(t, err)
+	require.NotNil(t, streamResult)
+	require.Equal(t, 5, streamResult.usage.InputTokens, "partial upstream usage must be retained")
+
+	partialResult := partialStreamUsageResult(c, resp, streamResult, "model", "model", time.Now(), err)
+	require.NotNil(t, partialResult)
+	require.True(t, partialResult.StreamIncomplete, "usage-owned audit must not mark a stream read failure complete")
+}
+
+func TestHandleStreamingResponse_CompleteStreamEOFIsNotIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body: &streamReadCloser{
+			payload: []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\ndata: [DONE]\n\n"),
+		},
+	}
+
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.streamIncomplete, "terminal event followed by EOF is a complete stream")
 }
 
 // 默认 (*net.OpError).Error() 会拼接 Source/Addr 字段，泄露内部 IP/端口与上游

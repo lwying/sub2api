@@ -53,42 +53,6 @@ func (s *settingUpdateRepoStub) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
 }
 
-type settingGetAllRepoStub struct {
-	values map[string]string
-}
-
-func (s *settingGetAllRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
-	panic("unexpected Get call")
-}
-
-func (s *settingGetAllRepoStub) GetValue(ctx context.Context, key string) (string, error) {
-	panic("unexpected GetValue call")
-}
-
-func (s *settingGetAllRepoStub) Set(ctx context.Context, key, value string) error {
-	panic("unexpected Set call")
-}
-
-func (s *settingGetAllRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	panic("unexpected GetMultiple call")
-}
-
-func (s *settingGetAllRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
-	panic("unexpected SetMultiple call")
-}
-
-func (s *settingGetAllRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
-	out := make(map[string]string, len(s.values))
-	for key, value := range s.values {
-		out[key] = value
-	}
-	return out, nil
-}
-
-func (s *settingGetAllRepoStub) Delete(ctx context.Context, key string) error {
-	panic("unexpected Delete call")
-}
-
 type forwardedIPMigrationRepoStub struct {
 	values         map[string]string
 	updates        map[string]string
@@ -425,6 +389,10 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 		OpenAIAdvancedSchedulerWeightUpstreamCost:          "1.5",
 		OpenAIAdvancedSchedulerWeightPreviousResponse:      "8",
 		OpenAIAdvancedSchedulerWeightSessionSticky:         "4",
+		RequestAuditForceEnabled:                           true,
+		RequestAuditForceMessages:                          false,
+		RequestAuditForceChatCompletions:                   true,
+		RequestAuditForceResponses:                         false,
 	})
 	require.NoError(t, err)
 	require.Equal(t, VisibleMethodSourceOfficialAlipay, repo.updates[SettingPaymentVisibleMethodAlipaySource])
@@ -447,6 +415,10 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	require.Equal(t, "1.5", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
 	require.Equal(t, "8", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse])
 	require.Equal(t, "4", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky])
+	require.Equal(t, "true", repo.updates[SettingKeyRequestAuditForceEnabled])
+	require.Equal(t, "false", repo.updates[SettingKeyRequestAuditForceMessages])
+	require.Equal(t, "true", repo.updates[SettingKeyRequestAuditForceChatCompletions])
+	require.Equal(t, "false", repo.updates[SettingKeyRequestAuditForceResponses])
 }
 
 func TestSettingService_UpdateSettingsRejectsInvalidOpenAIOAuthSchedulingRateMultiplier(t *testing.T) {

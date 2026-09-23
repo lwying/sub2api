@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -1135,4 +1136,98 @@ func TestBuildChatStreamErrorSSE(t *testing.T) {
 	require.Equal(t, "invalid_request_error", gjson.Get(payload, "error.type").String())
 	require.Equal(t, "cyber_policy", gjson.Get(payload, "error.code").String())
 	require.Equal(t, "blocked by policy", gjson.Get(payload, "error.message").String())
+}
+
+func TestOpenAINativeHTTPAttemptCount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	endpoints := []struct {
+		name string
+		path string
+		body string
+		call func(*OpenAIGatewayService, context.Context, *gin.Context, *Account, []byte) (*OpenAIForwardResult, error)
+	}{
+		{
+			name: "chat completions",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`,
+			call: func(svc *OpenAIGatewayService, ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+				return svc.ForwardAsChatCompletions(ctx, c, account, body, "", "")
+			},
+		},
+		{
+			name: "responses",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.4","input":"hello","stream":false}`,
+			call: func(svc *OpenAIGatewayService, ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+				return svc.Forward(ctx, c, account, body)
+			},
+		},
+	}
+
+	for _, endpoint := range endpoints {
+		for _, tc := range []struct {
+			name       string
+			localBlock bool
+			want       uint64
+		}{
+			{name: "local rejection", localBlock: true, want: 0},
+			{name: "HTTP 429", want: 1},
+		} {
+			t.Run(endpoint.name+"/"+tc.name, func(t *testing.T) {
+				upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{{
+					StatusCode: http.StatusTooManyRequests,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`)),
+				}}}
+				svc := &OpenAIGatewayService{
+					cfg:          &config.Config{},
+					httpUpstream: upstream,
+					codexDetector: &stubCodexRestrictionDetector{result: CodexClientRestrictionDetectionResult{
+						Enabled: tc.localBlock,
+						Matched: !tc.localBlock,
+					}},
+				}
+				account := &Account{
+					ID:          1,
+					Platform:    PlatformOpenAI,
+					Type:        AccountTypeOAuth,
+					Concurrency: 1,
+					Credentials: map[string]any{
+						"access_token":       "oauth-token",
+						"chatgpt_account_id": "chatgpt-acc",
+					},
+				}
+				body := []byte(endpoint.body)
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, endpoint.path, bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				before := RequestAuditHTTPAttemptCount(c)
+
+				result, err := endpoint.call(svc, context.Background(), c, account, body)
+				require.Error(t, err)
+				require.Nil(t, result)
+				require.Equal(t, int(tc.want), upstream.callCount)
+				require.Equal(t, tc.want, RequestAuditHTTPAttemptCount(c)-before)
+				metadata := RequestAuditHTTPAttemptMetadata(c)
+				if tc.localBlock {
+					require.Empty(t, metadata)
+				} else {
+					require.Equal(t, []httpattempt.Metadata{{
+						AccountID: 1,
+						Model:     "gpt-5.4",
+						Protocol:  RequestAuditProtocolOpenAIResp,
+					}}, metadata)
+				}
+				if tc.localBlock {
+					require.Equal(t, http.StatusForbidden, recorder.Code)
+				} else {
+					var failoverErr *UpstreamFailoverError
+					require.ErrorAs(t, err, &failoverErr)
+					require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+				}
+			})
+		}
+	}
 }

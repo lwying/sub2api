@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 
@@ -93,6 +94,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if parsed == nil {
 		return nil, fmt.Errorf("parse request: empty request")
 	}
+	ctx = WithRequestAuditHTTPAttemptCounter(ctx, c)
 	// Anthropic Fast is requested with speed=fast rather than OpenAI's
 	// service_tier. Attach it at this shared boundary so passthrough, OAuth and
 	// partial-stream results all use the same billing and usage-log path.
@@ -105,8 +107,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}()
 	beginUpstreamResponseModelObservation(c)
 
-	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应
+	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应。
+	// 该传输尚未纳入强制审计 reservation，强制模式必须在发送前拒绝。
 	if account != nil && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body.Bytes()) {
+		if scope, ok := requestAuditReservationScope(c); ok && scope.Forced {
+			return nil, &httpattempt.RequiredAuditError{}
+		}
 		return s.handleWebSearchEmulation(ctx, c, account, parsed)
 	}
 
@@ -355,6 +361,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if err := replaceBody(FilterThinkingBlocks(body, reqModel)); err != nil {
 		return nil, err
 	}
+	rewritten, formErr := ApplyThinkingDisabledForm(body, thinkingDisabledFormMode(parsed))
+	if formErr != nil {
+		return nil, formErr
+	}
+	if err := replaceBody(rewritten); err != nil {
+		return nil, err
+	}
 	// Chinese LLM thinking.type 协议差异补正（如 MiniMax 只接受 adaptive；Anthropic-SDK
 	// 客户端默认发 enabled）。仅对 passback-required 上游生效（claude-* 不会进来）。
 	if ResolveThinkingProtocol(reqModel) == ThinkingProtocolPassbackRequired {
@@ -382,6 +395,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		lastWireBody = wireBody
 
 		// 发送请求
+		upstreamReq = bindRequestAuditHTTPAttempt(
+			upstreamReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
+		)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -445,7 +461,16 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
 					if buildErr == nil {
+						retryReq = bindRequestAuditHTTPAttempt(
+							retryReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
+						)
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+						if IsRequestAuditRequiredError(retryErr) {
+							if retryResp != nil && retryResp.Body != nil {
+								_ = retryResp.Body.Close()
+							}
+							return nil, retryErr
+						}
 						if retryErr == nil {
 							if retryResp.StatusCode < 400 {
 								// 重试请求被上游接受后同步 ParsedRequest，保证 usage/日志看到真实请求体。
@@ -488,7 +513,16 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
 									if buildErr2 == nil {
+										retryReq2 = bindRequestAuditHTTPAttempt(
+											retryReq2, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
+										)
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
+										if IsRequestAuditRequiredError(retryErr2) {
+											if retryResp2 != nil && retryResp2.Body != nil {
+												_ = retryResp2.Body.Close()
+											}
+											return nil, retryErr2
+										}
 										if retryErr2 == nil {
 											if retryResp2.StatusCode < 400 {
 												// 二阶段工具块降级成功时也必须更新当前 body。
@@ -571,7 +605,16 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseBudgetRetryCtx()
 						if buildErr == nil {
+							budgetRetryReq = bindRequestAuditHTTPAttempt(
+								budgetRetryReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
+							)
 							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+							if IsRequestAuditRequiredError(retryErr) {
+								if budgetRetryResp != nil && budgetRetryResp.Body != nil {
+									_ = budgetRetryResp.Body.Close()
+								}
+								return nil, retryErr
+							}
 							if retryErr == nil {
 								if budgetRetryResp.StatusCode < 400 {
 									// budget 修正请求成功后，ParsedRequest 也要描述被接受的修正版。
@@ -800,6 +843,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var sseEvents []RequestAuditSSEEvent
 	if reqStream {
 		writerSizeBeforeStream := c.Writer.Size()
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
@@ -866,6 +910,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
+		sseEvents = streamResult.sseEvents
 	} else {
 		usage, err = s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, reqModel)
 		if err != nil {
@@ -886,6 +931,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
+		SSEEvents:                     sseEvents,
 	}, nil
 }
 

@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -206,6 +207,12 @@ func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 	require.Equal(t, 4, result.Usage.OutputTokens)
 	require.Equal(t, 6, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 1, result.Usage.CacheCreationInputTokens)
+	require.Len(t, result.SSEEvents, 4)
+	for _, event := range result.SSEEvents {
+		require.Empty(t, event.Data)
+		require.Greater(t, event.Bytes, 0)
+		require.NotContains(t, event.Type, "OK")
+	}
 	require.Contains(t, rec.Body.String(), `[DONE]`)
 }
 
@@ -246,4 +253,66 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	require.NotNil(t, result.ReasoningEffort)
 	require.Equal(t, "medium", *result.ReasoningEffort)
 	require.Contains(t, rec.Body.String(), `[DONE]`)
+}
+
+func TestHandleCCConversionResponsesMarkIncompleteStreamsInAudit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const eventText = "CC_AUDIT_BODY_SENTINEL"
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_partial","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5","stop_reason":"","usage":{"input_tokens":12}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"CC_AUDIT_BODY_SENTINEL"}}`,
+		``,
+	}, "\n")
+
+	tests := []struct {
+		name    string
+		body    io.ReadCloser
+		handler func(*http.Response, *gin.Context) (*ForwardResult, error)
+	}{
+		{
+			name: "upstream read error after partial events",
+			body: &streamReadCloser{payload: []byte(stream), err: io.ErrUnexpectedEOF},
+			handler: func(resp *http.Response, c *gin.Context) (*ForwardResult, error) {
+				return (&GatewayService{}).handleCCStreamingFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", nil, time.Now(), true)
+			},
+		},
+		{
+			name: "clean EOF without message_stop",
+			body: io.NopCloser(strings.NewReader(stream)),
+			handler: func(resp *http.Response, c *gin.Context) (*ForwardResult, error) {
+				return (&GatewayService{}).handleCCBufferedFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", nil, time.Now())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			resp := &http.Response{Header: http.Header{"x-request-id": []string{"rid_cc_incomplete"}}, Body: tt.body}
+
+			result, err := tt.handler(resp, c)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.True(t, result.StreamIncomplete, "usage-owned request audit must not be marked complete")
+
+			repo := &stubRequestAuditRepo{}
+			require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, RequestAuditInput{
+				SSEEvents:        requestAuditSSEEventsFromResult(result),
+				StreamIncomplete: result.StreamIncomplete,
+			}))
+			require.NotNil(t, repo.created)
+			require.Equal(t, RequestAuditCaptureIncomplete, repo.created.CaptureCompleteness)
+			encoded, marshalErr := json.Marshal(repo.created)
+			require.NoError(t, marshalErr)
+			require.NotContains(t, string(encoded), eventText, "request audit must retain only the event skeleton")
+			for _, event := range result.SSEEvents {
+				require.Empty(t, event.Data)
+			}
+		})
+	}
 }

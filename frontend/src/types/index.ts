@@ -608,6 +608,7 @@ export interface Group {
   peak_rate_multiplier: number
   // Claude Code 客户端限制
   claude_code_only: boolean
+  thinking_disabled_strict: boolean
   fallback_group_id: number | null
   fallback_group_id_on_invalid_request: number | null
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
@@ -829,6 +830,7 @@ export interface CreateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
+  thinking_disabled_strict?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
@@ -895,6 +897,7 @@ export interface UpdateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
+  thinking_disabled_strict?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean

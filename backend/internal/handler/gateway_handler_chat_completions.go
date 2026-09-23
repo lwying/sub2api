@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -68,6 +69,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
 
 	// Extract model and stream
 	modelResult := gjson.GetBytes(body, "model")
@@ -110,6 +112,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.openAISecurityAuditError(c, decision)
+		return
+	}
+
+	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteChatCompletions, false) {
 		return
 	}
 
@@ -165,6 +171,12 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	fs := NewFailoverState(h.maxAccountSwitches, false)
 	if groupPlatform == service.PlatformGemini {
 		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+	}
+	var requestAuditAttempts []service.RequestAuditAttempt
+	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
+	if requestAuditFingerprint != nil {
+		requestAuditFingerprint.DigestRequest(body)
+		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
 	}
 
 	for {
@@ -267,6 +279,13 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		var result *service.ForwardResult
 		setActualUpstreamEndpoint(c, "")
+		if requestAuditIsForced(c) && (account.Platform == service.PlatformGemini || shouldUseAntigravityCompat(account)) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			writeRequestAuditUnavailable(c, false)
+			return
+		}
 		if account.Platform == service.PlatformGemini {
 			if h.geminiCompatService == nil {
 				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
@@ -287,7 +306,18 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
 			result, err = h.antigravityGatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
 		} else {
+			postNormalizeModel := openAIChannelForwardModel(channelMapping, reqModel)
+			before := len(service.RequestAuditHTTPAttemptMetadata(c))
 			result, err = h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
+			requestAuditAttempts = appendOpenAITransportAttempts(
+				requestAuditAttempts,
+				service.RequestAuditHTTPAttemptMetadata(c),
+				before,
+				reqModel,
+				postNormalizeModel,
+				requestAuditFingerprint,
+				service.RequestAuditProtocolOpenAIChat,
+			)
 		}
 
 		if accountReleaseFunc != nil {
@@ -295,6 +325,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		if err != nil {
+			if service.IsRequestAuditRequiredError(err) {
+				writeRequestAuditUnavailable(c, false)
+				return
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if c.Writer.Size() != writerSizeBeforeForward {
@@ -330,6 +364,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		// 6. Record usage
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
+		requestAuditHeaders := cloneRequestAuditHeaders(c)
+		requestAuditAttemptsForRecord := append([]service.RequestAuditAttempt(nil), requestAuditAttempts...)
+		if len(requestAuditAttemptsForRecord) == 0 {
+			requestAuditHeaders = nil
+		}
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
@@ -337,23 +376,46 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
+		auditLogicalKey := service.RequestAuditLogicalKeyFromGin(c)
+		notCapturedReason := ""
+		if account.Platform == service.PlatformGemini || shouldUseAntigravityCompat(account) {
+			notCapturedReason = service.RequestAuditNotCapturedReasonPhase1Uncovered
+		}
+		localRequestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+		upstreamRequestID := ""
+		if notCapturedReason == "" && len(requestAuditAttemptsForRecord) > 0 {
+			upstreamRequestID = service.UpstreamRequestIDFromHeaders(account, result.UpstreamHeaders)
+		}
+		requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, "", localRequestID, upstreamRequestID)
+		requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
+		// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
+		// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
+		if notCapturedReason == "" {
+			requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
+		}
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-				Result:             result,
-				QuotaPlatform:      quotaPlatform,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				PricingAt:          pricingAt,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      h.apiKeyService,
-				SessionID:          sessionID,
-				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+				Result:                  result,
+				QuotaPlatform:           quotaPlatform,
+				APIKey:                  apiKey,
+				User:                    apiKey.User,
+				Account:                 account,
+				Subscription:            subscription,
+				PricingAt:               pricingAt,
+				InboundEndpoint:         inboundEndpoint,
+				UpstreamEndpoint:        upstreamEndpoint,
+				UserAgent:               userAgent,
+				IPAddress:               clientIP,
+				RequestPayloadHash:      requestPayloadHash,
+				APIKeyService:           h.apiKeyService,
+				SessionID:               sessionID,
+				RequestAuditHeaders:     requestAuditHeaders,
+				RequestAuditAttempts:    requestAuditAttemptsForRecord,
+				RequestAuditFingerprint: requestAuditFingerprint,
+				RequestAuditMetadata:    requestAuditMetadata,
+				NotCapturedReason:       notCapturedReason,
+				AuditLogicalKey:         auditLogicalKey,
+				ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 			}); err != nil {
 				reqLog.Error("gateway.cc.record_usage_failed",
 					zap.Int64("account_id", account.ID),

@@ -117,6 +117,9 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
+	upstreamReq = bindRequestAuditHTTPAttempt(
+		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolAnthropic,
+	)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
@@ -326,6 +329,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
+	var sseEvents []RequestAuditSSEEvent
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -348,6 +352,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			Duration:         time.Since(startTime),
 			FirstTokenMs:     firstTokenMs,
 			ClientDisconnect: clientDisconnected,
+			SSEEvents:        sseEvents,
 		}
 	}
 
@@ -455,6 +460,8 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 		if !ok {
 			continue
 		}
+
+		sseEvents = appendRequestAuditSSEEvent(c.Request.Context(), sseEvents, "", payload)
 
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {

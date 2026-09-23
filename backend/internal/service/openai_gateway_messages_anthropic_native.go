@@ -100,6 +100,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		return nil, err
 	}
 
+	upstreamReq = bindRequestAuditHTTPAttempt(
+		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolAnthropic,
+	)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
@@ -279,7 +282,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 }
 
 // handleNativeAnthropicStreamingResponse 处理流式原生 Anthropic 响应：
-// 字节级 SSE 中继（逐行透传、按事件边界 flush），同时解析 usage。
+// 字节级 SSE 中继（逐行透传、按事件边界 flush），同时解析 usage，并按请求
+// 审计规格采集事件骨架（类型/序号/体量/指纹，不含 data 正文）与采集完整性。
 // 骨架与 handleStreamingResponseAnthropicAPIKeyPassthrough 一致。
 func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	ctx context.Context,
@@ -326,8 +330,19 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
+	var sseEvents []RequestAuditSSEEvent
 	clientDisconnected := false
 	sawTerminalEvent := false
+	lastEventName := ""
+
+	// finish 收口全部退出点：把已观测 usage、事件骨架与流完整性一起带出。
+	// StreamIncomplete 只标记「上游在响应开始后异常终止」——即未观测到终态事件
+	// 且非客户端主动断开；客户端取消/断开由 ClientDisconnect 单独标记（审计侧
+	// 同样记响应中途不完整），避免把正常终态或客户端取消误判为截断。
+	finish := func(err error) (*OpenAIForwardResult, error) {
+		streamIncomplete := !sawTerminalEvent && !clientDisconnected
+		return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, sseEvents, clientDisconnected, streamIncomplete, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), err
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -418,33 +433,32 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					flusher.Flush()
 				}
 				if !sawTerminalEvent {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-						fmt.Errorf("stream usage incomplete: missing terminal event")
+					return finish(fmt.Errorf("stream usage incomplete: missing terminal event"))
 				}
-				return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+				return finish(nil)
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+					return finish(nil)
 				}
 				if clientDisconnected {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-						fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return finish(fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err))
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-						fmt.Errorf("stream usage incomplete: %w", ev.err)
+					return finish(fmt.Errorf("stream usage incomplete: %w", ev.err))
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), ev.err
+					return finish(ev.err)
 				}
-				return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-					fmt.Errorf("stream read error: %w", ev.err)
+				return finish(fmt.Errorf("stream read error: %w", ev.err))
 			}
 
 			line := ev.line
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
+				// 事件骨架只记类型/序号/体量/指纹，data 正文不进审计。
+				sseEvents = appendRequestAuditSSEEvent(c.Request.Context(), sseEvents, lastEventName, data)
+				lastEventName = ""
 				trimmed := strings.TrimSpace(data)
 				observer.ObserveAnthropic([]byte(trimmed))
 				if anthropicStreamEventIsTerminal("", trimmed) {
@@ -457,8 +471,11 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				parseSSEUsagePassthrough(data, usage)
 			} else {
 				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
-					sawTerminalEvent = true
+				if strings.HasPrefix(trimmed, "event:") {
+					lastEventName = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
+					if anthropicStreamEventIsTerminal(lastEventName, "") {
+						sawTerminalEvent = true
+					}
 				}
 			}
 
@@ -487,15 +504,13 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				continue
 			}
 			if clientDisconnected {
-				return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-					fmt.Errorf("stream usage incomplete after timeout")
+				return finish(fmt.Errorf("stream usage incomplete after timeout"))
 			}
 			logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, upstreamModel, streamInterval)
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, upstreamModel)
 			}
-			return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-				fmt.Errorf("stream data interval timeout")
+			return finish(fmt.Errorf("stream data interval timeout"))
 
 		case <-keepaliveCh:
 			if clientDisconnected {
@@ -522,13 +537,17 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 }
 
 // nativeAnthropicStreamResult 组装流式直通结果；流中断时同样返回已观测到的
-// usage 与错误一起带出，避免上游已计量的请求漏记漏计费（对齐 issue #5148 语义）。
+// usage、事件骨架与不完整标记一起带出，避免上游已计量的请求漏记漏计费，
+// 同时让使用记录上的请求审计能区分「完整」「截断」「响应中途不完整」
+// （对齐 issue #5148 与请求审计规格语义）。
 func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 	c *gin.Context,
 	resp *http.Response,
 	usage *ClaudeUsage,
 	firstTokenMs *int,
+	sseEvents []RequestAuditSSEEvent,
 	clientDisconnect bool,
+	streamIncomplete bool,
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
@@ -551,6 +570,8 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
+		StreamIncomplete: streamIncomplete,
+		SSEEvents:        sseEvents,
 	}
 }
 

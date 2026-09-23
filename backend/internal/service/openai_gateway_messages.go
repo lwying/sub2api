@@ -33,6 +33,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	ctx = WithRequestAuditHTTPAttemptCounter(ctx, c)
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
@@ -408,6 +409,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				return nil, fmt.Errorf("build grok retry request: %w", err)
 			}
 		}
+		upstreamReq = bindRequestAuditHTTPAttempt(
+			upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
+		)
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -949,6 +953,11 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := account != nil && account.IsGrok()
+	// 请求审计事件骨架与采集完整性：只累计类型/序号/字节/指纹，不保留 data。
+	var sseEvents []RequestAuditSSEEvent
+	// streamIncomplete 标记响应已开始后上游异常终止（读错误、读间隔超时、
+	// 干净 EOF 缺少 terminal）；正常收到 terminal 时保持 false。
+	streamIncomplete := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -987,6 +996,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 			ClientDisconnect:              clientDisconnected,
+			StreamIncomplete:              streamIncomplete,
+			SSEEvents:                     sseEvents,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -1018,6 +1029,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
 
 		eventType := strings.TrimSpace(event.Type)
+		sseEvents = appendRequestAuditSSEEvent(c.Request.Context(), sseEvents, eventType, payload)
 		isBareErrorEvent := eventType == "error"
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(eventType) || isBareErrorEvent
 		if isTerminalEvent {
@@ -1171,6 +1183,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
+		// 上游流结束但未出现 terminal：骨架不完整，不能当采集完成。
+		streamIncomplete = true
 		result := resultWithUsage()
 		if clientDisconnected {
 			return result, fmt.Errorf("stream usage incomplete: missing terminal event")
@@ -1211,6 +1225,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
+			streamIncomplete = true
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 		}
 		if frame, ok := parser.Finish(); ok {
@@ -1284,6 +1299,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
+				streamIncomplete = true
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 			}
 			lastDataAt = time.Now()
@@ -1305,6 +1321,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				continue
 			}
 			if clientDisconnected {
+				streamIncomplete = true
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.L().Warn("openai messages stream: data interval timeout",
@@ -1312,6 +1329,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
+			streamIncomplete = true
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:

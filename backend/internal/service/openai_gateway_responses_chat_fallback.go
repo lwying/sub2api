@@ -193,6 +193,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	state.ToolSearchDeclared = toolSearch
 	state.NamespaceTools = namespaceTools
 	clientDisconnected := false
+	// terminalSeen 记录上游是否给出过终止信号（见 ccChunkCarriesTerminalSignal；
+	// [DONE] 哨兵由 scan 的 SawDone 单独记录）。
+	terminalSeen := false
 
 	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
 		if clientDisconnected || len(events) == 0 {
@@ -221,10 +224,19 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	}
 
 	scan := s.scanCCStream(c, resp, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
+		if ccChunkCarriesTerminalSignal(chunk) {
+			terminalSeen = true
+		}
 		events := apicompat.ChatCompletionsChunkToResponsesEvents(chunk, state)
 		s.cacheReasoningItemsFromEvents(events)
 		writeEvents(events)
 	})
+	// 采集完整性：只有观测到终止信号（[DONE] / finish_reason / usage 帧）才算正常收尾。
+	// 读错误或缺终止信号的干净 EOF 都是「响应已开始后上游异常终止」：已观测的 usage 与
+	// 事件骨架照常带出（计费与抽屉仍可用），但结果必须带 StreamIncomplete，使使用记录上的
+	// 请求审计记「响应中途不完整」而不是「完整」。客户端主动断开/取消由 ClientDisconnect
+	// 单独标记（审计同样不完整），不算上游截断。
+	streamIncomplete := conversionStreamIncomplete(terminalSeen || scan.SawDone, clientDisconnected, scan.Err)
 
 	if scan.Err != nil {
 		return &OpenAIForwardResult{
@@ -240,6 +252,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Stream:                      true,
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
+			SSEEvents:                   scan.SSEEvents,
+			ClientDisconnect:            clientDisconnected,
+			StreamIncomplete:            streamIncomplete,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
 	if err := state.ValidateToolCallArguments(); err != nil {
@@ -256,6 +271,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Stream:                      true,
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
+			SSEEvents:                   scan.SSEEvents,
+			ClientDisconnect:            clientDisconnected,
+			StreamIncomplete:            streamIncomplete,
 		}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
 	}
 
@@ -288,7 +306,35 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		Stream:                      true,
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                scan.FirstTokenMs,
+		SSEEvents:                   scan.SSEEvents,
+		ClientDisconnect:            clientDisconnected,
+		StreamIncomplete:            streamIncomplete,
 	}, nil
+}
+
+// ccChunkCarriesTerminalSignal 报告一个已解析的 CC chunk 是否携带终止信号，供两条
+// CC 回退路径（/v1/messages 与 /v1/responses）判定流是否正常收尾，进而决定审计采集
+// 完整性。与 raw CC 直转路径的 openAIRawStreamTerminalState 取同一并集：
+//
+//   - finish_reason —— 生成正常结束（stop/length/tool_calls/...）
+//   - usage 帧      —— include_usage 生效时的末尾用量帧（本路径强制打开）
+//
+// [DONE] 哨兵不经过 emit 回调，由 scanCCStream 的 SawDone 单独记录。只认 [DONE] 会把
+// 「跑完最后一帧就直接 EOF」的兼容上游误判成截断，而截断会被记成响应中途不完整。
+func ccChunkCarriesTerminalSignal(chunk *apicompat.ChatCompletionsChunk) bool {
+	if chunk == nil {
+		return false
+	}
+	if chunk.Usage != nil {
+		return true
+	}
+	for _, choice := range chunk.Choices {
+		// finish_reason 为 null 时指针为 nil，不算终止。
+		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func chatChunkStartsResponsesOutput(chunk *apicompat.ChatCompletionsChunk) bool {

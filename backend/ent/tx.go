@@ -68,6 +68,10 @@ type Tx struct {
 	Proxy *ProxyClient
 	// RedeemCode is the client for interacting with the RedeemCode builders.
 	RedeemCode *RedeemCodeClient
+	// RequestAudit is the client for interacting with the RequestAudit builders.
+	RequestAudit *RequestAuditClient
+	// RequestAuditReservation is the client for interacting with the RequestAuditReservation builders.
+	RequestAuditReservation *RequestAuditReservationClient
 	// SecuritySecret is the client for interacting with the SecuritySecret builders.
 	SecuritySecret *SecuritySecretClient
 	// Setting is the client for interacting with the Setting builders.
@@ -250,6 +254,8 @@ func (tx *Tx) init() {
 	tx.PromoCodeUsage = NewPromoCodeUsageClient(tx.config)
 	tx.Proxy = NewProxyClient(tx.config)
 	tx.RedeemCode = NewRedeemCodeClient(tx.config)
+	tx.RequestAudit = NewRequestAuditClient(tx.config)
+	tx.RequestAuditReservation = NewRequestAuditReservationClient(tx.config)
 	tx.SecuritySecret = NewSecuritySecretClient(tx.config)
 	tx.Setting = NewSettingClient(tx.config)
 	tx.SubscriptionPlan = NewSubscriptionPlanClient(tx.config)

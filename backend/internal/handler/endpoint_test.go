@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -455,4 +456,33 @@ func TestGetUpstreamEndpoint_FullFlow(t *testing.T) {
 
 	got := GetUpstreamEndpoint(c, service.PlatformOpenAI)
 	require.Equal(t, "/v1/responses/compact", got)
+}
+
+func TestCloneRequestAuditHeadersKeepsAggregatePresenceMarkers(t *testing.T) {
+	const (
+		tokenCanary = "auth-token-canary"
+		valueCanary = "custom-header-value-canary"
+	)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("X-Auth-Token", tokenCanary)
+	c.Request.Header.Set("X-Custom-Header", valueCanary)
+	c.Request.Header.Set("Authorization", "Bearer "+tokenCanary)
+	c.Request.Header.Set("Accept", "application/json")
+
+	got := cloneRequestAuditHeaders(c)
+	require.Equal(t, http.Header{
+		"Accept":                   {"application/json"},
+		"Authorization":            {"present"},
+		"Sensitive-Header-Present": {"present"},
+		"Other-Header-Present":     {"present"},
+	}, got, "the async snapshot must keep the aggregate presence markers as safe markers only")
+
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	for _, canary := range []string{tokenCanary, valueCanary, "X-Auth-Token", "X-Custom-Header"} {
+		require.NotContains(t, string(encoded), canary)
+	}
+	require.Equal(t, got, cloneRequestAuditHeaders(c), "snapshots must be idempotent")
 }

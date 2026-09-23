@@ -230,6 +230,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	}
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+			NotCapturedReason: service.RequestAuditNotCapturedReasonPhase1Uncovered,
 			Result: &service.ForwardResult{
 				RequestID:   searchRequestID,
 				Model:       "grok-" + strings.ReplaceAll(searchLabel, "_", "-"),

@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	ctx = WithRequestAuditHTTPAttemptCounter(ctx, c)
 	return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
 }
 
@@ -392,6 +393,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	upstreamReq = bindRequestAuditHTTPAttempt(
+		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
+	)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -711,6 +715,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
+	// streamIncomplete 标记「响应已开始后上游在没有终态事件的情况下结束」：读错误、
+	// 终态前干净 EOF。它只影响审计采集完整性（使用记录上的请求审计记「响应中途不完整」），
+	// 不改变返回结果——已观测 usage 照常计费，已写出的字节照常留在客户端。
+	streamIncomplete := false
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
@@ -721,6 +729,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := account != nil && account.IsGrok()
+	var sseEvents []RequestAuditSSEEvent
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -756,6 +765,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			SSEEvents:                     sseEvents,
+			ClientDisconnect:              clientDisconnected,
+			StreamIncomplete:              streamIncomplete,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -764,6 +776,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	processDataLine := func(payload string) bool {
+		sseEvents = appendRequestAuditSSEEvent(c.Request.Context(), sseEvents, "", payload)
 		payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
 		if firstChunk {
 			firstChunk = false
@@ -1015,7 +1028,22 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			)
 		}
 	}
+	// hasPartialResult 报告上游是否已给出可审计的部分结果（事件骨架或已计量 usage）。
+	hasPartialResult := func() bool {
+		return len(sseEvents) > 0 || usage.InputTokens > 0 || usage.OutputTokens > 0
+	}
+	// markStreamIncompleteIfTruncated 标记「上游在终态事件之前结束」。
+	// 只在已有部分结果、且不是客户端断开时置位：客户端断开的完整性由
+	// ClientDisconnect 单独标记（审计侧同样是不完整），不伪装成上游截断；
+	// 一个字节都没给出的空流也不构成「响应中途不完整」。
+	markStreamIncompleteIfTruncated := func() {
+		if !clientDisconnected && hasPartialResult() {
+			streamIncomplete = true
+		}
+	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
+		// 上游流结束但未出现终态事件：已给出的部分结果不能当采集完成。
+		markStreamIncompleteIfTruncated()
 		return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 	}
 	processFrame := func(frame openAICompatSSEFrame) bool {
@@ -1053,6 +1081,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 			}
+			// 上游读错误：连接在终态之前被截断，已写出的部分结果属响应中途不完整
+			// （客户端断开/取消与上游截断不可区分，不在此重复标记）。
+			markStreamIncompleteIfTruncated()
 			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
 		}
 		if frame, ok := parser.Finish(); ok {
@@ -1128,6 +1159,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
+				// 同同步路径：上游读错误即响应中途不完整。
+				markStreamIncompleteIfTruncated()
 				return resultWithUsage(), newOpenAIUpstreamStreamReadError(ev.err)
 			}
 			lastDataAt = time.Now()

@@ -118,6 +118,10 @@ const (
 	EdgeGroup = "group"
 	// EdgeSubscription holds the string denoting the subscription edge name in mutations.
 	EdgeSubscription = "subscription"
+	// EdgeRequestAudit holds the string denoting the request_audit edge name in mutations.
+	EdgeRequestAudit = "request_audit"
+	// EdgeRequestAuditReservation holds the string denoting the request_audit_reservation edge name in mutations.
+	EdgeRequestAuditReservation = "request_audit_reservation"
 	// Table holds the table name of the usagelog in the database.
 	Table = "usage_logs"
 	// UserTable is the table that holds the user relation/edge.
@@ -155,6 +159,20 @@ const (
 	SubscriptionInverseTable = "user_subscriptions"
 	// SubscriptionColumn is the table column denoting the subscription relation/edge.
 	SubscriptionColumn = "subscription_id"
+	// RequestAuditTable is the table that holds the request_audit relation/edge.
+	RequestAuditTable = "request_audits"
+	// RequestAuditInverseTable is the table name for the RequestAudit entity.
+	// It exists in this package in order to avoid circular dependency with the "requestaudit" package.
+	RequestAuditInverseTable = "request_audits"
+	// RequestAuditColumn is the table column denoting the request_audit relation/edge.
+	RequestAuditColumn = "usage_log_id"
+	// RequestAuditReservationTable is the table that holds the request_audit_reservation relation/edge.
+	RequestAuditReservationTable = "request_audit_reservations"
+	// RequestAuditReservationInverseTable is the table name for the RequestAuditReservation entity.
+	// It exists in this package in order to avoid circular dependency with the "requestauditreservation" package.
+	RequestAuditReservationInverseTable = "request_audit_reservations"
+	// RequestAuditReservationColumn is the table column denoting the request_audit_reservation relation/edge.
+	RequestAuditReservationColumn = "usage_log_id"
 )
 
 // Columns holds all SQL columns for usagelog fields.
@@ -564,6 +582,20 @@ func BySubscriptionField(field string, opts ...sql.OrderTermOption) OrderOption 
 		sqlgraph.OrderByNeighborTerms(s, newSubscriptionStep(), sql.OrderByField(field, opts...))
 	}
 }
+
+// ByRequestAuditField orders the results by request_audit field.
+func ByRequestAuditField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newRequestAuditStep(), sql.OrderByField(field, opts...))
+	}
+}
+
+// ByRequestAuditReservationField orders the results by request_audit_reservation field.
+func ByRequestAuditReservationField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newRequestAuditReservationStep(), sql.OrderByField(field, opts...))
+	}
+}
 func newUserStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -597,5 +629,19 @@ func newSubscriptionStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(SubscriptionInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, SubscriptionTable, SubscriptionColumn),
+	)
+}
+func newRequestAuditStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(RequestAuditInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2O, false, RequestAuditTable, RequestAuditColumn),
+	)
+}
+func newRequestAuditReservationStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(RequestAuditReservationInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2O, false, RequestAuditReservationTable, RequestAuditReservationColumn),
 	)
 }

@@ -5816,6 +5816,47 @@
             </div>
           </div>
 
+          <!-- Forced Request Audit -->
+          <div class="card" data-testid="request-audit-force-settings">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.requestAuditForce.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.requestAuditForce.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.requestAuditForce.hint") }}
+              </p>
+              <div class="flex items-center justify-between gap-5">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.requestAuditForce.enabled") }}
+                </label>
+                <Toggle v-model="form.request_audit_force_enabled" data-testid="request_audit_force_enabled" />
+              </div>
+              <div class="flex items-center justify-between gap-5">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.requestAuditForce.messages") }}
+                </label>
+                <Toggle v-model="form.request_audit_force_messages" data-testid="request_audit_force_messages" />
+              </div>
+              <div class="flex items-center justify-between gap-5">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.requestAuditForce.chatCompletions") }}
+                </label>
+                <Toggle v-model="form.request_audit_force_chat_completions" data-testid="request_audit_force_chat_completions" />
+              </div>
+              <div class="flex items-center justify-between gap-5">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.requestAuditForce.responses") }}
+                </label>
+                <Toggle v-model="form.request_audit_force_responses" data-testid="request_audit_force_responses" />
+              </div>
+            </div>
+          </div>
+
           <!-- Web Search Emulation -->
           <div class="card">
             <div
@@ -9860,6 +9901,11 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_weight_upstream_cost: "",
   openai_advanced_scheduler_weight_previous_response: "",
   openai_advanced_scheduler_weight_session_sticky: "",
+  // Forced request audit
+  request_audit_force_enabled: false,
+  request_audit_force_messages: false,
+  request_audit_force_chat_completions: false,
+  request_audit_force_responses: false,
   // Gateway forwarding behavior
   openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
@@ -11462,6 +11508,11 @@ async function saveSettings() {
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
+      request_audit_force_enabled: form.request_audit_force_enabled,
+      request_audit_force_messages: form.request_audit_force_messages,
+      request_audit_force_chat_completions:
+        form.request_audit_force_chat_completions,
+      request_audit_force_responses: form.request_audit_force_responses,
       openai_ttft_mode:
         form.openai_ttft_mode === "visible" ? "visible" : "semantic",
       enable_fingerprint_unification: form.enable_fingerprint_unification,

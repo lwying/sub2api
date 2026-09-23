@@ -623,6 +623,12 @@ export interface SystemSettings {
   // 分组隔离
   allow_ungrouped_key_scheduling: boolean;
 
+  // Forced request audit (admin only)
+  request_audit_force_enabled: boolean;
+  request_audit_force_messages: boolean;
+  request_audit_force_chat_completions: boolean;
+  request_audit_force_responses: boolean;
+
   // Gateway forwarding behavior
   openai_ttft_mode: string;
   enable_fingerprint_unification: boolean;
@@ -947,6 +953,10 @@ export interface UpdateSettingsRequest {
   min_claude_code_version?: string;
   max_claude_code_version?: string;
   allow_ungrouped_key_scheduling?: boolean;
+  request_audit_force_enabled?: boolean;
+  request_audit_force_messages?: boolean;
+  request_audit_force_chat_completions?: boolean;
+  request_audit_force_responses?: boolean;
   openai_ttft_mode?: string;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;

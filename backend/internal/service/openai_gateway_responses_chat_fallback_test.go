@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,6 +182,14 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.True(t, result.Stream)
 	require.NotNil(t, result.FirstTokenMs)
+	require.False(t, result.ClientDisconnect)
+	require.GreaterOrEqual(t, len(result.SSEEvents), 2)
+	for _, ev := range result.SSEEvents {
+		require.Empty(t, ev.Data)
+		require.Greater(t, ev.Bytes, 0)
+		require.NotContains(t, ev.Type, "he")
+		require.NotContains(t, ev.Type, "llo")
+	}
 }
 
 func TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit(t *testing.T) {
@@ -292,6 +301,142 @@ func TestForwardResponses_AutoSupportedAccountStillUsesResponsesEndpoint(t *test
 	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 	require.Equal(t, "ok", gjson.Get(rec.Body.String(), "output.0.content.0.text").String())
+}
+
+// 上游在响应开始后异常终止（读错误，或缺终止信号的干净 EOF）时，已观测的 usage 与
+// 事件骨架照常带出，但结果必须带 StreamIncomplete，使使用记录上的请求审计记
+// 「响应中途不完整」而不是「完整」。helper 与 CC 流构造见
+// openai_gateway_messages_chat_fallback_test.go（两条回退路径共用）。
+func TestForwardResponses_ChatFallbackStreamAuditMarksUpstreamTruncationIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	truncatedToolCallStream := `data: {"id":"chatcmpl_audit","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_audit","type":"function","function":{"name":"exec_command","arguments":"{\"cmd\":\"ssh"}}]},"finish_reason":null}]}` + "\n\n"
+
+	tests := []struct {
+		name             string
+		body             io.ReadCloser
+		wantErr          string
+		wantIncomplete   bool
+		wantCompleteness string
+		wantEvents       int
+	}{
+		{
+			name:             "upstream read error after partial output is incomplete",
+			body:             &errTailReader{data: []byte(chatFallbackAuditStream(false, false, false)), err: errors.New("simulated upstream read failure")},
+			wantErr:          "stream usage incomplete",
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+		{
+			name:             "clean EOF without any terminal signal is incomplete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, false, false))),
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+		{
+			name:             "clean EOF mid tool call arguments is incomplete",
+			body:             io.NopCloser(strings.NewReader(truncatedToolCallStream)),
+			wantErr:          "invalid tool call arguments",
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+		{
+			name:             "finish_reason terminal without done sentinel keeps the audit complete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, true, false))),
+			wantIncomplete:   false,
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       2,
+		},
+		{
+			name:             "usage frame terminal keeps the audit complete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, false, true))),
+			wantIncomplete:   false,
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       2,
+		},
+		{
+			name:             "done sentinel keeps the audit complete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(true, true, true))),
+			wantIncomplete:   false,
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			svc := &OpenAIGatewayService{
+				cfg: rawChatCompletionsTestConfig(),
+				httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_resp_chat_audit"}},
+					Body:       tt.body,
+				}},
+			}
+
+			result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			}
+			require.NotNil(t, result)
+			require.True(t, result.Stream)
+			require.Equal(t, tt.wantIncomplete, result.StreamIncomplete,
+				"post-start upstream termination must mark the linked request audit incomplete")
+			require.False(t, result.ClientDisconnect)
+
+			// 采集不得保留正文，也不得丢失已观测的骨架。
+			require.Len(t, result.SSEEvents, tt.wantEvents)
+			for _, ev := range result.SSEEvents {
+				require.Empty(t, ev.Data, "事件骨架不得携带 SSE data 正文")
+				require.Positive(t, ev.Bytes)
+			}
+
+			requireChatFallbackAuditCompleteness(t, result, tt.wantCompleteness)
+		})
+	}
+}
+
+// 客户端主动断开/取消由 ClientDisconnect 单独标记（审计同样不完整），
+// 不得伪装成上游截断。
+func TestForwardResponses_ChatFallbackStreamAuditKeepsClientDisconnectOutOfStreamIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Writer = &failWriteResponseWriter{ResponseWriter: c.Writer}
+
+	svc := &OpenAIGatewayService{
+		cfg: rawChatCompletionsTestConfig(),
+		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_resp_chat_audit_dc"}},
+			Body:       io.NopCloser(strings.NewReader(chatFallbackAuditStream(true, true, true))),
+		}},
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect, "写失败须标记客户端断开")
+	require.False(t, result.StreamIncomplete, "客户端主动取消不得伪装成上游截断")
+	require.Len(t, result.SSEEvents, 4, "断开后仍继续采集上游事件骨架")
+
+	requireChatFallbackAuditCompleteness(t, result, RequestAuditCaptureIncomplete)
 }
 
 func forceChatResponsesFallbackAccount() *Account {

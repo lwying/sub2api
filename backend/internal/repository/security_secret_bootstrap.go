@@ -18,6 +18,7 @@ import (
 
 const (
 	securitySecretKeyJWT        = "jwt_secret"
+	securitySecretKeyAuditHMAC  = "request_audit_hmac_v1"
 	securitySecretReadRetryMax  = 5
 	securitySecretReadRetryWait = 10 * time.Millisecond
 )
@@ -42,6 +43,9 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 			log.Println("Warning: configured JWT secret mismatches persisted value; using persisted secret for cross-instance consistency.")
 		}
 		cfg.JWT.Secret = storedSecret
+		if _, _, err := getOrCreateGeneratedSecuritySecret(ctx, client, securitySecretKeyAuditHMAC, 32); err != nil {
+			return fmt.Errorf("ensure request audit fingerprint secret: %w", err)
+		}
 		return nil
 	}
 
@@ -50,6 +54,9 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 		return fmt.Errorf("ensure jwt secret: %w", err)
 	}
 	cfg.JWT.Secret = secret
+	if _, _, err := getOrCreateGeneratedSecuritySecret(ctx, client, securitySecretKeyAuditHMAC, 32); err != nil {
+		return fmt.Errorf("ensure request audit fingerprint secret: %w", err)
+	}
 
 	if created {
 		log.Println("Warning: JWT secret auto-generated and persisted to database. Consider rotating to a managed secret for production.")

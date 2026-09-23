@@ -14,6 +14,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/requestaudit"
+	"github.com/Wei-Shaw/sub2api/ent/requestauditreservation"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
@@ -662,6 +664,44 @@ func (_c *UsageLogCreate) SetSubscription(v *UserSubscription) *UsageLogCreate {
 	return _c.SetSubscriptionID(v.ID)
 }
 
+// SetRequestAuditID sets the "request_audit" edge to the RequestAudit entity by ID.
+func (_c *UsageLogCreate) SetRequestAuditID(id int64) *UsageLogCreate {
+	_c.mutation.SetRequestAuditID(id)
+	return _c
+}
+
+// SetNillableRequestAuditID sets the "request_audit" edge to the RequestAudit entity by ID if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRequestAuditID(id *int64) *UsageLogCreate {
+	if id != nil {
+		_c = _c.SetRequestAuditID(*id)
+	}
+	return _c
+}
+
+// SetRequestAudit sets the "request_audit" edge to the RequestAudit entity.
+func (_c *UsageLogCreate) SetRequestAudit(v *RequestAudit) *UsageLogCreate {
+	return _c.SetRequestAuditID(v.ID)
+}
+
+// SetRequestAuditReservationID sets the "request_audit_reservation" edge to the RequestAuditReservation entity by ID.
+func (_c *UsageLogCreate) SetRequestAuditReservationID(id int64) *UsageLogCreate {
+	_c.mutation.SetRequestAuditReservationID(id)
+	return _c
+}
+
+// SetNillableRequestAuditReservationID sets the "request_audit_reservation" edge to the RequestAuditReservation entity by ID if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRequestAuditReservationID(id *int64) *UsageLogCreate {
+	if id != nil {
+		_c = _c.SetRequestAuditReservationID(*id)
+	}
+	return _c
+}
+
+// SetRequestAuditReservation sets the "request_audit_reservation" edge to the RequestAuditReservation entity.
+func (_c *UsageLogCreate) SetRequestAuditReservation(v *RequestAuditReservation) *UsageLogCreate {
+	return _c.SetRequestAuditReservationID(v.ID)
+}
+
 // Mutation returns the UsageLogMutation object of the builder.
 func (_c *UsageLogCreate) Mutation() *UsageLogMutation {
 	return _c.mutation
@@ -1218,6 +1258,38 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.SubscriptionID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.RequestAuditIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2O,
+			Inverse: false,
+			Table:   usagelog.RequestAuditTable,
+			Columns: []string{usagelog.RequestAuditColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(requestaudit.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.RequestAuditReservationIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2O,
+			Inverse: false,
+			Table:   usagelog.RequestAuditReservationTable,
+			Columns: []string{usagelog.RequestAuditReservationColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(requestauditreservation.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec

@@ -586,6 +586,15 @@ export default {
         codexAddRow: "Add entry",
         codexRemoveRow: "Remove",
       },
+      requestAuditForce: {
+        title: 'Forced audit mode',
+        description: 'Admin-only enforcement for all supported routes or selected route families.',
+        hint: 'The global switch enforces every supported route. With it off, individual route switches can still enforce their families. Metadata must be written before upstream forwarding; after a response starts, failures are marked incomplete. This depends on the primary database and is not recommended globally at high traffic.',
+        enabled: 'Enforce all supported routes',
+        messages: 'Messages routes',
+        chatCompletions: 'Chat Completions routes',
+        responses: 'Responses routes',
+      },
       webSearchEmulation: {
         title: 'Web Search Emulation',
         description: 'Inject web search capability for Anthropic API Key accounts that don\'t natively support it',

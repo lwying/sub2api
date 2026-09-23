@@ -945,6 +945,7 @@ var (
 		{Name: "long_context_pricing_enabled", Type: field.TypeBool, Default: true},
 		{Name: "model_pricing", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "claude_code_only", Type: field.TypeBool, Default: false},
+		{Name: "thinking_disabled_strict", Type: field.TypeBool, Default: false},
 		{Name: "fallback_group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "fallback_group_id_on_invalid_request", Type: field.TypeInt64, Nullable: true},
 		{Name: "model_routing", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
@@ -1004,7 +1005,7 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[49]},
+				Columns: []*schema.Column{GroupsColumns[50]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
@@ -1505,6 +1506,82 @@ var (
 				Name:    "redeemcode_expires_at",
 				Unique:  false,
 				Columns: []*schema.Column{RedeemCodesColumns[8]},
+			},
+		},
+	}
+	// RequestAuditsColumns holds the columns for the "request_audits" table.
+	RequestAuditsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "headers", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "events", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "attempts", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "capture_completeness", Type: field.TypeString, Default: "complete"},
+		{Name: "capture_reason", Type: field.TypeString, Default: ""},
+		{Name: "request_fingerprint", Type: field.TypeString, Nullable: true},
+		{Name: "fingerprint_key_version", Type: field.TypeInt, Default: 0},
+		{Name: "fingerprint_salt", Type: field.TypeBytes, Nullable: true, SchemaType: map[string]string{"postgres": "bytea"}},
+		{Name: "metadata", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "usage_log_id", Type: field.TypeInt64, Unique: true},
+	}
+	// RequestAuditsTable holds the schema information for the "request_audits" table.
+	RequestAuditsTable = &schema.Table{
+		Name:       "request_audits",
+		Columns:    RequestAuditsColumns,
+		PrimaryKey: []*schema.Column{RequestAuditsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "request_audits_usage_logs_request_audit",
+				Columns:    []*schema.Column{RequestAuditsColumns[11]},
+				RefColumns: []*schema.Column{UsageLogsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+	}
+	// RequestAuditReservationsColumns holds the columns for the "request_audit_reservations" table.
+	RequestAuditReservationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "logical_key", Type: field.TypeString},
+		{Name: "route_family", Type: field.TypeString},
+		{Name: "forced", Type: field.TypeBool, Default: false},
+		{Name: "headers", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "attempts", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "capture_completeness", Type: field.TypeString, Default: "complete"},
+		{Name: "capture_reason", Type: field.TypeString, Default: ""},
+		{Name: "send_started_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "expires_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "usage_log_id", Type: field.TypeInt64, Unique: true, Nullable: true},
+	}
+	// RequestAuditReservationsTable holds the schema information for the "request_audit_reservations" table.
+	RequestAuditReservationsTable = &schema.Table{
+		Name:       "request_audit_reservations",
+		Columns:    RequestAuditReservationsColumns,
+		PrimaryKey: []*schema.Column{RequestAuditReservationsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "request_audit_reservations_usage_logs_request_audit_reservation",
+				Columns:    []*schema.Column{RequestAuditReservationsColumns[12]},
+				RefColumns: []*schema.Column{UsageLogsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "requestauditreservation_logical_key",
+				Unique:  true,
+				Columns: []*schema.Column{RequestAuditReservationsColumns[1]},
+			},
+			{
+				Name:    "requestauditreservation_usage_log_id",
+				Unique:  true,
+				Columns: []*schema.Column{RequestAuditReservationsColumns[12]},
+			},
+			{
+				Name:    "requestauditreservation_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{RequestAuditReservationsColumns[9]},
 			},
 		},
 	}
@@ -2115,6 +2192,8 @@ var (
 		PromoCodeUsagesTable,
 		ProxiesTable,
 		RedeemCodesTable,
+		RequestAuditsTable,
+		RequestAuditReservationsTable,
 		SecuritySecretsTable,
 		SettingsTable,
 		SubscriptionPlansTable,
@@ -2234,6 +2313,14 @@ func init() {
 	RedeemCodesTable.ForeignKeys[1].RefTable = UsersTable
 	RedeemCodesTable.Annotation = &entsql.Annotation{
 		Table: "redeem_codes",
+	}
+	RequestAuditsTable.ForeignKeys[0].RefTable = UsageLogsTable
+	RequestAuditsTable.Annotation = &entsql.Annotation{
+		Table: "request_audits",
+	}
+	RequestAuditReservationsTable.ForeignKeys[0].RefTable = UsageLogsTable
+	RequestAuditReservationsTable.Annotation = &entsql.Annotation{
+		Table: "request_audit_reservations",
 	}
 	SecuritySecretsTable.Annotation = &entsql.Annotation{
 		Table: "security_secrets",

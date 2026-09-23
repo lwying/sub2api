@@ -297,8 +297,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
+	var sseEvents []RequestAuditSSEEvent
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
+	// streamIncomplete 标记「响应已开始后上游在没有终止信号的情况下结束」。
+	// 它只影响审计采集完整性（使用记录上的请求审计记「响应中途不完整」），
+	// 不改变返回结果：已观测 usage 照常计费，已写出的字节照常留在客户端。
+	streamIncomplete := false
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -337,6 +342,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		refusalDetector.ObserveSSELine(line)
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
+			sseEvents = appendRequestAuditSSEEvent(c.Request.Context(), sseEvents, "", payload)
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
@@ -381,6 +387,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			SSEEvents:                     sseEvents,
+			ClientDisconnect:              clientDisconnected,
+			StreamIncomplete:              streamIncomplete,
 		}
 	}
 
@@ -420,6 +429,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		// 已写出语义字节：无法再 failover，改为带类型的上游错误。handler 会据此
 		// 补发 SSE error 帧并把本次请求计入 SLA 失败。
+		//
+		// 部分结果必须带上 StreamIncomplete：usage 继续用于计费、客户端保留已收
+		// 字节，但使用记录上的请求审计要能区分「完整」与「响应中途不完整」——
+		// 否则上游截断会被记成一次正常收尾的流。
+		streamIncomplete = true
 		recordOpenAIRawStreamTruncation(c, account, requestID, cause, "http_error")
 		return resultWithUsage(), newOpenAIUpstreamStreamReadError(cause)
 	}

@@ -594,6 +594,20 @@ func (_c *GroupCreate) SetNillableClaudeCodeOnly(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetThinkingDisabledStrict sets the "thinking_disabled_strict" field.
+func (_c *GroupCreate) SetThinkingDisabledStrict(v bool) *GroupCreate {
+	_c.mutation.SetThinkingDisabledStrict(v)
+	return _c
+}
+
+// SetNillableThinkingDisabledStrict sets the "thinking_disabled_strict" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableThinkingDisabledStrict(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetThinkingDisabledStrict(*v)
+	}
+	return _c
+}
+
 // SetFallbackGroupID sets the "fallback_group_id" field.
 func (_c *GroupCreate) SetFallbackGroupID(v int64) *GroupCreate {
 	_c.mutation.SetFallbackGroupID(v)
@@ -1127,6 +1141,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultClaudeCodeOnly
 		_c.mutation.SetClaudeCodeOnly(v)
 	}
+	if _, ok := _c.mutation.ThinkingDisabledStrict(); !ok {
+		v := group.DefaultThinkingDisabledStrict
+		_c.mutation.SetThinkingDisabledStrict(v)
+	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		v := group.DefaultModelRoutingEnabled
 		_c.mutation.SetModelRoutingEnabled(v)
@@ -1339,6 +1357,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ClaudeCodeOnly(); !ok {
 		return &ValidationError{Name: "claude_code_only", err: errors.New(`ent: missing required field "Group.claude_code_only"`)}
+	}
+	if _, ok := _c.mutation.ThinkingDisabledStrict(); !ok {
+		return &ValidationError{Name: "thinking_disabled_strict", err: errors.New(`ent: missing required field "Group.thinking_disabled_strict"`)}
 	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		return &ValidationError{Name: "model_routing_enabled", err: errors.New(`ent: missing required field "Group.model_routing_enabled"`)}
@@ -1612,6 +1633,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 		_node.ClaudeCodeOnly = value
+	}
+	if value, ok := _c.mutation.ThinkingDisabledStrict(); ok {
+		_spec.SetField(group.FieldThinkingDisabledStrict, field.TypeBool, value)
+		_node.ThinkingDisabledStrict = value
 	}
 	if value, ok := _c.mutation.FallbackGroupID(); ok {
 		_spec.SetField(group.FieldFallbackGroupID, field.TypeInt64, value)
@@ -2576,6 +2601,18 @@ func (u *GroupUpsert) SetClaudeCodeOnly(v bool) *GroupUpsert {
 // UpdateClaudeCodeOnly sets the "claude_code_only" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateClaudeCodeOnly() *GroupUpsert {
 	u.SetExcluded(group.FieldClaudeCodeOnly)
+	return u
+}
+
+// SetThinkingDisabledStrict sets the "thinking_disabled_strict" field.
+func (u *GroupUpsert) SetThinkingDisabledStrict(v bool) *GroupUpsert {
+	u.Set(group.FieldThinkingDisabledStrict, v)
+	return u
+}
+
+// UpdateThinkingDisabledStrict sets the "thinking_disabled_strict" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateThinkingDisabledStrict() *GroupUpsert {
+	u.SetExcluded(group.FieldThinkingDisabledStrict)
 	return u
 }
 
@@ -3799,6 +3836,20 @@ func (u *GroupUpsertOne) SetClaudeCodeOnly(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateClaudeCodeOnly() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateClaudeCodeOnly()
+	})
+}
+
+// SetThinkingDisabledStrict sets the "thinking_disabled_strict" field.
+func (u *GroupUpsertOne) SetThinkingDisabledStrict(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetThinkingDisabledStrict(v)
+	})
+}
+
+// UpdateThinkingDisabledStrict sets the "thinking_disabled_strict" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateThinkingDisabledStrict() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateThinkingDisabledStrict()
 	})
 }
 
@@ -5245,6 +5296,20 @@ func (u *GroupUpsertBulk) SetClaudeCodeOnly(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateClaudeCodeOnly() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateClaudeCodeOnly()
+	})
+}
+
+// SetThinkingDisabledStrict sets the "thinking_disabled_strict" field.
+func (u *GroupUpsertBulk) SetThinkingDisabledStrict(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetThinkingDisabledStrict(v)
+	})
+}
+
+// UpdateThinkingDisabledStrict sets the "thinking_disabled_strict" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateThinkingDisabledStrict() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateThinkingDisabledStrict()
 	})
 }
 

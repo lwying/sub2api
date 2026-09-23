@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -33,6 +34,14 @@ const (
 )
 
 const EndpointAntigravityGenerateContent = "/v1internal:streamGenerateContent"
+
+// cloneRequestAuditHeaders keeps only safe protocol metadata before handing data to async usage/audit.
+func cloneRequestAuditHeaders(c *gin.Context) http.Header {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+	return service.SanitizeRequestAuditHeadersSnapshot(c.Request.Header)
+}
 
 // gin.Context keys used by the middleware and helpers below.
 const (

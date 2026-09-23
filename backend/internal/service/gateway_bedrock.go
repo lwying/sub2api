@@ -139,6 +139,7 @@ func (s *GatewayService) forwardBedrock(
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var sseEvents []RequestAuditSSEEvent
 	if reqStream {
 		streamResult, err := s.handleBedrockStreamingResponse(ctx, resp, c, account, startTime, reqModel)
 		if err != nil {
@@ -147,6 +148,7 @@ func (s *GatewayService) forwardBedrock(
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
+		sseEvents = streamResult.sseEvents
 	} else {
 		usage, err = s.handleBedrockNonStreamingResponse(ctx, resp, c, account)
 		if err != nil {
@@ -167,6 +169,7 @@ func (s *GatewayService) forwardBedrock(
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
+		SSEEvents:        sseEvents,
 	}, nil
 }
 
@@ -197,6 +200,9 @@ func (s *GatewayService) executeBedrockUpstream(
 			return nil, err
 		}
 
+		upstreamReq = bindRequestAuditHTTPAttempt(
+			upstreamReq, c, account.ID, strings.TrimSpace(modelID), RequestAuditProtocolAnthropic,
+		)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
 		if err != nil {
 			if resp != nil && resp.Body != nil {

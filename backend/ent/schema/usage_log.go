@@ -215,6 +215,16 @@ func (UsageLog) Edges() []ent.Edge {
 			Ref("usage_logs").
 			Field("subscription_id").
 			Unique(),
+		// 请求审计记录跟随使用记录：删除使用记录时由数据库级联删除审计行。
+		// 注意：O2O 外键的 OnDelete 注解必须放在非反向（edge.To）侧，
+		// 生成器只读取该侧的注解（entc/gen/graph.go deleteAction）。
+		edge.To("request_audit", RequestAudit.Type).
+			Unique().
+			Annotations(entsql.OnDelete(entsql.Cascade)),
+		// 预留行 usage_log_id 可空，但同样在删除使用记录时级联删除。
+		edge.To("request_audit_reservation", RequestAuditReservation.Type).
+			Unique().
+			Annotations(entsql.OnDelete(entsql.Cascade)),
 	}
 }
 

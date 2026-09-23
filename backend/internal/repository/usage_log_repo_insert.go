@@ -115,7 +115,15 @@ type usageLogCreateResult struct {
 type usageLogBestEffortRequest struct {
 	prepared usageLogInsertPrepared
 	apiKeyID int64
+	log      *service.UsageLog
 	resultCh chan error
+}
+
+type usageLogBestEffortGroup struct {
+	prepared usageLogInsertPrepared
+	apiKeyID int64
+	key      string
+	reqs     []usageLogBestEffortRequest
 }
 
 type usageLogInsertPrepared struct {
@@ -189,6 +197,7 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 	req := usageLogBestEffortRequest{
 		prepared: prepareUsageLogInsert(log),
 		apiKeyID: log.APIKeyID,
+		log:      log,
 		resultCh: make(chan error, 1),
 	}
 	if key, ok := r.bestEffortRecentKey(req.prepared.requestID, req.apiKeyID); ok {
@@ -564,15 +573,8 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		return
 	}
 
-	type bestEffortGroup struct {
-		prepared usageLogInsertPrepared
-		apiKeyID int64
-		key      string
-		reqs     []usageLogBestEffortRequest
-	}
-
-	groupsByKey := make(map[string]*bestEffortGroup, len(batch))
-	groupOrder := make([]*bestEffortGroup, 0, len(batch))
+	groupsByKey := make(map[string]*usageLogBestEffortGroup, len(batch))
+	groupOrder := make([]*usageLogBestEffortGroup, 0, len(batch))
 	preparedList := make([]usageLogInsertPrepared, 0, len(batch))
 
 	for idx, req := range batch {
@@ -583,7 +585,7 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		}
 		group, exists := groupsByKey[key]
 		if !exists {
-			group = &bestEffortGroup{
+			group = &usageLogBestEffortGroup{
 				prepared: prepared,
 				apiKeyID: req.apiKeyID,
 				key:      key,
@@ -615,18 +617,90 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
 				r.bestEffortRecent.SetDefault(group.key, struct{}{})
 			}
+			if singleErr == nil {
+				assignBestEffortUsageLogIDs(ctx, db, []*usageLogBestEffortGroup{group})
+			}
 			for _, req := range group.reqs {
 				sendUsageLogBestEffortResult(req.resultCh, singleErr)
 			}
 		}
 		return
 	}
+	assignBestEffortUsageLogIDs(ctx, db, groupOrder)
 	for _, group := range groupOrder {
 		if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
 			r.bestEffortRecent.SetDefault(group.key, struct{}{})
 		}
 		for _, req := range group.reqs {
 			sendUsageLogBestEffortResult(req.resultCh, nil)
+		}
+	}
+}
+
+func assignBestEffortUsageLogIDs(ctx context.Context, db *sql.DB, groups []*usageLogBestEffortGroup) {
+	if db == nil || len(groups) == 0 {
+		return
+	}
+	type lookupKey struct {
+		requestID string
+		apiKeyID  int64
+	}
+	wanted := make([]lookupKey, 0, len(groups))
+	seen := make(map[lookupKey]struct{}, len(groups))
+	for _, group := range groups {
+		if group == nil || group.prepared.requestID == "" {
+			continue
+		}
+		key := lookupKey{group.prepared.requestID, group.apiKeyID}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		wanted = append(wanted, key)
+	}
+	if len(wanted) == 0 {
+		return
+	}
+	var b strings.Builder
+	args := make([]any, 0, len(wanted)*2)
+	b.WriteString("SELECT id, request_id, api_key_id FROM usage_logs WHERE (request_id, api_key_id) IN (")
+	for i, key := range wanted {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "($%d,$%d)", i*2+1, i*2+2)
+		args = append(args, key.requestID, key.apiKeyID)
+	}
+	b.WriteByte(')')
+	rows, err := db.QueryContext(ctx, b.String(), args...)
+	if err != nil {
+		logger.LegacyPrintf("repository.usage_log", "best-effort id lookup failed: %v", err)
+		return
+	}
+	defer rows.Close()
+	ids := make(map[lookupKey]int64, len(wanted))
+	for rows.Next() {
+		var id int64
+		var requestID string
+		var apiKeyID int64
+		if err := rows.Scan(&id, &requestID, &apiKeyID); err != nil {
+			logger.LegacyPrintf("repository.usage_log", "best-effort id scan failed: %v", err)
+			continue
+		}
+		ids[lookupKey{requestID, apiKeyID}] = id
+	}
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		id := ids[lookupKey{group.prepared.requestID, group.apiKeyID}]
+		if id <= 0 {
+			continue
+		}
+		for _, req := range group.reqs {
+			if req.log != nil && req.log.ID == 0 {
+				req.log.ID = id
+			}
 		}
 	}
 }

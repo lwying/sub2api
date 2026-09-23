@@ -13,6 +13,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/requestaudit"
+	"github.com/Wei-Shaw/sub2api/ent/requestauditreservation"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
@@ -135,9 +137,13 @@ type UsageLogEdges struct {
 	Group *Group `json:"group,omitempty"`
 	// Subscription holds the value of the subscription edge.
 	Subscription *UserSubscription `json:"subscription,omitempty"`
+	// RequestAudit holds the value of the request_audit edge.
+	RequestAudit *RequestAudit `json:"request_audit,omitempty"`
+	// RequestAuditReservation holds the value of the request_audit_reservation edge.
+	RequestAuditReservation *RequestAuditReservation `json:"request_audit_reservation,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [5]bool
+	loadedTypes [7]bool
 }
 
 // UserOrErr returns the User value or an error if the edge
@@ -193,6 +199,28 @@ func (e UsageLogEdges) SubscriptionOrErr() (*UserSubscription, error) {
 		return nil, &NotFoundError{label: usersubscription.Label}
 	}
 	return nil, &NotLoadedError{edge: "subscription"}
+}
+
+// RequestAuditOrErr returns the RequestAudit value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e UsageLogEdges) RequestAuditOrErr() (*RequestAudit, error) {
+	if e.RequestAudit != nil {
+		return e.RequestAudit, nil
+	} else if e.loadedTypes[5] {
+		return nil, &NotFoundError{label: requestaudit.Label}
+	}
+	return nil, &NotLoadedError{edge: "request_audit"}
+}
+
+// RequestAuditReservationOrErr returns the RequestAuditReservation value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e UsageLogEdges) RequestAuditReservationOrErr() (*RequestAuditReservation, error) {
+	if e.RequestAuditReservation != nil {
+		return e.RequestAuditReservation, nil
+	} else if e.loadedTypes[6] {
+		return nil, &NotFoundError{label: requestauditreservation.Label}
+	}
+	return nil, &NotLoadedError{edge: "request_audit_reservation"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -574,6 +602,16 @@ func (_m *UsageLog) QueryGroup() *GroupQuery {
 // QuerySubscription queries the "subscription" edge of the UsageLog entity.
 func (_m *UsageLog) QuerySubscription() *UserSubscriptionQuery {
 	return NewUsageLogClient(_m.config).QuerySubscription(_m)
+}
+
+// QueryRequestAudit queries the "request_audit" edge of the UsageLog entity.
+func (_m *UsageLog) QueryRequestAudit() *RequestAuditQuery {
+	return NewUsageLogClient(_m.config).QueryRequestAudit(_m)
+}
+
+// QueryRequestAuditReservation queries the "request_audit_reservation" edge of the UsageLog entity.
+func (_m *UsageLog) QueryRequestAuditReservation() *RequestAuditReservationQuery {
+	return NewUsageLogClient(_m.config).QueryRequestAuditReservation(_m)
 }
 
 // Update returns a builder for updating this UsageLog.

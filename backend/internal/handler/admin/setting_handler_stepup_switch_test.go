@@ -157,6 +157,25 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
 	require.Equal(t, "false", repo.values[service.SettingKeySessionBindingEnabled])
 }
 
+func TestUpdateSettingsRequestAuditForceFlagsPreserveOmittedAndAcceptExplicitFalse(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyRequestAuditForceEnabled:         "true",
+		service.SettingKeyRequestAuditForceMessages:        "true",
+		service.SettingKeyRequestAuditForceChatCompletions: "true",
+		service.SettingKeyRequestAuditForceResponses:       "true",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"request_audit_force_chat_completions": false,
+	}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyRequestAuditForceEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyRequestAuditForceMessages])
+	require.Equal(t, "false", repo.values[service.SettingKeyRequestAuditForceChatCompletions])
+	require.Equal(t, "true", repo.values[service.SettingKeyRequestAuditForceResponses])
+	require.Contains(t, rec.Body.String(), `"request_audit_force_chat_completions":false`)
+}
+
 func TestUpdateSettingsForwardedClientIPHeadersOmittedPreservesAndEmptyClears(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		service.SettingKeyForwardedClientIPHeaders: `["X-Cdn-Ip","True-Client-Ip"]`,

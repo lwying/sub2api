@@ -22,9 +22,10 @@ func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *te
 	repo.jobs[job.BatchID] = job
 	billing := &fakeBatchImageBillingRepo{}
 	usageLogs := &openAIRecordUsageLogRepoStub{}
+	auditRepo := &stubRequestAuditRepo{}
 	svc := &BatchImageSettlementService{
 		Repo: repo, BillingRepo: billing, Pricing: &fakeBatchImagePricingResolver{unitPrice: 0.25},
-		UsageLogRepo: usageLogs,
+		UsageLogRepo: usageLogs, RequestAuditRepo: auditRepo,
 	}
 
 	result, err := svc.Settle(context.Background(), job.BatchID)
@@ -44,6 +45,9 @@ func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *te
 	require.Equal(t, job.BatchID, billing.captures[0].BatchID)
 	require.Equal(t, 0.75, billing.captures[0].ActualAmount)
 	require.Equal(t, 1.25, billing.captures[0].HoldAmount)
+	require.NotNil(t, auditRepo.created)
+	require.Equal(t, RequestAuditCaptureNotCaptured, auditRepo.created.CaptureCompleteness)
+	require.Equal(t, RequestAuditNotCapturedReasonPhase1Uncovered, auditRepo.created.CaptureReason)
 	require.NotContains(t, fmt.Sprintf("%+v", billing.captures[0]), batchImageTestData)
 	require.NotContains(t, fmt.Sprintf("%+v", billing.captures[0]), "gs://")
 	require.NotContains(t, fmt.Sprintf("%+v", billing.captures[0]), "prompt")

@@ -2615,6 +2615,52 @@ func HasSubscriptionWith(preds ...predicate.UserSubscription) predicate.UsageLog
 	})
 }
 
+// HasRequestAudit applies the HasEdge predicate on the "request_audit" edge.
+func HasRequestAudit() predicate.UsageLog {
+	return predicate.UsageLog(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2O, false, RequestAuditTable, RequestAuditColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasRequestAuditWith applies the HasEdge predicate on the "request_audit" edge with a given conditions (other predicates).
+func HasRequestAuditWith(preds ...predicate.RequestAudit) predicate.UsageLog {
+	return predicate.UsageLog(func(s *sql.Selector) {
+		step := newRequestAuditStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasRequestAuditReservation applies the HasEdge predicate on the "request_audit_reservation" edge.
+func HasRequestAuditReservation() predicate.UsageLog {
+	return predicate.UsageLog(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2O, false, RequestAuditReservationTable, RequestAuditReservationColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasRequestAuditReservationWith applies the HasEdge predicate on the "request_audit_reservation" edge with a given conditions (other predicates).
+func HasRequestAuditReservationWith(preds ...predicate.RequestAuditReservation) predicate.UsageLog {
+	return predicate.UsageLog(func(s *sql.Selector) {
+		step := newRequestAuditReservationStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // And groups predicates with the AND operator between them.
 func And(predicates ...predicate.UsageLog) predicate.UsageLog {
 	return predicate.UsageLog(sql.AndPredicates(predicates...))

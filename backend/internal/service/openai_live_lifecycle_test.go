@@ -240,9 +240,22 @@ type liveTestUsageRepo struct {
 	logs []*UsageLog
 }
 
+type liveTestRequestAuditRepo struct {
+	RequestAuditRepository
+	created *RequestAuditRecord
+}
+
+func (r *liveTestRequestAuditRepo) CreateRequestAudit(_ context.Context, rec *RequestAuditRecord) error {
+	r.created = rec
+	return nil
+}
+
 func (r *liveTestUsageRepo) Create(_ context.Context, log *UsageLog) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if log.ID == 0 {
+		log.ID = 7001
+	}
 	copy := *log
 	r.logs = append(r.logs, &copy)
 	return true, nil
@@ -284,10 +297,12 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 	require.NoError(t, store.SaveLiveCall(context.Background(), record, time.Hour))
 	concurrencyCache := &liveTestConcurrencyCache{}
 	usageRepo := &liveTestUsageRepo{}
+	auditRepo := &liveTestRequestAuditRepo{}
 	service := &OpenAIGatewayService{
 		cache:              store,
 		concurrencyService: NewConcurrencyService(concurrencyCache),
 		usageLogRepo:       usageRepo,
+		requestAuditRepo:   auditRepo,
 	}
 
 	service.finalizeLiveCall(record)
@@ -308,6 +323,10 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 	require.Zero(t, log.OutputTokens)
 	require.Zero(t, log.TotalCost)
 	require.Zero(t, log.ActualCost)
+	require.NotNil(t, auditRepo.created)
+	require.Equal(t, int64(7001), auditRepo.created.UsageLogID)
+	require.Equal(t, RequestAuditCaptureNotCaptured, auditRepo.created.CaptureCompleteness)
+	require.Equal(t, RequestAuditNotCapturedReasonPhase1Uncovered, auditRepo.created.CaptureReason)
 }
 
 func TestGetLiveCallForIdentityRejectsMismatchedCaller(t *testing.T) {

@@ -80,6 +80,73 @@ export interface CreateUsageCleanupTaskRequest {
   timezone?: string
 }
 
+export interface RequestAuditEventSkeleton {
+  type: string
+  index: number
+  bytes: number
+  fingerprint?: string
+  truncated?: boolean
+  original?: number
+  original_bytes?: number
+  kept?: number
+  kept_bytes?: number
+  dropped?: number
+  dropped_bytes?: number
+  reason?: string
+}
+
+export interface RequestAuditProtocolFields {
+  stream?: boolean
+  thinking_type?: 'disabled' | 'enabled' | 'adaptive'
+  present_fields?: string[]
+  normalized_fields?: string[]
+}
+
+export interface RequestAuditMetadata {
+  routes?: Record<string, string>
+  ids?: Record<string, string>
+  status?: Record<string, number>
+  bytes?: Record<string, number>
+  tokens?: Record<string, number>
+  protocol_fields?: RequestAuditProtocolFields
+}
+
+export interface RequestAuditAttempt {
+  account_id?: number
+  /**
+   * @deprecated The backend strips the raw model alias at the persistence boundary, so this
+   * field is never populated. Render `model_fingerprint` instead and never display the raw alias.
+   */
+  model?: string
+  /**
+   * Request-scoped HMAC digest of the model alias for this attempt (64 lowercase hex characters).
+   * It is not reversible and cannot be correlated across requests or users, but equal aliases
+   * within one logical request produce the same digest, so stages can be compared.
+   */
+  model_fingerprint?: string
+  protocol?: string
+  stage?: string
+  wire_request_headers?: Record<string, unknown>
+  upstream_response_headers?: Record<string, unknown>
+  upstream_status?: number
+  request_payload_bytes?: number
+  response_payload_bytes?: number
+  response_read_complete?: boolean
+}
+
+export interface RequestAudit {
+  usage_log_id: number
+  /** Inbound/client headers only; upstream headers live on their attempt. */
+  headers?: Record<string, unknown>
+  events: RequestAuditEventSkeleton[]
+  attempts?: RequestAuditAttempt[]
+  capture_completeness?: string
+  capture_reason?: string
+  request_fingerprint?: string
+  fingerprint_key_version?: number
+  metadata?: RequestAuditMetadata
+}
+
 export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number
   exact_total?: boolean
@@ -207,6 +274,20 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
   return data
 }
 
+/**
+ * Get request-audit metadata for a usage log (admin only).
+ * Never includes model body or credential plaintext.
+ */
+export async function getRequestAudit(
+  id: number,
+  options?: { signal?: AbortSignal }
+): Promise<RequestAudit> {
+  const { data } = await apiClient.get<RequestAudit>(`/admin/usage/${id}/request-audit`, {
+    signal: options?.signal
+  })
+  return data
+}
+
 export const adminUsageAPI = {
   list,
   getStats,
@@ -214,7 +295,8 @@ export const adminUsageAPI = {
   searchApiKeys,
   listCleanupTasks,
   createCleanupTask,
-  cancelCleanupTask
+  cancelCleanupTask,
+  getRequestAudit
 }
 
 export default adminUsageAPI

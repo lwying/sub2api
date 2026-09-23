@@ -1169,6 +1169,13 @@ export default {
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
       },
+      thinkingDisabledStrict: {
+        title: 'Thinking 禁用形态严格校验',
+        tooltip:
+          '启用后，thinking.type=disabled 的对象只允许包含 type。多余键会在发往上游前被本地 400 拒绝。',
+        enabled: '多余键本地拒绝',
+        disabled: '多余键自动剥离'
+      },
       openaiMessages: {
         title: 'OpenAI Messages 调度配置',
         allowDispatch: '允许 /v1/messages 调度',

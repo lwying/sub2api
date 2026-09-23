@@ -189,10 +189,16 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 
 	anthropicState := apicompat.NewChatCompletionsToAnthropicStreamState(originalModel)
 	clientDisconnected := false
+	// terminalSeen 记录上游是否给出过终止信号（见 ccChunkCarriesTerminalSignal；
+	// [DONE] 哨兵由 scan 的 SawDone 单独记录）。
+	terminalSeen := false
 
 	// 与 responses 兄弟不同：客户端断开后仍继续做事件转换（喂 anthropicState），
 	// 仅跳过写出，保证 finalize 阶段的 usage 汇总不受断开影响。
 	emitChunk := func(chunk *apicompat.ChatCompletionsChunk) {
+		if ccChunkCarriesTerminalSignal(chunk) {
+			terminalSeen = true
+		}
 		// CC chunk → Anthropic events (direct, single state machine)
 		anthropicEvents := apicompat.ChatCompletionsChunkToAnthropicEvents(chunk, anthropicState)
 		if clientDisconnected {
@@ -216,6 +222,12 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 
 	scan := s.scanCCStream(c, resp, "openai messages chat fallback", requestID, startTime, emitChunk)
 	usage := scan.Usage
+	// 采集完整性：只有观测到终止信号（[DONE] / finish_reason / usage 帧）才算正常收尾。
+	// 读错误或缺终止信号的干净 EOF 都是「响应已开始后上游异常终止」：已观测的 usage 与
+	// 事件骨架照常带出（计费与抽屉仍可用），但结果必须带 StreamIncomplete，使使用记录上的
+	// 请求审计记「响应中途不完整」而不是「完整」。客户端主动断开/取消由 ClientDisconnect
+	// 单独标记（审计同样不完整），不算上游截断。
+	streamIncomplete := conversionStreamIncomplete(terminalSeen || scan.SawDone, clientDisconnected, scan.Err)
 
 	if scan.Err != nil {
 		// Broken upstream read: skip finalization so no synthetic message_stop
@@ -234,7 +246,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			Stream:                      true,
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
+			SSEEvents:                   scan.SSEEvents,
 			ClientDisconnect:            clientDisconnected,
+			StreamIncomplete:            streamIncomplete,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
 
@@ -271,6 +285,8 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		Stream:                      true,
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                scan.FirstTokenMs,
+		SSEEvents:                   scan.SSEEvents,
 		ClientDisconnect:            clientDisconnected,
+		StreamIncomplete:            streamIncomplete,
 	}, nil
 }

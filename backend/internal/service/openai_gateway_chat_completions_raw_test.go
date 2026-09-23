@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -982,6 +983,150 @@ func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing
 	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
+}
+
+// rawChatCompletionsAuditBodySentinel 是上游 SSE data 中的正文标记：事件骨架只能
+// 保留类型/序号/字节/指纹，任何位置出现该子串都说明正文被落进了审计记录。
+const rawChatCompletionsAuditBodySentinel = "RAW_CC_AUDIT_BODY_SENTINEL"
+
+// rawChatCompletionsAuditDeltaLine 是最小可透传的 CC 增量帧（含模型正文标记）。
+func rawChatCompletionsAuditDeltaLine() string {
+	return `data: {"id":"chatcmpl_audit","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"` +
+		rawChatCompletionsAuditBodySentinel + `"},"finish_reason":null}]}`
+}
+
+// rawChatCompletionsAuditUsageLine 是 include_usage 生效时的末尾用量帧。
+const rawChatCompletionsAuditUsageLine = `data: {"id":"chatcmpl_audit","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":6,"total_tokens":17}}`
+
+// raw 直转路径此前只要 HTTP 状态是 200 就按成功收尾，返回的部分结果也不带
+// StreamIncomplete：上游在写出后中途截断（干净 EOF 或连接 reset）时，使用记录上的
+// 请求审计会看起来是一次正常收尾的流。
+//
+// 本测试断言外部可观测行为：
+//   - 已写出内容后上游在没有终止信号的情况下结束：result 仍带回（usage 计费、
+//     已收字节留在客户端），但 StreamIncomplete=true，审计完整性为「响应中途不完整」。
+//   - 收到终止信号（[DONE] / usage 帧）的正常流：StreamIncomplete=false，完整性为「完整」。
+//   - 事件骨架只记类型/序号/体量，任何审计输出都不含 delta 正文。
+func TestForwardAsRawChatCompletions_RequestAuditMarksIncompleteStreams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name             string
+		body             io.ReadCloser
+		wantErrCode      string
+		wantIncomplete   bool
+		wantCompleteness string
+		wantEvents       int
+		wantInputTokens  int
+		wantOutputTokens int
+	}{
+		{
+			name: "terminal done sentinel keeps the audit complete",
+			body: io.NopCloser(strings.NewReader(strings.Join([]string{
+				rawChatCompletionsAuditDeltaLine(),
+				"",
+				`data: [DONE]`,
+				"",
+			}, "\n"))),
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       2,
+		},
+		{
+			// 干净 EOF、无 [DONE]/usage/finish_reason，且没有传输层读错误。
+			name: "clean EOF without terminal event is incomplete",
+			body: io.NopCloser(strings.NewReader(strings.Join([]string{
+				rawChatCompletionsAuditDeltaLine(),
+				"",
+			}, "\n"))),
+			wantErrCode:      OpenAIUpstreamStreamTruncatedCode,
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+		{
+			// usage 帧是 CC 协议的终止信号：生成已完成，只是尾巴（[DONE]）丢失。
+			// 必须继续按成功计费，不得标记为截断。
+			name: "usage frame without done sentinel still bills and stays complete",
+			body: io.NopCloser(strings.NewReader(strings.Join([]string{
+				rawChatCompletionsAuditDeltaLine(),
+				"",
+				rawChatCompletionsAuditUsageLine,
+				"",
+			}, "\n"))),
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       2,
+			wantInputTokens:  11,
+			wantOutputTokens: 6,
+		},
+		{
+			name: "upstream read error after partial output is incomplete",
+			body: &openAIChatStreamReadErrorCloser{
+				payload: []byte(rawChatCompletionsAuditDeltaLine() + "\n\n"),
+				err:     io.ErrUnexpectedEOF,
+			},
+			wantErrCode:      OpenAIUpstreamStreamReadErrorCode,
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_raw_audit"}},
+				Body:       tt.body,
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+			require.NotNil(t, result, "已收字节的部分结果必须带回，否则 usage 会漏记")
+			if tt.wantErrCode == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+				require.True(t, ok)
+				require.Equal(t, tt.wantErrCode, code)
+				require.NotEmpty(t, message)
+			}
+
+			require.Equal(t, tt.wantIncomplete, result.StreamIncomplete,
+				"响应已开始后上游异常终止必须标记流不完整")
+			require.False(t, result.ClientDisconnect, "上游终止不是客户端断开")
+			require.Equal(t, tt.wantInputTokens, result.Usage.InputTokens)
+			require.Equal(t, tt.wantOutputTokens, result.Usage.OutputTokens)
+
+			// 客户端仍收到透传的原始 SSE 中继（含 delta 正文），截断不回收已写字节。
+			require.Contains(t, rec.Body.String(), rawChatCompletionsAuditBodySentinel)
+
+			require.Len(t, result.SSEEvents, tt.wantEvents, "事件骨架按上游 data 行计数")
+			for _, ev := range result.SSEEvents {
+				require.Empty(t, ev.Data, "事件骨架不得携带 SSE data 正文")
+				require.Positive(t, ev.Bytes, "事件骨架须记录体量")
+			}
+
+			repo := &stubRequestAuditRepo{}
+			require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, RequestAuditInput{
+				SSEEvents:        requestAuditSSEEventsFromOpenAIResult(result),
+				ClientDisconnect: result.ClientDisconnect,
+				StreamIncomplete: result.StreamIncomplete,
+			}))
+			require.NotNil(t, repo.created)
+			require.Equal(t, tt.wantCompleteness, repo.created.CaptureCompleteness)
+			require.Len(t, repo.created.Events, tt.wantEvents)
+			encoded, marshalErr := json.Marshal(repo.created)
+			require.NoError(t, marshalErr)
+			require.NotContains(t, string(encoded), rawChatCompletionsAuditBodySentinel, "请求审计不得落模型正文")
+		})
+	}
 }
 
 func TestOpenAIRawStreamTerminalState(t *testing.T) {

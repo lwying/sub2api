@@ -166,6 +166,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
 	body = parsedReq.Body.Bytes()
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
@@ -228,6 +229,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteMessages, true) {
+		return
+	}
+	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
+	if requestAuditFingerprint != nil {
+		requestAuditFingerprint.DigestRequest(body)
+		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
+	}
+
 	// Track if we've started streaming (for error handling)
 	streamStarted := false
 
@@ -264,7 +274,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
+	// 保留 Thinking 规范化前的 body，兜底切换分组时按新分组策略重新应用。
+	thinkingPolicyBody := append([]byte(nil), parsedReq.Body.Bytes()...)
 	parsedReq.GroupID = apiKey.GroupID
+	if apiKey.Group != nil {
+		parsedReq.ThinkingDisabledStrict = apiKey.Group.ThinkingDisabledStrict
+	}
+	if formErr := service.ApplyThinkingDisabledFormToParsed(parsedReq); formErr != nil {
+		var thinkingFormErr *service.ThinkingDisabledFormError
+		if errors.As(formErr, &thinkingFormErr) {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+			h.errorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+			return
+		}
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	body = parsedReq.Body.Bytes()
 
 	// 计算粘性会话hash
 	parsedReq.SessionContext = &service.SessionContext{
@@ -318,6 +344,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
 	if platform == service.PlatformGemini {
+		if requestAuditIsForced(c) {
+			writeRequestAuditUnavailable(c, true)
+			return
+		}
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
@@ -551,6 +581,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
+			requestAuditHeaders := cloneRequestAuditHeaders(c)
 			requestPayloadHash := service.HashUsageRequestPayload(body)
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
@@ -577,22 +608,25 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:             result,
-					QuotaPlatform:      quotaPlatform,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					PricingAt:          pricingAt,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					SessionID:          sessionID,
-					RequestPayloadHash: requestPayloadHash,
-					ForceCacheBilling:  forceCacheBilling,
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+					Result:                  result,
+					QuotaPlatform:           quotaPlatform,
+					APIKey:                  apiKey,
+					User:                    apiKey.User,
+					Account:                 account,
+					Subscription:            subscription,
+					PricingAt:               pricingAt,
+					InboundEndpoint:         inboundEndpoint,
+					UpstreamEndpoint:        upstreamEndpoint,
+					UserAgent:               userAgent,
+					IPAddress:               clientIP,
+					SessionID:               sessionID,
+					RequestPayloadHash:      requestPayloadHash,
+					ForceCacheBilling:       forceCacheBilling,
+					APIKeyService:           h.apiKeyService,
+					RequestAuditHeaders:     requestAuditHeaders,
+					RequestAuditFingerprint: requestAuditFingerprint,
+					NotCapturedReason:       service.RequestAuditNotCapturedReasonPhase1Uncovered,
+					ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
@@ -892,6 +926,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
 			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
+				if requestAuditIsForced(c) {
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					writeRequestAuditUnavailable(c, true)
+					return
+				}
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, attemptParsedReq)
@@ -914,6 +955,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
 				userAgent := c.GetHeader("User-Agent")
 				clientIP := ip.GetClientIP(c)
+				requestAuditHeaders := cloneRequestAuditHeaders(c)
+				requestAuditAttempts := appendOpenAITransportAttempts(
+					nil,
+					service.RequestAuditHTTPAttemptMetadata(c),
+					0,
+					reqModel,
+					openAIChannelForwardModel(channelMapping, reqModel),
+					requestAuditFingerprint,
+					service.RequestAuditProtocolAnthropic,
+				)
 				// Forward 内部可能继续改写 body，usage 去重指纹必须使用最终上游接受的当前 body。
 				requestPayloadHash := service.HashUsageRequestPayload(attemptParsedReq.Body.Bytes())
 				inboundEndpoint := GetInboundEndpoint(c)
@@ -937,24 +988,48 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
+				auditLogicalKey := service.RequestAuditLogicalKeyFromGin(c)
+				notCapturedReason := ""
+				if len(requestAuditAttempts) == 0 || (account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey) {
+					requestAuditHeaders = nil
+					notCapturedReason = service.RequestAuditNotCapturedReasonPhase1Uncovered
+				}
+				localRequestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+				upstreamRequestID := ""
+				if notCapturedReason == "" && len(requestAuditAttempts) > 0 {
+					upstreamRequestID = service.UpstreamRequestIDFromHeaders(account, result.UpstreamHeaders)
+				}
+				requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, "", localRequestID, upstreamRequestID)
+				requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
+				// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
+				// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
+				if notCapturedReason == "" {
+					requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
+				}
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-						Result:             result,
-						QuotaPlatform:      quotaPlatform,
-						APIKey:             currentAPIKey,
-						User:               currentAPIKey.User,
-						Account:            account,
-						Subscription:       currentSubscription,
-						PricingAt:          pricingAt,
-						InboundEndpoint:    inboundEndpoint,
-						UpstreamEndpoint:   upstreamEndpoint,
-						UserAgent:          userAgent,
-						IPAddress:          clientIP,
-						SessionID:          sessionID,
-						RequestPayloadHash: requestPayloadHash,
-						ForceCacheBilling:  forceCacheBilling,
-						APIKeyService:      h.apiKeyService,
-						ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+						Result:                  result,
+						QuotaPlatform:           quotaPlatform,
+						APIKey:                  currentAPIKey,
+						User:                    currentAPIKey.User,
+						Account:                 account,
+						Subscription:            currentSubscription,
+						PricingAt:               pricingAt,
+						InboundEndpoint:         inboundEndpoint,
+						UpstreamEndpoint:        upstreamEndpoint,
+						UserAgent:               userAgent,
+						IPAddress:               clientIP,
+						SessionID:               sessionID,
+						RequestPayloadHash:      requestPayloadHash,
+						ForceCacheBilling:       forceCacheBilling,
+						APIKeyService:           h.apiKeyService,
+						RequestAuditHeaders:     requestAuditHeaders,
+						RequestAuditAttempts:    requestAuditAttempts,
+						RequestAuditFingerprint: requestAuditFingerprint,
+						RequestAuditMetadata:    requestAuditMetadata,
+						NotCapturedReason:       notCapturedReason,
+						AuditLogicalKey:         auditLogicalKey,
+						ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 					}); err != nil {
 						logger.L().With(
 							zap.String("component", "handler.gateway.messages"),
@@ -969,11 +1044,21 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 
 			if err != nil {
+				if service.IsRequestAuditRequiredError(err) {
+					writeRequestAuditUnavailable(c, true)
+					return
+				}
 				// Beta policy block: return 400 immediately, no failover
 				var betaBlockedErr *service.BetaBlockedError
 				if errors.As(err, &betaBlockedErr) {
 					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
 					h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", betaBlockedErr.Message)
+					return
+				}
+				var thinkingFormErr *service.ThinkingDisabledFormError
+				if errors.As(err, &thinkingFormErr) {
+					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+					h.errorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
 					return
 				}
 
@@ -1016,6 +1101,27 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						c.Request = c.Request.WithContext(ctx)
 						currentAPIKey = fallbackAPIKey
 						currentSubscription = nil
+						// Re-apply the fallback group's thinking policy to the original
+						// request body; the initial group may have normalized it already.
+						fallbackParsedReq, parseErr := parsedReq.CloneForBody(thinkingPolicyBody)
+						if parseErr != nil {
+							h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+							return
+						}
+						fallbackParsedReq.GroupID = fallbackAPIKey.GroupID
+						fallbackParsedReq.ThinkingDisabledStrict = fallbackGroup.ThinkingDisabledStrict
+						if formErr := service.ApplyThinkingDisabledFormToParsed(fallbackParsedReq); formErr != nil {
+							var thinkingFormErr *service.ThinkingDisabledFormError
+							if errors.As(formErr, &thinkingFormErr) {
+								service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+								h.errorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+								return
+							}
+							h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+							return
+						}
+						parsedReq = fallbackParsedReq
+						body = parsedReq.Body.Bytes()
 						fallbackUsed = true
 						retryWithFallback = true
 						// 原分组账号已确定性失败（prompt too long），先释放其会话注册再走兜底分组
@@ -2121,6 +2227,20 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 	body = parsedReq.Body.Bytes()
 	// count_tokens 走 messages 严格校验时，复用已解析请求，避免二次反序列化。
+	if apiKey.Group != nil {
+		parsedReq.ThinkingDisabledStrict = apiKey.Group.ThinkingDisabledStrict
+	}
+	if formErr := service.ApplyThinkingDisabledFormToParsed(parsedReq); formErr != nil {
+		var thinkingFormErr *service.ThinkingDisabledFormError
+		if errors.As(formErr, &thinkingFormErr) {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+			h.errorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+			return
+		}
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	body = parsedReq.Body.Bytes()
 	SetClaudeCodeClientContext(c, body, parsedReq)
 	ensureCompositeTargetPlatform(c, apiKey, parsedReq.Model)
 	reqLog = reqLog.With(zap.String("model", parsedReq.Model), zap.Bool("stream", parsedReq.Stream))
@@ -2499,6 +2619,10 @@ func (h *GatewayHandler) maybeLogCompatibilityFallbackMetrics(reqLog *zap.Logger
 
 func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
 	if task == nil {
+		return
+	}
+	if service.RequestAuditForcedFromContext(parent) {
+		h.submitMandatoryUsageRecordTask(parent, task)
 		return
 	}
 	task = wrapUsageRecordTaskContext(parent, task)

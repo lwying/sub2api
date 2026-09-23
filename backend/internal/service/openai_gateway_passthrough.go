@@ -360,6 +360,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	responseID := ""
 	imageCount := 0
 	var imageOutputSizes []string
+	var sseEvents []RequestAuditSSEEvent
+	clientDisconnect := false
+	streamIncomplete := false
 	for {
 		actualModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 		if actualModel == "" {
@@ -373,6 +376,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, buildErr
 		}
 
+		upstreamReq = bindRequestAuditHTTPAttempt(
+			upstreamReq, c, account.ID, actualModel, RequestAuditProtocolOpenAIResp,
+		)
 		upstreamStart := time.Now()
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
@@ -471,6 +477,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			responseID = strings.TrimSpace(result.responseID)
 			imageCount = result.imageCount
 			imageOutputSizes = result.imageOutputSizes
+			sseEvents = result.sseEvents
+			clientDisconnect = result.clientDisconnect
+			streamIncomplete = result.streamIncomplete
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
@@ -533,6 +542,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		OpenAIWSMode:                  false,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		SSEEvents:                     sseEvents,
+		ClientDisconnect:              clientDisconnect,
+		StreamIncomplete:              streamIncomplete,
 	}
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount
@@ -1040,6 +1052,13 @@ type openaiStreamingResultPassthrough struct {
 	responseID       string
 	imageCount       int
 	imageOutputSizes []string
+	sseEvents        []RequestAuditSSEEvent
+	clientDisconnect bool
+	// streamIncomplete 标记「响应已开始后上游异常终止」：整段上游流都没有观测到
+	// 终态事件（response.completed/response.failed/[DONE] 等）。客户端主动断开由
+	// clientDisconnect 单独标记（审计侧同样记响应中途不完整），不在此重复计入。
+	// 有部分 usage / 事件骨架不等于流完整，缺终态就必须让审计记「响应中途不完整」。
+	streamIncomplete bool
 }
 
 type openaiNonStreamingResultPassthrough struct {
@@ -1861,6 +1880,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	responseID := ""
+	var sseEvents []RequestAuditSSEEvent
 	ttftMode := s.openAITTFTMode(ctx)
 	clientDisconnected := false
 	sawDone := false
@@ -1981,6 +2001,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			responseID:       responseID,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
+			sseEvents:        sseEvents,
+			clientDisconnect: clientDisconnected,
+			// 退出点统一收口：整段流没观测到终态事件（且不是客户端主动断开）即标记
+			// 响应中途不完整，供使用记录上的请求审计区分「完整」与「不完整」。
+			streamIncomplete: !sawTerminalEvent && !clientDisconnected,
 		}
 	}
 
@@ -1997,6 +2022,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			rawEventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
+			sseEvents = appendRequestAuditSSEEvent(c.Request.Context(), sseEvents, rawEventType, data)
 			observer.ObserveOpenAI(dataBytes, rawEventType)
 			if needModelReplace && strings.Contains(data, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)

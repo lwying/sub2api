@@ -579,6 +579,15 @@ export default {
         codexAddRow: '添加一条',
         codexRemoveRow: '删除',
       },
+      requestAuditForce: {
+        title: '强制审计模式',
+        description: '仅管理员可配置，可全局启用或仅启用指定路由族。',
+        hint: '全局开关会强制所有支持的路由；全局关闭时，单独的路由开关仍可生效。上游发出前必须写入协议元数据；响应开始后的失败只标记为不完整。该能力依赖主库可用性，不建议在高流量场景全局启用。',
+        enabled: '强制所有支持的路由',
+        messages: 'Messages 路由',
+        chatCompletions: 'Chat Completions 路由',
+        responses: 'Responses 路由',
+      },
       webSearchEmulation: {
         title: 'Web Search 模拟',
         description: '为不原生支持搜索的 Anthropic API Key 账号注入 web search 能力',

@@ -199,6 +199,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("claude_code_only").
 			Default(false).
 			Comment("是否仅允许 Claude Code 客户端"),
+		field.Bool("thinking_disabled_strict").
+			Default(false).
+			Comment("thinking.type=disabled 时是否严格拒绝多余字段"),
 		field.Int64("fallback_group_id").
 			Optional().
 			Nillable().

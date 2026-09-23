@@ -42,7 +42,16 @@ type OpenAIRecordUsageInput struct {
 	// NativeCompactionV2 is an orthogonal semantic flag captured by the
 	// Responses handler from stream=true + compaction_trigger. It never stores
 	// the request payload and does not replace the transport request type.
-	NativeCompactionV2 bool
+	NativeCompactionV2      bool
+	RequestAuditHeaders     http.Header
+	RequestAuditAttempts    []RequestAuditAttempt
+	RequestAuditFingerprint *RequestAuditFingerprintInput
+	RequestAuditMetadata    RequestAuditMetadata
+	NotCapturedReason       string
+	// RequestAuditPartialReason 标记本次审计只有局部事实（如 cyber 拒绝路径的传输尝试），
+	// 按 incomplete 落库且永不 complete；空值表示沿用既有完整性判定。
+	RequestAuditPartialReason string
+	AuditLogicalKey           string
 	ChannelUsageFields
 }
 
@@ -68,6 +77,13 @@ type CyberPolicyUsageInput struct {
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
 	NativeCompactionV2 bool
+	AuditLogicalKey    string
+	// RequestAuditAttempts 是本次逻辑请求已发生的上游 HTTP 传输尝试（wire 级元数据，调用方
+	// 已脱敏）。cyber 拒绝路径 forward 返回 nil result，正常 usage submitter 不会为它写审计，
+	// 因此由本路径补记：有尝试 → incomplete + cyber_policy_audit_partial（绝无响应事实，
+	// 永不 complete）；无尝试（WS / 插件等）→ 未采集 + phase1_uncovered，不伪造尝试。
+	RequestAuditAttempts []RequestAuditAttempt
+	RequestAuditHeaders  http.Header
 	ChannelUsageFields
 }
 
@@ -81,6 +97,19 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 	if s == nil || in.APIKey == nil || in.APIKey.User == nil || in.Account == nil || strings.TrimSpace(in.Model) == "" {
 		return
 	}
+	// cyber 拒绝路径没有可用的响应事实（forward 返回 nil result，事件骨架/终止状态缺失），
+	// 只有调用方按转发前快照传入的传输尝试。因此审计只可能是不完整或未采集，
+	// 永远不会被标成 complete。
+	auditAttempts := buildRequestAuditAttempts(in.RequestAuditAttempts)
+	auditHeaders := http.Header(nil)
+	partialReason := ""
+	notCapturedReason := ""
+	if len(auditAttempts) == 0 {
+		notCapturedReason = RequestAuditNotCapturedReasonPhase1Uncovered
+	} else {
+		partialReason = RequestAuditPartialReasonCyberPolicy
+		auditHeaders = in.RequestAuditHeaders
+	}
 	result := &OpenAIForwardResult{
 		RequestID: in.RequestID,
 		Model:     in.Model,
@@ -91,21 +120,26 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		},
 	}
 	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
-		Result:             result,
-		APIKey:             in.APIKey,
-		User:               in.APIKey.User,
-		Account:            in.Account,
-		Subscription:       in.Subscription,
-		InboundEndpoint:    in.InboundEndpoint,
-		UpstreamEndpoint:   in.UpstreamEndpoint,
-		UserAgent:          in.UserAgent,
-		IPAddress:          in.IPAddress,
-		SessionID:          in.SessionID,
-		RequestPayloadHash: in.RequestPayloadHash,
-		APIKeyService:      in.APIKeyService,
-		ChannelUsageFields: in.ChannelUsageFields,
-		CyberBlocked:       true,
-		NativeCompactionV2: in.NativeCompactionV2,
+		Result:                    result,
+		APIKey:                    in.APIKey,
+		User:                      in.APIKey.User,
+		Account:                   in.Account,
+		Subscription:              in.Subscription,
+		InboundEndpoint:           in.InboundEndpoint,
+		UpstreamEndpoint:          in.UpstreamEndpoint,
+		UserAgent:                 in.UserAgent,
+		IPAddress:                 in.IPAddress,
+		SessionID:                 in.SessionID,
+		RequestPayloadHash:        in.RequestPayloadHash,
+		APIKeyService:             in.APIKeyService,
+		ChannelUsageFields:        in.ChannelUsageFields,
+		CyberBlocked:              true,
+		NativeCompactionV2:        in.NativeCompactionV2,
+		AuditLogicalKey:           in.AuditLogicalKey,
+		RequestAuditAttempts:      auditAttempts,
+		RequestAuditHeaders:       auditHeaders,
+		RequestAuditPartialReason: partialReason,
+		NotCapturedReason:         notCapturedReason,
 	}); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber usage record failed: request_id=%s err=%v", in.RequestID, err)
 	}
@@ -487,6 +521,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
+			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromOpenAIResult(result),
+			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
+			PartialReason:    input.RequestAuditPartialReason,
+			ClientDisconnect: result != nil && result.ClientDisconnect,
+			StreamIncomplete: result != nil && result.StreamIncomplete,
+			Fingerprint:      input.RequestAuditFingerprint,
+			Metadata:         input.RequestAuditMetadata,
+		})
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -518,9 +561,27 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
+			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromOpenAIResult(result),
+			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
+			PartialReason:    input.RequestAuditPartialReason,
+			ClientDisconnect: result != nil && result.ClientDisconnect,
+			StreamIncomplete: result != nil && result.StreamIncomplete,
+			Fingerprint:      input.RequestAuditFingerprint,
+			Metadata:         input.RequestAuditMetadata,
+		})
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
+		Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromOpenAIResult(result),
+		Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
+		PartialReason:    input.RequestAuditPartialReason,
+		ClientDisconnect: result != nil && result.ClientDisconnect,
+		StreamIncomplete: result != nil && result.StreamIncomplete,
+		Fingerprint:      input.RequestAuditFingerprint,
+		Metadata:         input.RequestAuditMetadata,
+	})
 
 	return nil
 }

@@ -464,6 +464,10 @@ const baseSettingsResponse = {
   min_claude_code_version: "",
   max_claude_code_version: "",
   allow_ungrouped_key_scheduling: false,
+  request_audit_force_enabled: false,
+  request_audit_force_messages: false,
+  request_audit_force_chat_completions: false,
+  request_audit_force_responses: false,
   openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -1421,6 +1425,46 @@ describe("admin SettingsView payment visible method controls", () => {
     const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(payload.grok_default_text_model).toBe("grok-custom-text");
     expect(payload.grok_cross_client_model_map_enabled).toBe(false);
+  });
+
+  it("loads and saves forced request audit flags", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      request_audit_force_enabled: false,
+      request_audit_force_messages: true,
+      request_audit_force_chat_completions: false,
+      request_audit_force_responses: true,
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const card = wrapper.get('[data-testid="request-audit-force-settings"]');
+    const enabled = card.get('[data-testid="request_audit_force_enabled"]');
+    const messages = card.get('[data-testid="request_audit_force_messages"]');
+    const chat = card.get('[data-testid="request_audit_force_chat_completions"]');
+    const responses = card.get('[data-testid="request_audit_force_responses"]');
+    expect((enabled.element as HTMLInputElement).checked).toBe(false);
+    expect((messages.element as HTMLInputElement).checked).toBe(true);
+    expect((chat.element as HTMLInputElement).checked).toBe(false);
+    expect((responses.element as HTMLInputElement).checked).toBe(true);
+
+    await enabled.setValue(true);
+    await messages.setValue(false);
+    await chat.setValue(true);
+    await responses.setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_audit_force_enabled: true,
+        request_audit_force_messages: false,
+        request_audit_force_chat_completions: true,
+        request_audit_force_responses: false,
+      }),
+    );
   });
 
   it("loads and saves the OpenAI Responses first-token metric mode", async () => {

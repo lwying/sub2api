@@ -61,6 +61,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRegistrationEmailDomainQuotaEnabled:       "false",
 		SettingKeyPromoCodeEnabled:                          "true", // 默认启用优惠码功能
 		SettingKeyLoginAgreementEnabled:                     "false",
+		SettingKeyRequestAuditForceEnabled:                  "false",
+		SettingKeyRequestAuditForceMessages:                 "false",
+		SettingKeyRequestAuditForceChatCompletions:          "false",
+		SettingKeyRequestAuditForceResponses:                "false",
 		SettingKeyLoginAgreementMode:                        defaultLoginAgreementMode,
 		SettingKeyLoginAgreementUpdatedAt:                   defaultLoginAgreementDate,
 		SettingKeyLoginAgreementDocuments:                   loginAgreementDocumentsJSON,
@@ -329,6 +333,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		SessionBindingEnabled:                  settings[SettingKeySessionBindingEnabled] == "true", // 默认关闭
 		StepUpEnabled:                          settings[SettingKeyStepUpEnabled] == "true",         // 默认关闭
 		AuditLogRetentionDays:                  parseAuditLogRetentionDays(settings[SettingKeyAuditLogRetentionDays]),
+		RequestAuditForceEnabled:               settings[SettingKeyRequestAuditForceEnabled] == "true",
+		RequestAuditForceMessages:              settings[SettingKeyRequestAuditForceMessages] == "true",
+		RequestAuditForceChatCompletions:       settings[SettingKeyRequestAuditForceChatCompletions] == "true",
+		RequestAuditForceResponses:             settings[SettingKeyRequestAuditForceResponses] == "true",
 		LoginAgreementEnabled:                  settings[SettingKeyLoginAgreementEnabled] == "true",
 		LoginAgreementMode:                     normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
 		LoginAgreementUpdatedAt:                loginAgreementUpdatedAt,

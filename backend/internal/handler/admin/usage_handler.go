@@ -21,10 +21,11 @@ import (
 
 // UsageHandler handles admin usage-related requests
 type UsageHandler struct {
-	usageService   *service.UsageService
-	apiKeyService  *service.APIKeyService
-	adminService   service.AdminService
-	cleanupService *service.UsageCleanupService
+	usageService     *service.UsageService
+	apiKeyService    *service.APIKeyService
+	adminService     service.AdminService
+	cleanupService   *service.UsageCleanupService
+	requestAuditRepo service.RequestAuditRepository
 }
 
 // NewUsageHandler creates a new admin usage handler
@@ -33,13 +34,53 @@ func NewUsageHandler(
 	apiKeyService *service.APIKeyService,
 	adminService service.AdminService,
 	cleanupService *service.UsageCleanupService,
+	requestAuditRepo service.RequestAuditRepository,
 ) *UsageHandler {
 	return &UsageHandler{
-		usageService:   usageService,
-		apiKeyService:  apiKeyService,
-		adminService:   adminService,
-		cleanupService: cleanupService,
+		usageService:     usageService,
+		apiKeyService:    apiKeyService,
+		adminService:     adminService,
+		cleanupService:   cleanupService,
+		requestAuditRepo: requestAuditRepo,
 	}
+}
+
+// GetRequestAudit returns protocol metadata attached to a usage log. It never includes model body.
+func (h *UsageHandler) GetRequestAudit(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid id")
+		return
+	}
+	if h == nil || h.requestAuditRepo == nil {
+		response.NotFound(c, "Request audit not found")
+		return
+	}
+	rec, err := h.requestAuditRepo.GetByUsageLogID(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Failed to get request audit")
+		return
+	}
+	if rec == nil {
+		response.NotFound(c, "Request audit not found")
+		return
+	}
+	rec = service.SanitizeRequestAuditRecord(rec)
+	if rec == nil {
+		response.NotFound(c, "Request audit not found")
+		return
+	}
+	response.Success(c, gin.H{
+		"usage_log_id":            rec.UsageLogID,
+		"headers":                 rec.Headers,
+		"events":                  rec.Events,
+		"attempts":                rec.Attempts,
+		"capture_completeness":    rec.CaptureCompleteness,
+		"capture_reason":          rec.CaptureReason,
+		"request_fingerprint":     rec.RequestFingerprint,
+		"fingerprint_key_version": rec.FingerprintKeyVersion,
+		"metadata":                rec.Metadata,
+	})
 }
 
 // CreateUsageCleanupTaskRequest represents cleanup task creation request

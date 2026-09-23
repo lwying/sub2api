@@ -173,6 +173,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
+	require.False(t, result.StreamIncomplete, "a terminal SSE event followed by EOF is complete")
 
 	require.Equal(t, "claude-3-haiku-20240307", gjson.GetBytes(upstream.lastBody, "model").String(), "透传模式应应用账号级模型映射")
 
@@ -1123,7 +1124,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingStillCollectsUsageAf
 	require.Equal(t, 5, result.usage.OutputTokens)
 }
 
-func TestGatewayService_AnthropicAPIKeyPassthrough_MissingTerminalEventReturnsError(t *testing.T) {
+func TestGatewayService_AnthropicAPIKeyPassthrough_MissingTerminalEventReturnsIncomplete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1150,10 +1151,16 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_MissingTerminalEventReturnsEr
 		}, "\n"))),
 	}
 
-	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "claude-3-7-sonnet-20250219")
+	startTime := time.Now()
+	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 1}, startTime, "claude-3-7-sonnet-20250219")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing terminal event")
 	require.NotNil(t, result)
+	require.True(t, result.streamIncomplete)
+
+	partialResult := partialStreamUsageResult(c, resp, result, "requested-model", "upstream-model", startTime, err)
+	require.NotNil(t, partialResult)
+	require.True(t, partialResult.StreamIncomplete)
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuccess(t *testing.T) {
@@ -1525,7 +1532,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInte
 	require.Contains(t, body, "data: [DONE]")
 }
 
-func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError(t *testing.T) {
+func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadErrorAfterOutputMarksIncomplete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1539,19 +1546,35 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError(t *testing
 		},
 	}
 
+	partialSSE := strings.Join([]string{
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":13}}}`,
+		"",
+		`data: {"type":"message_delta","usage":{"output_tokens":8}}`,
+		"",
+	}, "\n")
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: &streamReadCloser{
-			err: io.ErrUnexpectedEOF,
+			payload: []byte(partialSSE),
+			err:     io.ErrUnexpectedEOF,
 		},
 	}
 
-	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 6}, time.Now(), "claude-3-7-sonnet-20250219")
+	startTime := time.Now()
+	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 6}, startTime, "claude-3-7-sonnet-20250219")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "stream read error")
 	require.NotNil(t, result)
 	require.False(t, result.clientDisconnect)
+	require.True(t, result.streamIncomplete)
+	require.Equal(t, 13, result.usage.InputTokens)
+	require.Equal(t, 8, result.usage.OutputTokens)
+	require.Contains(t, rec.Body.String(), partialSSE, "already emitted SSE must remain delivered to the client")
+
+	partialResult := partialStreamUsageResult(c, resp, result, "requested-model", "upstream-model", startTime, err)
+	require.NotNil(t, partialResult)
+	require.True(t, partialResult.StreamIncomplete)
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDisconnect(t *testing.T) {

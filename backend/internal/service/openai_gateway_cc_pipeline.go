@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -229,6 +230,9 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	upstreamReq = bindRequestAuditHTTPAttempt(
+		upstreamReq, c, account.ID, gjson.GetBytes(body, "model").String(), RequestAuditProtocolOpenAIChat,
+	)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -249,6 +253,8 @@ type ccStreamScanState struct {
 	// 非 nil 时调用方必须跳过 finalize 并返回 usage-incomplete 错误，避免
 	// 把上游截断伪装成正常收尾。
 	Err error
+	// SSEEvents is the stream event skeleton input (type + bytes only; Data must stay empty).
+	SSEEvents []RequestAuditSSEEvent
 }
 
 // scanCCStream 驱动两条 CC 回退路径共享的 SSE 读循环：提取 data 行、在 [DONE]
@@ -276,6 +282,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 		if payload == "" {
 			continue
 		}
+		st.SSEEvents = appendRequestAuditSSEEvent(c.Request.Context(), st.SSEEvents, "", payload)
 		if payload == "[DONE]" {
 			st.SawDone = true
 			break

@@ -4,6 +4,7 @@ package ent
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"math"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/Wei-Shaw/sub2api/ent/requestaudit"
+	"github.com/Wei-Shaw/sub2api/ent/requestauditreservation"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
@@ -24,16 +27,18 @@ import (
 // UsageLogQuery is the builder for querying UsageLog entities.
 type UsageLogQuery struct {
 	config
-	ctx              *QueryContext
-	order            []usagelog.OrderOption
-	inters           []Interceptor
-	predicates       []predicate.UsageLog
-	withUser         *UserQuery
-	withAPIKey       *APIKeyQuery
-	withAccount      *AccountQuery
-	withGroup        *GroupQuery
-	withSubscription *UserSubscriptionQuery
-	modifiers        []func(*sql.Selector)
+	ctx                         *QueryContext
+	order                       []usagelog.OrderOption
+	inters                      []Interceptor
+	predicates                  []predicate.UsageLog
+	withUser                    *UserQuery
+	withAPIKey                  *APIKeyQuery
+	withAccount                 *AccountQuery
+	withGroup                   *GroupQuery
+	withSubscription            *UserSubscriptionQuery
+	withRequestAudit            *RequestAuditQuery
+	withRequestAuditReservation *RequestAuditReservationQuery
+	modifiers                   []func(*sql.Selector)
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -173,6 +178,50 @@ func (_q *UsageLogQuery) QuerySubscription() *UserSubscriptionQuery {
 			sqlgraph.From(usagelog.Table, usagelog.FieldID, selector),
 			sqlgraph.To(usersubscription.Table, usersubscription.FieldID),
 			sqlgraph.Edge(sqlgraph.M2O, true, usagelog.SubscriptionTable, usagelog.SubscriptionColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryRequestAudit chains the current query on the "request_audit" edge.
+func (_q *UsageLogQuery) QueryRequestAudit() *RequestAuditQuery {
+	query := (&RequestAuditClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usagelog.Table, usagelog.FieldID, selector),
+			sqlgraph.To(requestaudit.Table, requestaudit.FieldID),
+			sqlgraph.Edge(sqlgraph.O2O, false, usagelog.RequestAuditTable, usagelog.RequestAuditColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryRequestAuditReservation chains the current query on the "request_audit_reservation" edge.
+func (_q *UsageLogQuery) QueryRequestAuditReservation() *RequestAuditReservationQuery {
+	query := (&RequestAuditReservationClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usagelog.Table, usagelog.FieldID, selector),
+			sqlgraph.To(requestauditreservation.Table, requestauditreservation.FieldID),
+			sqlgraph.Edge(sqlgraph.O2O, false, usagelog.RequestAuditReservationTable, usagelog.RequestAuditReservationColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -367,16 +416,18 @@ func (_q *UsageLogQuery) Clone() *UsageLogQuery {
 		return nil
 	}
 	return &UsageLogQuery{
-		config:           _q.config,
-		ctx:              _q.ctx.Clone(),
-		order:            append([]usagelog.OrderOption{}, _q.order...),
-		inters:           append([]Interceptor{}, _q.inters...),
-		predicates:       append([]predicate.UsageLog{}, _q.predicates...),
-		withUser:         _q.withUser.Clone(),
-		withAPIKey:       _q.withAPIKey.Clone(),
-		withAccount:      _q.withAccount.Clone(),
-		withGroup:        _q.withGroup.Clone(),
-		withSubscription: _q.withSubscription.Clone(),
+		config:                      _q.config,
+		ctx:                         _q.ctx.Clone(),
+		order:                       append([]usagelog.OrderOption{}, _q.order...),
+		inters:                      append([]Interceptor{}, _q.inters...),
+		predicates:                  append([]predicate.UsageLog{}, _q.predicates...),
+		withUser:                    _q.withUser.Clone(),
+		withAPIKey:                  _q.withAPIKey.Clone(),
+		withAccount:                 _q.withAccount.Clone(),
+		withGroup:                   _q.withGroup.Clone(),
+		withSubscription:            _q.withSubscription.Clone(),
+		withRequestAudit:            _q.withRequestAudit.Clone(),
+		withRequestAuditReservation: _q.withRequestAuditReservation.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -435,6 +486,28 @@ func (_q *UsageLogQuery) WithSubscription(opts ...func(*UserSubscriptionQuery)) 
 		opt(query)
 	}
 	_q.withSubscription = query
+	return _q
+}
+
+// WithRequestAudit tells the query-builder to eager-load the nodes that are connected to
+// the "request_audit" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *UsageLogQuery) WithRequestAudit(opts ...func(*RequestAuditQuery)) *UsageLogQuery {
+	query := (&RequestAuditClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withRequestAudit = query
+	return _q
+}
+
+// WithRequestAuditReservation tells the query-builder to eager-load the nodes that are connected to
+// the "request_audit_reservation" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *UsageLogQuery) WithRequestAuditReservation(opts ...func(*RequestAuditReservationQuery)) *UsageLogQuery {
+	query := (&RequestAuditReservationClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withRequestAuditReservation = query
 	return _q
 }
 
@@ -516,12 +589,14 @@ func (_q *UsageLogQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Usa
 	var (
 		nodes       = []*UsageLog{}
 		_spec       = _q.querySpec()
-		loadedTypes = [5]bool{
+		loadedTypes = [7]bool{
 			_q.withUser != nil,
 			_q.withAPIKey != nil,
 			_q.withAccount != nil,
 			_q.withGroup != nil,
 			_q.withSubscription != nil,
+			_q.withRequestAudit != nil,
+			_q.withRequestAuditReservation != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -572,6 +647,18 @@ func (_q *UsageLogQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Usa
 	if query := _q.withSubscription; query != nil {
 		if err := _q.loadSubscription(ctx, query, nodes, nil,
 			func(n *UsageLog, e *UserSubscription) { n.Edges.Subscription = e }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withRequestAudit; query != nil {
+		if err := _q.loadRequestAudit(ctx, query, nodes, nil,
+			func(n *UsageLog, e *RequestAudit) { n.Edges.RequestAudit = e }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withRequestAuditReservation; query != nil {
+		if err := _q.loadRequestAuditReservation(ctx, query, nodes, nil,
+			func(n *UsageLog, e *RequestAuditReservation) { n.Edges.RequestAuditReservation = e }); err != nil {
 			return nil, err
 		}
 	}
@@ -726,6 +813,63 @@ func (_q *UsageLogQuery) loadSubscription(ctx context.Context, query *UserSubscr
 		for i := range nodes {
 			assign(nodes[i], n)
 		}
+	}
+	return nil
+}
+func (_q *UsageLogQuery) loadRequestAudit(ctx context.Context, query *RequestAuditQuery, nodes []*UsageLog, init func(*UsageLog), assign func(*UsageLog, *RequestAudit)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[int64]*UsageLog)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(requestaudit.FieldUsageLogID)
+	}
+	query.Where(predicate.RequestAudit(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(usagelog.RequestAuditColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.UsageLogID
+		node, ok := nodeids[fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "usage_log_id" returned %v for node %v`, fk, n.ID)
+		}
+		assign(node, n)
+	}
+	return nil
+}
+func (_q *UsageLogQuery) loadRequestAuditReservation(ctx context.Context, query *RequestAuditReservationQuery, nodes []*UsageLog, init func(*UsageLog), assign func(*UsageLog, *RequestAuditReservation)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[int64]*UsageLog)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(requestauditreservation.FieldUsageLogID)
+	}
+	query.Where(predicate.RequestAuditReservation(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(usagelog.RequestAuditReservationColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.UsageLogID
+		if fk == nil {
+			return fmt.Errorf(`foreign-key "usage_log_id" is nil for node %v`, n.ID)
+		}
+		node, ok := nodeids[*fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "usage_log_id" returned %v for node %v`, *fk, n.ID)
+		}
+		assign(node, n)
 	}
 	return nil
 }

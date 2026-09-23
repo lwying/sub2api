@@ -286,10 +286,12 @@ type ParsedRequest struct {
 	MetadataUserID  string          // metadata.user_id（用于会话亲和）
 	HasSystem       bool            // 是否包含 system 字段（包含 null 也视为显式传入）
 	ThinkingEnabled bool            // 是否开启 thinking（部分平台会影响最终模型名）
-	OutputEffort    string          // output_config.effort（Claude API 的推理强度控制）
-	Speed           string          // Anthropic speed（当前可计费值为 "fast"）
-	MaxTokens       int             // max_tokens 值（用于探测请求拦截）
-	SessionContext  *SessionContext // 可选：请求上下文区分因子（nil 时行为不变）
+	// ThinkingDisabledStrict 为 true 时，thinking.type=disabled 的多余键在发出前本地 400。
+	ThinkingDisabledStrict bool
+	OutputEffort           string          // output_config.effort（Claude API 的推理强度控制）
+	Speed                  string          // Anthropic speed（当前可计费值为 "fast"）
+	MaxTokens              int             // max_tokens 值（用于探测请求拦截）
+	SessionContext         *SessionContext // 可选：请求上下文区分因子（nil 时行为不变）
 
 	protocol      string    // 当前 Body 的协议格式，用于 Body 替换后刷新 raw range
 	systemRange   jsonRange // system/systemInstruction.parts 的 raw JSON 范围，绑定 Body 当前内容

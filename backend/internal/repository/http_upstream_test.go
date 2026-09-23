@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -16,12 +17,329 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+func TestGrokFallbackForcedGateRunsForBothActualSends(t *testing.T) {
+	var calls atomic.Int64
+	counter := httpattempt.NewCounter()
+	var gateCalls atomic.Int64
+	counter.SetBeforeAttempt(func(_ context.Context, metadata httpattempt.Metadata) error {
+		gateCalls.Add(1)
+		if header, ok := metadata.RequestHeaders["Authorization"].(map[string]any); ok && header["present"] == true {
+			return nil
+		}
+		return errors.New("reservation unavailable")
+	}, true)
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		if req.URL.Hostname() == grokCLIProxyHost {
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader(`{"error":"Access denied"}`)),
+				Request:    req,
+			}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+	})}
+	payload := []byte(`{"model":"grok-4.5"}`)
+	req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer oauth-token")
+	req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int64(2), calls.Load())
+	require.Equal(t, int64(2), gateCalls.Load())
+	require.Equal(t, uint64(2), counter.Load())
+	require.Len(t, counter.Metadata(), 2)
+}
+
+func TestGrokFallbackTransportCapturesSanitizedHTTPAttemptFacts(t *testing.T) {
+	payload := []byte(`{"model":"grok-4.5","input":"private prompt"}`)
+	responseBody := `{"id":"response-ok"}`
+	counter := httpattempt.NewCounter()
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotPayload, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		require.Equal(t, payload, gotPayload)
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Header: http.Header{
+				"Content-Type":     {"application/json; charset=utf-8"},
+				"Cache-Control":    {"no-store"},
+				"Set-Cookie":       {"session=secret"},
+				"Www-Authenticate": {"Bearer realm=private"},
+				"X-Upstream-Token": {"opaque-token"},
+				"X-Request-Id":     {"attacker-controlled"},
+			},
+			Body: io.NopCloser(strings.NewReader(responseBody)),
+		}, nil
+	})}
+	req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodPost, "https://upstream.example/v1/responses", bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header = http.Header{
+		"X-Stainless-Lang":        {"go", "rust"},
+		"X-Stainless-OS":          {"Windows\\r\\nAuthorization: Bearer leaked"},
+		"X-Stainless-Retry-Count": {"2"},
+		"Authorization":           {"Bearer request-secret"},
+		"X-Internal-Token":        {"request-token"},
+		"X-Request-Id":            {"attacker-controlled"},
+	}
+	req.ContentLength = int64(len(payload) + 17)
+	req = req.WithContext(httpattempt.WithMetadata(req.Context(), httpattempt.Metadata{
+		AccountID: 7, Model: "unpersisted-model-alias", Protocol: "openai.responses",
+	}))
+
+	resp, _, err := transport.roundTripAttempt(req)
+	require.NoError(t, err)
+	gotResponse, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, responseBody, string(gotResponse))
+	require.NoError(t, resp.Body.Close())
+
+	got := counter.Metadata()
+	require.Len(t, got, 1)
+	require.Equal(t, int64(len(payload)), *got[0].RequestBytes)
+	require.Equal(t, http.StatusCreated, *got[0].StatusCode)
+	require.Equal(t, int64(len(responseBody)), *got[0].ResponseBytes)
+	require.True(t, *got[0].ResponseReadComplete)
+	require.Equal(t, map[string]any{
+		"X-Stainless-Lang":         []string{"go", "rust"},
+		"X-Stainless-Retry-Count":  "2",
+		"Authorization":            map[string]any{"present": true},
+		"Sensitive-Header-Present": map[string]any{"present": true},
+		"X-Request-ID":             map[string]any{"present": true},
+	}, got[0].RequestHeaders)
+	require.Equal(t, map[string]any{
+		"Content-Type":             "application/json",
+		"Cache-Control":            "no-store",
+		"Set-Cookie":               map[string]any{"present": true},
+		"Www-Authenticate":         map[string]any{"present": true},
+		"Sensitive-Header-Present": map[string]any{"present": true},
+		"X-Request-ID":             map[string]any{"present": true},
+	}, got[0].ResponseHeaders)
+}
+
+func TestGrokFallbackTransportHonorsForcedAuditGateBeforeRoundTrip(t *testing.T) {
+	var calls atomic.Int64
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+	})}
+	counter := httpattempt.NewCounter()
+	counter.SetBeforeAttempt(func(context.Context, httpattempt.Metadata) error {
+		return errors.New("audit store down")
+	}, true)
+	req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+
+	resp, err := transport.RoundTrip(req)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Zero(t, calls.Load())
+}
+
+// When forced audit mode rejects the official-API fallback attempt before it is
+// sent, the transport must not swallow that verdict and hand back the CLI 403:
+// doing so would silently defeat the pre-send block (the request would look like
+// a plain entitlement denial) and no attempt row would exist for it.
+func TestGrokFallbackForcedAuditFailureOnFallbackAttemptIsPropagated(t *testing.T) {
+	var sends atomic.Int64
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sends.Add(1)
+		require.Equal(t, grokCLIProxyHost, req.URL.Hostname(), "only the CLI proxy attempt may reach the network")
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"Access denied"}`)),
+			Request:    req,
+		}, nil
+	})}
+
+	requiredCause := errors.New("reservation unavailable")
+	var gateCalls atomic.Int64
+	counter := httpattempt.NewCounter()
+	counter.SetBeforeAttempt(func(context.Context, httpattempt.Metadata) error {
+		if gateCalls.Add(1) == 1 {
+			return nil
+		}
+		return requiredCause
+	}, true)
+
+	req, err := http.NewRequestWithContext(
+		httpattempt.WithCounter(t.Context(), counter),
+		http.MethodPost,
+		"https://cli-chat-proxy.grok.com/v1/responses",
+		bytes.NewReader([]byte(`{"model":"grok-4.5"}`)),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer oauth-token")
+	req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+
+	resp, err := transport.RoundTrip(req)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.True(t, httpattempt.IsRequiredAuditError(err))
+	require.ErrorIs(t, err, requiredCause)
+	require.Equal(t, int64(1), sends.Load(), "the blocked fallback attempt must not be sent")
+	require.Equal(t, int64(2), gateCalls.Load(), "the gate runs for both actual sends")
+	require.Equal(t, uint64(1), counter.Load())
+}
+
+// Ordinary fallback transport failures keep the existing contract: the original
+// CLI 403 is replayed to the caller so account scheduling semantics do not change.
+func TestGrokFallbackOrdinaryTransportFailurePreservesCLI403(t *testing.T) {
+	var sends atomic.Int64
+	fallbackCause := errors.New("dial tcp: connection refused")
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if sends.Add(1) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":"Access denied"}`)),
+				Request:    req,
+			}, nil
+		}
+		return nil, fallbackCause
+	})}
+
+	counter := httpattempt.NewCounter()
+	counter.SetBeforeAttempt(func(context.Context, httpattempt.Metadata) error { return nil }, true)
+	req, err := http.NewRequestWithContext(
+		httpattempt.WithCounter(t.Context(), counter),
+		http.MethodPost,
+		"https://cli-chat-proxy.grok.com/v1/responses",
+		bytes.NewReader([]byte(`{"model":"grok-4.5"}`)),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer oauth-token")
+	req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.JSONEq(t, `{"error":"Access denied"}`, string(body))
+	require.Equal(t, int64(2), sends.Load())
+}
+
+func TestHTTPAttemptReadFailureRecordsPartialBytesWithoutStatusOnTransportError(t *testing.T) {
+	t.Run("response read error", func(t *testing.T) {
+		counter := httpattempt.NewCounter()
+		transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(&errorAfterBytesReader{data: []byte("partial response"), err: errors.New("read failed")}),
+				Request:    req,
+			}, nil
+		})}
+		req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodGet, "https://upstream.example/v1/responses", nil)
+		require.NoError(t, err)
+
+		resp, _, err := transport.roundTripAttempt(req)
+		require.NoError(t, err)
+		buffer := make([]byte, 64)
+		n, err := resp.Body.Read(buffer)
+		require.Equal(t, "read failed", err.Error())
+		require.Equal(t, len("partial response"), n)
+		require.NoError(t, resp.Body.Close())
+
+		attempt := counter.Metadata()[0]
+		require.Equal(t, int64(0), *attempt.RequestBytes, "nil request body has a known zero payload")
+		require.Equal(t, int64(n), *attempt.ResponseBytes)
+		require.False(t, *attempt.ResponseReadComplete)
+		require.Equal(t, http.StatusOK, *attempt.StatusCode)
+	})
+
+	t.Run("transport error has no status", func(t *testing.T) {
+		counter := httpattempt.NewCounter()
+		transportErr := errors.New("dial failed")
+		transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, transportErr
+		})}
+		req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodGet, "https://upstream.example/v1/responses", nil)
+		require.NoError(t, err)
+
+		resp, _, err := transport.roundTripAttempt(req)
+		require.ErrorIs(t, err, transportErr)
+		require.Nil(t, resp)
+		attempt := counter.Metadata()[0]
+		require.Nil(t, attempt.StatusCode)
+		require.Nil(t, attempt.ResponseBytes)
+		require.Nil(t, attempt.ResponseReadComplete)
+		require.Equal(t, int64(0), *attempt.RequestBytes)
+	})
+}
+
+type errorAfterBytesReader struct {
+	data []byte
+	err  error
+}
+
+func (r *errorAfterBytesReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	return n, r.err
+}
+
+func TestHTTPAttemptResponseCloseBeforeEOFRecordsPartialBytes(t *testing.T) {
+	counter := httpattempt.NewCounter()
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("partial-response")),
+			Request:    req,
+		}, nil
+	})}
+	req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodGet, "https://upstream.example/v1/responses", nil)
+	require.NoError(t, err)
+
+	resp, _, err := transport.roundTripAttempt(req)
+	require.NoError(t, err)
+	buffer := make([]byte, 3)
+	n, err := resp.Body.Read(buffer)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	require.NoError(t, resp.Body.Close())
+
+	attempt := counter.Metadata()[0]
+	require.Equal(t, int64(3), *attempt.ResponseBytes)
+	require.False(t, *attempt.ResponseReadComplete)
+}
+
+func TestGrokFallbackTransportOrdinaryAuditFailureStillSends(t *testing.T) {
+	var calls atomic.Int64
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+	})}
+	counter := httpattempt.NewCounter()
+	counter.SetBeforeAttempt(func(context.Context, httpattempt.Metadata) error {
+		return errors.New("audit store down")
+	}, false)
+	req, err := http.NewRequestWithContext(httpattempt.WithCounter(t.Context(), counter), http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int64(1), calls.Load())
+}
 
 func TestHTTPUpstreamDoCanDisableRedirectsPerRequest(t *testing.T) {
 	var redirectedCalls atomic.Int64
@@ -43,12 +361,15 @@ func TestHTTPUpstreamDoCanDisableRedirectsPerRequest(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
+	counter := httpattempt.NewCounter()
+	req = req.WithContext(httpattempt.WithCounter(req.Context(), counter))
 
 	resp, err := upstream.Do(req, "", 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusFound, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 	require.Zero(t, redirectedCalls.Load())
+	require.Equal(t, uint64(1), counter.Load())
 }
 
 func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredHTTPProxy(t *testing.T) {
@@ -295,6 +616,10 @@ func TestHTTPUpstreamDoFallsBackToOfficialGrokAPIOnCLIAccessDenied(t *testing.T)
 
 	req, err := http.NewRequest(http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", bytes.NewReader(payload))
 	require.NoError(t, err)
+	counter := httpattempt.NewCounter()
+	ctx := httpattempt.WithCounter(req.Context(), counter)
+	metadata := httpattempt.Metadata{AccountID: accountID, Model: "grok-4.5", Protocol: "openai.responses"}
+	req = req.WithContext(httpattempt.WithMetadata(ctx, metadata))
 	req.Header.Set("Authorization", "Bearer oauth-token")
 
 	resp, err := svc.Do(req, "", accountID, 1)
@@ -305,6 +630,30 @@ func TestHTTPUpstreamDoFallsBackToOfficialGrokAPIOnCLIAccessDenied(t *testing.T)
 	require.NoError(t, resp.Body.Close())
 	require.JSONEq(t, `{"id":"response-ok"}`, string(responseBody))
 	require.Equal(t, 2, calls)
+	require.Equal(t, uint64(2), counter.Load())
+	attempts := counter.Metadata()
+	require.Len(t, attempts, 2)
+	for _, attempt := range attempts {
+		require.Equal(t, accountID, attempt.AccountID)
+		require.Equal(t, metadata.Model, attempt.Model)
+		require.Equal(t, metadata.Protocol, attempt.Protocol)
+		wantHeaders := map[string]any{
+			"Authorization":        map[string]any{"present": true},
+			"Other-Header-Present": map[string]any{"present": true},
+		}
+		if attempt.StatusCode != nil && *attempt.StatusCode == http.StatusForbidden {
+			wantHeaders["User-Agent"] = map[string]any{"present": true}
+			wantHeaders["Sensitive-Header-Present"] = map[string]any{"present": true}
+		}
+		require.Equal(t, wantHeaders, attempt.RequestHeaders)
+		require.NotNil(t, attempt.StatusCode)
+		require.NotNil(t, attempt.RequestBytes)
+		require.Equal(t, int64(len(payload)), *attempt.RequestBytes)
+		require.NotContains(t, attempt.RequestHeaders, "prompt")
+		require.NotContains(t, attempt.ResponseHeaders, "Set-Cookie")
+	}
+	require.Equal(t, http.StatusForbidden, *attempts[0].StatusCode)
+	require.Equal(t, http.StatusOK, *attempts[1].StatusCode)
 	require.Equal(t, payload, fallbackBody)
 	require.Equal(t, "Bearer oauth-token", fallbackHeaders.Get("Authorization"))
 	require.Empty(t, fallbackHeaders.Get("X-XAI-Token-Auth"))
@@ -1004,18 +1353,24 @@ func TestHTTPUpstreamDoPublicHostsOnlyRejectsPrivateDestinationBeforeConnecting(
 
 	plain, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target.URL, nil)
 	require.NoError(t, err)
+	plainCounter := httpattempt.NewCounter()
+	plain = plain.WithContext(httpattempt.WithCounter(plain.Context(), plainCounter))
 	resp, err := upstream.Do(plain, "", 1, 1)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, int64(1), calls.Load(), "loopback stays reachable for requests without the marker")
+	require.Equal(t, uint64(1), plainCounter.Load())
 
 	guarded, err := http.NewRequestWithContext(service.WithHTTPUpstreamPublicHostsOnly(t.Context()), http.MethodGet, target.URL, nil)
 	require.NoError(t, err)
+	guardedCounter := httpattempt.NewCounter()
+	guarded = guarded.WithContext(httpattempt.WithCounter(guarded.Context(), guardedCounter))
 	resp, err = upstream.Do(guarded, "", 1, 1)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.Contains(t, err.Error(), "not allowed")
 	require.Equal(t, int64(1), calls.Load(), "marked request must be rejected before any connection is made")
+	require.Zero(t, guardedCounter.Load())
 }
 
 func TestHTTPUpstreamPublicHostsOnlyValidatesEveryRedirectHop(t *testing.T) {

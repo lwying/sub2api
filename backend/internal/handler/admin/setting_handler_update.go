@@ -36,6 +36,10 @@ type UpdateSettingsRequest struct {
 	SessionBindingEnabled               *bool                        `json:"session_binding_enabled"`  // 会话 IP/UA 绑定（省略=保持现值）
 	StepUpEnabled                       *bool                        `json:"step_up_enabled"`          // 敏感操作 step-up 2FA（省略=保持现值）
 	AuditLogRetentionDays               int                          `json:"audit_log_retention_days"` // 审计日志保留天数
+	RequestAuditForceEnabled            *bool                        `json:"request_audit_force_enabled"`
+	RequestAuditForceMessages           *bool                        `json:"request_audit_force_messages"`
+	RequestAuditForceChatCompletions    *bool                        `json:"request_audit_force_chat_completions"`
+	RequestAuditForceResponses          *bool                        `json:"request_audit_force_responses"`
 	LoginAgreementEnabled               bool                         `json:"login_agreement_enabled"`
 	LoginAgreementMode                  string                       `json:"login_agreement_mode"`
 	LoginAgreementUpdatedAt             string                       `json:"login_agreement_updated_at"`
@@ -520,6 +524,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.StepUpEnabled != nil {
 		stepUpEnabled = *req.StepUpEnabled
 	}
+	requestAuditForceEnabled := boolValueOrDefault(req.RequestAuditForceEnabled, previousSettings.RequestAuditForceEnabled)
+	requestAuditForceMessages := boolValueOrDefault(req.RequestAuditForceMessages, previousSettings.RequestAuditForceMessages)
+	requestAuditForceChatCompletions := boolValueOrDefault(req.RequestAuditForceChatCompletions, previousSettings.RequestAuditForceChatCompletions)
+	requestAuditForceResponses := boolValueOrDefault(req.RequestAuditForceResponses, previousSettings.RequestAuditForceResponses)
 	passkeyEnabled := previousSettings.PasskeyEnabled
 	if req.PasskeyEnabled != nil {
 		passkeyEnabled = *req.PasskeyEnabled
@@ -1518,6 +1526,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SessionBindingEnabled:               sessionBindingEnabled,
 		StepUpEnabled:                       stepUpEnabled,
 		AuditLogRetentionDays:               req.AuditLogRetentionDays,
+		RequestAuditForceEnabled:            requestAuditForceEnabled,
+		RequestAuditForceMessages:           requestAuditForceMessages,
+		RequestAuditForceChatCompletions:    requestAuditForceChatCompletions,
+		RequestAuditForceResponses:          requestAuditForceResponses,
 		LoginAgreementEnabled:               req.LoginAgreementEnabled,
 		LoginAgreementMode:                  loginAgreementMode,
 		LoginAgreementUpdatedAt:             loginAgreementUpdatedAt,
@@ -2176,6 +2188,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SessionBindingEnabled:                                  updatedSettings.SessionBindingEnabled,
 		StepUpEnabled:                                          updatedSettings.StepUpEnabled,
 		AuditLogRetentionDays:                                  updatedSettings.AuditLogRetentionDays,
+		RequestAuditForceEnabled:                               updatedSettings.RequestAuditForceEnabled,
+		RequestAuditForceMessages:                              updatedSettings.RequestAuditForceMessages,
+		RequestAuditForceChatCompletions:                       updatedSettings.RequestAuditForceChatCompletions,
+		RequestAuditForceResponses:                             updatedSettings.RequestAuditForceResponses,
 		LoginAgreementEnabled:                                  updatedSettings.LoginAgreementEnabled,
 		LoginAgreementMode:                                     updatedSettings.LoginAgreementMode,
 		LoginAgreementUpdatedAt:                                updatedSettings.LoginAgreementUpdatedAt,

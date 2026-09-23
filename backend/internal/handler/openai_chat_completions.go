@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
@@ -69,6 +70,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
 
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
@@ -114,6 +116,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteChatCompletions, false) {
+		return
+	}
+
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
@@ -154,6 +160,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	requestAuditHeaders := cloneRequestAuditHeaders(c)
+	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
+	if requestAuditFingerprint != nil {
+		requestAuditFingerprint.DigestRequest(body)
+		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
+	}
+	var requestAuditAttempts []service.RequestAuditAttempt
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 
@@ -241,6 +254,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		writerSizeBeforeForward := c.Writer.Size()
+		before := len(service.RequestAuditHTTPAttemptMetadata(c))
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -249,11 +263,24 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
 		}()
+		requestAuditAttempts = appendOpenAITransportAttempts(
+			requestAuditAttempts,
+			service.RequestAuditHTTPAttemptMetadata(c),
+			before,
+			reqModel,
+			forwardModel,
+			requestAuditFingerprint,
+			service.RequestAuditProtocolOpenAIChat,
+		)
+		if service.IsRequestAuditRequiredError(err) {
+			writeRequestAuditUnavailable(c, false)
+			return
+		}
 		var cyberBlockBodyChat []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyChat = body
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyChat, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, result != nil, cyberBlockBodyChat, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -279,23 +306,51 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			requestAuditAttemptsForRecord := append([]service.RequestAuditAttempt(nil), requestAuditAttempts...)
+			requestAuditHeadersForRecord := requestAuditHeaders
+			if len(requestAuditAttemptsForRecord) == 0 {
+				requestAuditHeadersForRecord = nil
+			}
+			auditLogicalKey := service.RequestAuditLogicalKeyFromGin(c)
+			notCapturedReason := ""
+			if service.RequestAuditLastTransportWasPlugin(c) {
+				notCapturedReason = service.RequestAuditNotCapturedReasonPhase1Uncovered
+			}
+			localRequestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+			upstreamRequestID := ""
+			if notCapturedReason == "" && len(requestAuditAttemptsForRecord) > 0 {
+				upstreamRequestID = service.UpstreamRequestIDFromHeaders(account, res.UpstreamHeaders)
+			}
+			requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, "", localRequestID, upstreamRequestID)
+			requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
+			// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
+			// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
+			if notCapturedReason == "" {
+				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
+			}
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					APIKeyService:      h.apiKeyService,
-					QuotaPlatform:      quotaPlatform,
-					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
-					PricingAt:          pricingAt,
-					CyberBlocked:       cyberBlocked,
+					Result:                  res,
+					APIKey:                  apiKey,
+					User:                    apiKey.User,
+					Account:                 account,
+					Subscription:            subscription,
+					InboundEndpoint:         inboundEndpoint,
+					UpstreamEndpoint:        upstreamEndpoint,
+					UserAgent:               userAgent,
+					IPAddress:               clientIP,
+					APIKeyService:           h.apiKeyService,
+					QuotaPlatform:           quotaPlatform,
+					SessionID:               sessionID,
+					ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
+					PricingAt:               pricingAt,
+					CyberBlocked:            cyberBlocked,
+					RequestAuditHeaders:     requestAuditHeadersForRecord,
+					RequestAuditAttempts:    requestAuditAttemptsForRecord,
+					RequestAuditFingerprint: requestAuditFingerprint,
+					RequestAuditMetadata:    requestAuditMetadata,
+					NotCapturedReason:       notCapturedReason,
+					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.chat_completions"),

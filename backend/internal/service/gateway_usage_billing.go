@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -37,21 +38,27 @@ func (s *GatewayService) ResolveUserGroupRateMultiplier(ctx context.Context, use
 // RecordUsageInput 记录使用量的输入参数。
 // 异步 worker 只接收计费所需快照，不能持有 ParsedRequest/RequestBodyRef 这类大请求体引用。
 type RecordUsageInput struct {
-	Result             *ForwardResult
-	APIKey             *APIKey
-	User               *User
-	Account            *Account
-	Subscription       *UserSubscription  // 可选：订阅信息
-	PricingAt          time.Time          // token 售价固定时刻；零值保持既有的记录时刻语义
-	InboundEndpoint    string             // 入站端点（客户端请求路径）
-	UpstreamEndpoint   string             // 上游端点（标准化后的上游路径）
-	UserAgent          string             // 请求的 User-Agent
-	IPAddress          string             // 请求的客户端 IP 地址
-	SessionID          string             // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
-	RequestPayloadHash string             // 请求体语义哈希，用于降低 request_id 误复用时的静默误去重风险
-	ForceCacheBilling  bool               // 强制缓存计费：将 input_tokens 转为 cache_read 计费（用于粘性会话切换）
-	APIKeyService      APIKeyQuotaUpdater // 可选：用于更新API Key配额
-	QuotaPlatform      string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
+	Result                  *ForwardResult
+	APIKey                  *APIKey
+	User                    *User
+	Account                 *Account
+	Subscription            *UserSubscription     // 可选：订阅信息
+	PricingAt               time.Time             // token 售价固定时刻；零值保持既有的记录时刻语义
+	InboundEndpoint         string                // 入站端点（客户端请求路径）
+	UpstreamEndpoint        string                // 上游端点（标准化后的上游路径）
+	UserAgent               string                // 请求的 User-Agent
+	IPAddress               string                // 请求的客户端 IP 地址
+	SessionID               string                // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
+	RequestPayloadHash      string                // 请求体语义哈希，用于降低 request_id 误复用时的静默误去重风险
+	ForceCacheBilling       bool                  // 强制缓存计费：将 input_tokens 转为 cache_read 计费（用于粘性会话切换）
+	APIKeyService           APIKeyQuotaUpdater    // 可选：用于更新API Key配额
+	QuotaPlatform           string                // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
+	RequestAuditHeaders     http.Header           // 入站协议头快照；不含模型正文
+	RequestAuditAttempts    []RequestAuditAttempt // 上游尝试时间线；不含模型正文
+	RequestAuditFingerprint *RequestAuditFingerprintInput
+	RequestAuditMetadata    RequestAuditMetadata
+	NotCapturedReason       string // 未采集原因；空值表示本路径已纳入采集
+	AuditLogicalKey         string // forced reservation logical key；空值表示普通审计
 
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
 }
@@ -564,6 +571,87 @@ func (s *GatewayService) billingDeps() *billingDeps {
 	}
 }
 
+func attachRequestAuditBestEffort(ctx context.Context, repo RequestAuditRepository, usageLog *UsageLog, input RequestAuditInput) {
+	auditCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	_ = AttachRequestAuditAfterUsageLog(auditCtx, repo, usageLog, input)
+}
+
+func finalizeRequestAuditBestEffort(
+	ctx context.Context,
+	auditRepo RequestAuditRepository,
+	usageRepo UsageLogRepository,
+	usageLog *UsageLog,
+	logicalKey string,
+	input RequestAuditInput,
+) {
+	if logicalKey == "" {
+		attachRequestAuditBestEffort(ctx, auditRepo, usageLog, input)
+		return
+	}
+	forcedRepo, ok := auditRepo.(RequestAuditReservationRepository)
+	if !ok {
+		return
+	}
+	auditCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	if usageLog == nil {
+		markForcedRequestAuditIncomplete(logicalKey, requestAuditIncompleteFinalizationFailed, RequestAuditAttempt{})
+		markForcedReservationIncompleteFresh(ctx, forcedRepo, logicalKey, 0)
+		return
+	}
+	if usageLog.ID <= 0 && usageRepo != nil {
+		if _, err := usageRepo.Create(auditCtx, usageLog); err != nil {
+			logger.LegacyPrintf("service.request_audit", "Ensure usage ID for forced audit failed: code=finalization_failed")
+			markForcedRequestAuditIncomplete(logicalKey, requestAuditIncompleteFinalizationFailed, RequestAuditAttempt{})
+			markForcedReservationIncompleteFresh(ctx, forcedRepo, logicalKey, 0)
+			return
+		}
+	}
+	if usageLog.ID <= 0 {
+		logger.LegacyPrintf("service.request_audit", "Ensure usage ID for forced audit returned no ID: code=finalization_failed")
+		markForcedRequestAuditIncomplete(logicalKey, requestAuditIncompleteFinalizationFailed, RequestAuditAttempt{})
+		markForcedReservationIncompleteFresh(ctx, forcedRepo, logicalKey, 0)
+		return
+	}
+	incompleteReason, incompleteAttempts := forcedRequestAuditIncompleteForKey(logicalKey)
+	input.UsageLogID = usageLog.ID
+	input.Attempts = append(input.Attempts, incompleteAttempts...)
+	input.Metadata = AddRequestAuditUsageTokens(input.Metadata, usageLog)
+	rec := BuildRequestAuditRecord(input)
+	if incompleteReason != "" {
+		rec.CaptureCompleteness = RequestAuditCaptureIncomplete
+		rec.CaptureReason = incompleteReason
+	}
+	if err := forcedRepo.FinalizeReservation(auditCtx, logicalKey, usageLog.ID, rec); err != nil {
+		logger.LegacyPrintf("service.request_audit", "Finalize forced request audit failed: usage_log_id=%d code=finalization_failed", usageLog.ID)
+		markForcedRequestAuditIncomplete(logicalKey, requestAuditIncompleteFinalizationFailed, RequestAuditAttempt{})
+		markForcedReservationIncompleteFresh(ctx, forcedRepo, logicalKey, usageLog.ID)
+		return
+	}
+	clearForcedRequestAuditIncomplete(logicalKey)
+}
+
+func markForcedReservationIncompleteFresh(ctx context.Context, repo RequestAuditReservationRepository, logicalKey string, usageID int64) {
+	markCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	_ = repo.MarkReservationIncomplete(markCtx, logicalKey, usageID, "finalization_failed")
+}
+
+func requestAuditSSEEventsFromResult(result *ForwardResult) []RequestAuditSSEEvent {
+	if result == nil {
+		return nil
+	}
+	return result.SSEEvents
+}
+
+func requestAuditSSEEventsFromOpenAIResult(result *OpenAIForwardResult) []RequestAuditSSEEvent {
+	if result == nil {
+		return nil
+	}
+	return result.SSEEvents
+}
+
 func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string) {
 	if repo == nil || usageLog == nil {
 		return
@@ -599,42 +687,54 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
-		Result:             input.Result,
-		APIKey:             input.APIKey,
-		User:               input.User,
-		Account:            input.Account,
-		Subscription:       input.Subscription,
-		PricingAt:          input.PricingAt,
-		InboundEndpoint:    input.InboundEndpoint,
-		UpstreamEndpoint:   input.UpstreamEndpoint,
-		UserAgent:          input.UserAgent,
-		IPAddress:          input.IPAddress,
-		SessionID:          input.SessionID,
-		RequestPayloadHash: input.RequestPayloadHash,
-		ForceCacheBilling:  input.ForceCacheBilling,
-		APIKeyService:      input.APIKeyService,
-		QuotaPlatform:      input.QuotaPlatform,
-		ChannelUsageFields: input.ChannelUsageFields,
+		Result:                  input.Result,
+		APIKey:                  input.APIKey,
+		User:                    input.User,
+		Account:                 input.Account,
+		Subscription:            input.Subscription,
+		PricingAt:               input.PricingAt,
+		InboundEndpoint:         input.InboundEndpoint,
+		UpstreamEndpoint:        input.UpstreamEndpoint,
+		UserAgent:               input.UserAgent,
+		IPAddress:               input.IPAddress,
+		SessionID:               input.SessionID,
+		RequestPayloadHash:      input.RequestPayloadHash,
+		ForceCacheBilling:       input.ForceCacheBilling,
+		APIKeyService:           input.APIKeyService,
+		QuotaPlatform:           input.QuotaPlatform,
+		RequestAuditHeaders:     input.RequestAuditHeaders,
+		RequestAuditAttempts:    input.RequestAuditAttempts,
+		RequestAuditFingerprint: input.RequestAuditFingerprint,
+		RequestAuditMetadata:    input.RequestAuditMetadata,
+		NotCapturedReason:       input.NotCapturedReason,
+		AuditLogicalKey:         input.AuditLogicalKey,
+		ChannelUsageFields:      input.ChannelUsageFields,
 	})
 }
 
 // recordUsageCoreInput 是 recordUsageCore 的公共输入字段，从两种输入结构体中提取。
 type recordUsageCoreInput struct {
-	Result             *ForwardResult
-	APIKey             *APIKey
-	User               *User
-	Account            *Account
-	Subscription       *UserSubscription
-	PricingAt          time.Time
-	InboundEndpoint    string
-	UpstreamEndpoint   string
-	UserAgent          string
-	IPAddress          string
-	SessionID          string
-	RequestPayloadHash string
-	ForceCacheBilling  bool
-	APIKeyService      APIKeyQuotaUpdater
-	QuotaPlatform      string
+	Result                  *ForwardResult
+	APIKey                  *APIKey
+	User                    *User
+	Account                 *Account
+	Subscription            *UserSubscription
+	PricingAt               time.Time
+	InboundEndpoint         string
+	UpstreamEndpoint        string
+	UserAgent               string
+	IPAddress               string
+	SessionID               string
+	RequestPayloadHash      string
+	ForceCacheBilling       bool
+	APIKeyService           APIKeyQuotaUpdater
+	QuotaPlatform           string
+	RequestAuditHeaders     http.Header
+	RequestAuditAttempts    []RequestAuditAttempt
+	RequestAuditFingerprint *RequestAuditFingerprintInput
+	RequestAuditMetadata    RequestAuditMetadata
+	NotCapturedReason       string
+	AuditLogicalKey         string
 	ChannelUsageFields
 }
 
@@ -837,6 +937,14 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
+			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromResult(result),
+			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
+			ClientDisconnect: result != nil && result.ClientDisconnect,
+			StreamIncomplete: result != nil && result.StreamIncomplete,
+			Fingerprint:      input.RequestAuditFingerprint,
+			Metadata:         input.RequestAuditMetadata,
+		})
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -869,9 +977,25 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
+			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromResult(result),
+			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
+			ClientDisconnect: result != nil && result.ClientDisconnect,
+			StreamIncomplete: result != nil && result.StreamIncomplete,
+			Fingerprint:      input.RequestAuditFingerprint,
+			Metadata:         input.RequestAuditMetadata,
+		})
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
+		Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromResult(result),
+		Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
+		ClientDisconnect: result != nil && result.ClientDisconnect,
+		StreamIncomplete: result != nil && result.StreamIncomplete,
+		Fingerprint:      input.RequestAuditFingerprint,
+		Metadata:         input.RequestAuditMetadata,
+	})
 
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 )
 
@@ -925,6 +926,9 @@ func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.
 	route := m.route.Load()
 	if route == nil {
 		return nil, false, nil
+	}
+	if httpattempt.IsForced(ctx) {
+		return nil, true, &httpattempt.RequiredAuditError{}
 	}
 	if route.runtime == nil {
 		return nil, true, fmt.Errorf("OpenAI OAuth 插件不可用: %s", route.unavailable)

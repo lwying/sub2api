@@ -27,6 +27,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
@@ -346,8 +347,8 @@ func httpClientWithGrokAccessDeniedFallback(client *http.Client) *http.Client {
 }
 
 func (t *grokAccessDeniedFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req)
-	if err != nil || !isGrokCLIAccessDeniedFallbackCandidate(req, resp) {
+	resp, _, err := t.roundTripAttempt(req)
+	if err != nil || resp == nil || !isGrokCLIAccessDeniedFallbackCandidate(req, resp) {
 		return resp, err
 	}
 
@@ -360,9 +361,23 @@ func (t *grokAccessDeniedFallbackTransport) RoundTrip(req *http.Request) (*http.
 	if err != nil {
 		return resp, nil
 	}
-	fallbackResp, fallbackErr := t.base.RoundTrip(fallbackReq)
+	fallbackResp, _, fallbackErr := t.roundTripAttempt(fallbackReq)
 	if fallbackErr != nil {
+		// Forced audit mode rejected the fallback attempt before it was sent; no
+		// attempt row exists for it and the CLI 403 is not an upstream verdict on
+		// the OAuth credential. Replaying the 403 would silently defeat the
+		// pre-send block, so propagate the gate failure instead.
+		if httpattempt.IsRequiredAuditError(fallbackErr) {
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			slog.Warn("grok_cli_access_denied_api_fallback_blocked", "path", req.URL.EscapedPath())
+			return nil, fallbackErr
+		}
 		slog.Debug("grok_cli_access_denied_api_fallback_failed", "path", req.URL.EscapedPath(), "error", fallbackErr)
+		return resp, nil
+	}
+	if fallbackResp == nil {
 		return resp, nil
 	}
 	if fallbackResp.StatusCode < http.StatusOK || fallbackResp.StatusCode >= http.StatusMultipleChoices {
@@ -377,6 +392,36 @@ func (t *grokAccessDeniedFallbackTransport) RoundTrip(req *http.Request) (*http.
 	}
 	slog.Warn("grok_cli_access_denied_api_fallback_succeeded", "method", req.Method, "path", req.URL.EscapedPath())
 	return fallbackResp, nil
+}
+
+func (t *grokAccessDeniedFallbackTransport) roundTripAttempt(req *http.Request) (*http.Response, *httpattempt.Attempt, error) {
+	if err := httpattempt.BeforeRequest(req); err != nil {
+		return nil, nil, err
+	}
+	attempt := httpattempt.StartRequestAttempt(req)
+	request := req
+	if attempt != nil && req.Body != nil && req.Body != http.NoBody {
+		request = req.Clone(req.Context())
+		request.Body = &httpattempt.CountingReadCloser{
+			ReadCloser: req.Body,
+			OnRead:     attempt.AddRequestBytes,
+		}
+	}
+	resp, err := t.base.RoundTrip(request)
+	if resp != nil {
+		if attempt != nil {
+			attempt.SetResponse(resp.StatusCode, resp.Header, resp.Body != nil && resp.Body != http.NoBody)
+		}
+		wrapHTTPAttemptResponse(attempt, resp)
+	}
+	return resp, attempt, err
+}
+
+func wrapHTTPAttemptResponse(attempt *httpattempt.Attempt, resp *http.Response) {
+	if resp == nil || resp.Body == nil || resp.Body == http.NoBody || attempt == nil {
+		return
+	}
+	resp.Body = httpattempt.NewResponseBody(resp.Body, attempt)
 }
 
 func isGrokCLICompatibilityAccessDenied(body []byte) bool {

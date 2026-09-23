@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -428,6 +429,215 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize(t *
 	out := rec.Body.String()
 	require.Contains(t, out, `"text":"he"`, "delta emitted before the failure must reach the client")
 	require.NotContains(t, out, "event: message_stop", "no synthetic completion after a broken read")
+}
+
+// ── 请求审计采集完整性：CC 回退路径的流式截断 ──
+//
+// 两条 CC 回退路径（/v1/messages 与 /v1/responses）共用下面的构造与断言；
+// responses 侧的 focused 测试文件复用这里定义的 helper。
+
+// chatFallbackAuditDeltaText 是 CC 回退路径上真实存在的模型正文片段：
+// 事件骨架与审计记录的任何位置都不得出现。
+const chatFallbackAuditDeltaText = "chat-fallback-audit-delta-7c1"
+
+// chatFallbackAuditChunk 构造一个携带正文的 CC delta chunk（无终止信号）。
+func chatFallbackAuditChunk() string {
+	return `data: {"id":"chatcmpl_audit","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"` + chatFallbackAuditDeltaText + `"},"finish_reason":null}]}` + "\n\n"
+}
+
+// chatFallbackAuditStream 构造最小 CC 上游 SSE。withDone / withFinish / withUsage
+// 三个终止信号开关全为 false 时，上游在输出中途干净收尾（缺终止信号 = 截断）。
+func chatFallbackAuditStream(withDone, withFinish, withUsage bool) string {
+	stream := chatFallbackAuditChunk()
+	if withFinish {
+		stream += `data: {"id":"chatcmpl_audit","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n"
+	}
+	if withUsage {
+		stream += `data: {"id":"chatcmpl_audit","object":"chat.completion.chunk","model":"gpt-5.4","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}` + "\n\n"
+	}
+	if withDone {
+		stream += "data: [DONE]\n\n"
+	}
+	return stream
+}
+
+// requireChatFallbackAuditCompleteness 把结果按使用记录挂审计的方式落一次库，
+// 断言采集完整性，并确认审计记录不含模型正文。
+func requireChatFallbackAuditCompleteness(t *testing.T, result *OpenAIForwardResult, want string) {
+	t.Helper()
+	require.NotNil(t, result)
+	repo := &stubRequestAuditRepo{}
+	require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, RequestAuditInput{
+		SSEEvents:        requestAuditSSEEventsFromOpenAIResult(result),
+		ClientDisconnect: result.ClientDisconnect,
+		StreamIncomplete: result.StreamIncomplete,
+	}))
+	require.NotNil(t, repo.created)
+	require.Equal(t, want, repo.created.CaptureCompleteness)
+	encoded, err := json.Marshal(repo.created)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), chatFallbackAuditDeltaText, "请求审计不得保留模型正文")
+}
+
+// 上游在响应开始后异常终止（读错误，或缺终止信号的干净 EOF）时，已观测的 usage 与
+// 事件骨架照常带出，但结果必须带 StreamIncomplete，使使用记录上的请求审计记
+// 「响应中途不完整」而不是「完整」。终止信号（[DONE] / finish_reason / usage 帧）
+// 任一出现即视为正常收尾——只认 [DONE] 会把「跑完最后一帧就 EOF」的兼容上游误判成截断。
+func TestForwardAsAnthropic_ForceChatCompletionsStreamAuditMarksUpstreamTruncationIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name             string
+		body             io.ReadCloser
+		wantErr          string
+		wantIncomplete   bool
+		wantCompleteness string
+		wantEvents       int
+	}{
+		{
+			name:             "upstream read error after partial output is incomplete",
+			body:             &errTailReader{data: []byte(chatFallbackAuditStream(false, false, false)), err: errors.New("simulated upstream read failure")},
+			wantErr:          "stream usage incomplete",
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+		{
+			name:             "clean EOF without any terminal signal is incomplete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, false, false))),
+			wantIncomplete:   true,
+			wantCompleteness: RequestAuditCaptureIncomplete,
+			wantEvents:       1,
+		},
+		{
+			name:             "finish_reason terminal without done sentinel keeps the audit complete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, true, false))),
+			wantIncomplete:   false,
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       2,
+		},
+		{
+			name:             "usage frame terminal keeps the audit complete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, false, true))),
+			wantIncomplete:   false,
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       2,
+		},
+		{
+			name:             "done sentinel keeps the audit complete",
+			body:             io.NopCloser(strings.NewReader(chatFallbackAuditStream(true, true, true))),
+			wantIncomplete:   false,
+			wantCompleteness: RequestAuditCaptureComplete,
+			wantEvents:       4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			svc := &OpenAIGatewayService{
+				cfg: rawChatCompletionsTestConfig(),
+				httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_msg_chat_audit"}},
+					Body:       tt.body,
+				}},
+			}
+
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			}
+			require.NotNil(t, result)
+			require.True(t, result.Stream)
+			require.Equal(t, tt.wantIncomplete, result.StreamIncomplete,
+				"post-start upstream termination must mark the linked request audit incomplete")
+			require.False(t, result.ClientDisconnect)
+
+			// 客户端行为不变：失败前已产出的 SSE 仍照常送达。
+			require.Contains(t, rec.Body.String(), chatFallbackAuditDeltaText)
+
+			// 采集不得保留正文，也不得丢失已观测的骨架。
+			require.Len(t, result.SSEEvents, tt.wantEvents)
+			for _, ev := range result.SSEEvents {
+				require.Empty(t, ev.Data, "事件骨架不得携带 SSE data 正文")
+				require.Positive(t, ev.Bytes)
+			}
+
+			requireChatFallbackAuditCompleteness(t, result, tt.wantCompleteness)
+		})
+	}
+}
+
+// 缺终止信号的干净 EOF 不改变客户端行为：不返回错误（与读错误路径不同），
+// 客户端仍收到收尾帧；审计靠 StreamIncomplete 区分「完整」与「响应中途不完整」。
+func TestForwardAsAnthropic_ForceChatCompletionsStreamAuditMissingTerminalKeepsClientContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	svc := &OpenAIGatewayService{
+		cfg: rawChatCompletionsTestConfig(),
+		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_msg_chat_audit_eof"}},
+			Body:       io.NopCloser(strings.NewReader(chatFallbackAuditStream(false, false, false))),
+		}},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+	require.NoError(t, err, "客户端契约不变：缺终止信号不向客户端报错")
+	require.NotNil(t, result)
+	require.True(t, result.StreamIncomplete)
+
+	out := rec.Body.String()
+	require.Contains(t, out, chatFallbackAuditDeltaText)
+	require.Contains(t, out, "event: message_stop", "收尾帧仍照常写出")
+
+	requireChatFallbackAuditCompleteness(t, result, RequestAuditCaptureIncomplete)
+}
+
+// 客户端主动断开/取消由 ClientDisconnect 单独标记（审计同样不完整），
+// 不得伪装成上游截断。
+func TestForwardAsAnthropic_ForceChatCompletionsStreamAuditKeepsClientDisconnectOutOfStreamIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Writer = &failWriteResponseWriter{ResponseWriter: c.Writer}
+
+	svc := &OpenAIGatewayService{
+		cfg: rawChatCompletionsTestConfig(),
+		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_msg_chat_audit_dc"}},
+			Body:       io.NopCloser(strings.NewReader(chatFallbackAuditStream(true, true, true))),
+		}},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect, "写失败须标记客户端断开")
+	require.False(t, result.StreamIncomplete, "客户端主动取消不得伪装成上游截断")
+	require.Len(t, result.SSEEvents, 4, "断开后仍继续采集上游事件骨架")
+
+	requireChatFallbackAuditCompleteness(t, result, RequestAuditCaptureIncomplete)
 }
 
 // Gate regression: an API-key account whose upstream is confirmed to support

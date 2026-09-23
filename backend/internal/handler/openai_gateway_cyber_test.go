@@ -1,11 +1,17 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -25,7 +31,7 @@ func TestRecordCyberPolicyIfMarked_NoMark(t *testing.T) {
 	c := newTestGinContext()
 	h := &OpenAIGatewayHandler{}
 
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, false, nil, service.ChannelUsageFields{}, "")
 
 	// Flag must NOT be set when there was no mark.
 	require.False(t, c.GetBool(cyberPolicyRecordedKey),
@@ -48,14 +54,14 @@ func TestRecordCyberPolicyIfMarked_WithMark(t *testing.T) {
 
 	// First call: should set the flag.
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, false, nil, service.ChannelUsageFields{}, "")
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey),
 		"cyberPolicyRecordedKey must be true after first call with a mark")
 
 	// Second call: flag already set — must be a no-op (idempotent).
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, false, nil, service.ChannelUsageFields{}, "")
 	})
 	// Flag should still be true (not toggled or cleared).
 	require.True(t, c.GetBool(cyberPolicyRecordedKey),
@@ -76,7 +82,7 @@ func TestRecordCyberPolicyIfMarked_ForwardSuccessSkipsUsageLog(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false /* forwardErrored=false */, nil, service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false /* forwardErrored=false */, false, nil, service.ChannelUsageFields{}, "")
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 }
@@ -89,7 +95,7 @@ func TestClearCyberPolicyTurnState(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "turn1", UpstreamStatus: 200})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, false, nil, service.ChannelUsageFields{}, "")
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
 	clearCyberPolicyTurnState(c)
@@ -98,7 +104,7 @@ func TestClearCyberPolicyTurnState(t *testing.T) {
 
 	// turn2: a fresh cyber hit must be recordable again.
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "turn2", UpstreamStatus: 200})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, false, nil, service.ChannelUsageFields{}, "")
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 	require.Equal(t, "turn2", service.GetOpsCyberPolicy(c).Message)
 }
@@ -124,7 +130,7 @@ func TestClearCyberPolicyAttemptStatePreservesRecordedGuardDuringFailover(t *tes
 	h := &OpenAIGatewayHandler{}
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "account-a", UpstreamStatus: http.StatusOK})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, false, nil, service.ChannelUsageFields{}, "")
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
 	clearCyberPolicyAttemptState(c, false)
@@ -132,7 +138,7 @@ func TestClearCyberPolicyAttemptStatePreservesRecordedGuardDuringFailover(t *tes
 	require.True(t, c.GetBool(cyberPolicyRecordedKey), "the same logical turn must not record again after failover")
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "account-b", UpstreamStatus: http.StatusOK})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, false, nil, service.ChannelUsageFields{}, "")
 	require.Equal(t, "account-b", service.GetOpsCyberPolicy(c).Message)
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
@@ -203,8 +209,127 @@ func TestRecordCyberPolicyIfMarked_BlockKeyPlumbed(t *testing.T) {
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "x", UpstreamStatus: 400})
 	h := &OpenAIGatewayHandler{}
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, []byte(`{"input":"deadbeef"}`), service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, false, []byte(`{"input":"deadbeef"}`), service.ChannelUsageFields{}, "")
 	})
+}
+
+// TestCyberPolicyUsageAuditCapturesSanitizedWireAttempts 验证 cyber 审计只取传输尝试事实：
+// 账号/协议/状态保留，模型名与凭据原文、自由文本头值都不进审计。
+func TestCyberPolicyUsageAuditCapturesSanitizedWireAttempts(t *testing.T) {
+	c := newTestGinContext()
+	c.Request = httptest.NewRequest("POST", "/openai/v1/responses", strings.NewReader(`{}`))
+	c.Request.Header.Set("Authorization", "Bearer sk-cyber-secret")
+	c.Request.Header.Set("User-Agent", "codex/1.2.3")
+
+	counterCtx := service.WithRequestAuditHTTPAttemptCounter(context.Background(), c)
+	attemptCtx := httpattempt.WithMetadata(counterCtx, httpattempt.Metadata{
+		AccountID: 3, Model: "gpt-5.1", Protocol: service.RequestAuditProtocolOpenAIResp,
+	})
+	attempt := httpattempt.StartAttempt(attemptCtx)
+	require.NotNil(t, attempt)
+	attempt.SetResponse(http.StatusBadRequest, http.Header{"Content-Type": []string{"application/json"}}, true)
+
+	attempts, headers := cyberPolicyUsageAudit(c)
+
+	require.Len(t, attempts, 1)
+	require.Equal(t, int64(3), attempts[0].AccountID)
+	require.Equal(t, service.RequestAuditProtocolOpenAIResp, attempts[0].Protocol)
+	require.Equal(t, service.RequestAuditStageWire, attempts[0].Stage)
+	require.Empty(t, attempts[0].Model, "审计尝试不落模型名")
+	require.NotNil(t, attempts[0].UpstreamStatus)
+	require.Equal(t, http.StatusBadRequest, *attempts[0].UpstreamStatus)
+	require.Equal(t, []string{"present"}, headers["Authorization"], "凭据头只记存在")
+	require.Equal(t, []string{"present"}, headers["User-Agent"], "自由文本头只记存在")
+
+	encoded, err := json.Marshal(map[string]any{"attempts": attempts, "headers": headers})
+	require.NoError(t, err)
+	dump := string(encoded)
+	require.NotContains(t, dump, "sk-cyber-secret", "审计不得出现凭据原文")
+	require.NotContains(t, dump, "codex/1.2.3", "审计不得出现头值原文")
+	require.NotContains(t, dump, "gpt-5.1", "审计不得出现模型名")
+}
+
+// TestCyberPolicyUsageAuditEmptyWithoutWireAttempts 验证未覆盖传输（WS/插件无传输尝试元数据）
+// 不伪造尝试：由服务层标未采集，而不是给出空尝试列表冒充已采集。
+func TestCyberPolicyUsageAuditEmptyWithoutWireAttempts(t *testing.T) {
+	attempts, headers := cyberPolicyUsageAudit(nil)
+	require.Empty(t, attempts)
+	require.Empty(t, headers)
+
+	c := newTestGinContext()
+	c.Request = httptest.NewRequest("POST", "/openai/v1/responses", strings.NewReader(`{}`))
+	c.Request.Header.Set("Authorization", "Bearer sk-cyber-secret")
+
+	attempts, headers = cyberPolicyUsageAudit(c)
+	require.Empty(t, attempts)
+	require.Empty(t, headers)
+}
+
+type cyberPolicyUsageLogRepoStub struct {
+	service.UsageLogRepository
+
+	mu    sync.Mutex
+	calls int
+	last  *service.UsageLog
+}
+
+func (s *cyberPolicyUsageLogRepoStub) Create(_ context.Context, log *service.UsageLog) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if log != nil && log.ID == 0 {
+		log.ID = 42
+	}
+	s.last = log
+	return true, nil
+}
+
+func (s *cyberPolicyUsageLogRepoStub) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func newCyberPolicyHandlerForUsageTest(usageRepo service.UsageLogRepository) *OpenAIGatewayHandler {
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	gateway := service.NewOpenAIGatewayService(
+		nil, usageRepo, nil, nil, nil, nil, nil, cfg,
+		nil, nil, service.NewBillingService(cfg, nil), nil, nil, nil, &service.DeferredService{},
+		nil, nil, nil, nil, nil, nil, nil,
+	)
+	return NewOpenAIGatewayHandler(gateway, nil, nil, nil, nil, nil, nil, nil, cfg)
+}
+
+// TestRecordCyberPolicyIfMarked_CyberUsageOnlyWhenNormalSubmitterDoesNot 守护去重边界：
+// result 为 nil 的 cyber 透传路径由 cyber 侧落用量（因此有审计）；result 非 nil 时正常
+// submitter 拥有同一条使用记录与审计，cyber 侧不得再写（否则 usage 行同一、审计行唯一约束冲突，
+// 还会把更完整的记录换成局部记录）。
+func TestRecordCyberPolicyIfMarked_CyberUsageOnlyWhenNormalSubmitterDoesNot(t *testing.T) {
+	usageRepo := &cyberPolicyUsageLogRepoStub{}
+	h := newCyberPolicyHandlerForUsageTest(usageRepo)
+	apiKey := &service.APIKey{ID: 2, User: &service.User{ID: 1}}
+	account := &service.Account{ID: 3}
+
+	c := newTestGinContext()
+	c.Request = httptest.NewRequest("POST", "/openai/v1/responses", strings.NewReader(`{}`))
+	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{
+		Code: "cyber_policy", Message: "blocked", UpstreamStatus: http.StatusBadRequest,
+	})
+	h.recordCyberPolicyIfMarked(c, apiKey, account, nil, "gpt-5", true, false, nil, service.ChannelUsageFields{}, "")
+
+	require.Eventually(t, func() bool { return usageRepo.callCount() == 1 }, 3*time.Second, 10*time.Millisecond,
+		"result=nil 的 cyber 透传路径必须由 cyber 侧落用量，否则审计缺失")
+
+	c2 := newTestGinContext()
+	c2.Request = httptest.NewRequest("POST", "/openai/v1/responses", strings.NewReader(`{}`))
+	service.MarkOpsCyberPolicy(c2, service.CyberPolicyMark{
+		Code: "cyber_policy", Message: "blocked", UpstreamStatus: http.StatusOK,
+	})
+	h.recordCyberPolicyIfMarked(c2, apiKey, account, nil, "gpt-5", true, true, nil, service.ChannelUsageFields{}, "")
+
+	require.Never(t, func() bool { return usageRepo.callCount() != 1 }, 300*time.Millisecond, 20*time.Millisecond,
+		"result 非 nil 时正常 submitter 拥有 usage，cyber 侧不得双写")
+	require.True(t, c2.GetBool(cyberPolicyRecordedKey), "风控记录标记仍须置位，避免重复记录")
 }
 
 // TestBuildCyberPolicyOpsErrorEntry_StatusCode verifies F6: the ops error log

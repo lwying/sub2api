@@ -66,7 +66,19 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 		changed = append(changed, "session_binding_enabled")
 	}
 	if before.StepUpEnabled != after.StepUpEnabled {
-		changed = append(changed, "step_up_enabled")
+		changed = append(changed, service.SettingKeyStepUpEnabled)
+	}
+	if before.RequestAuditForceEnabled != after.RequestAuditForceEnabled {
+		changed = append(changed, service.SettingKeyRequestAuditForceEnabled)
+	}
+	if before.RequestAuditForceMessages != after.RequestAuditForceMessages {
+		changed = append(changed, service.SettingKeyRequestAuditForceMessages)
+	}
+	if before.RequestAuditForceChatCompletions != after.RequestAuditForceChatCompletions {
+		changed = append(changed, service.SettingKeyRequestAuditForceChatCompletions)
+	}
+	if before.RequestAuditForceResponses != after.RequestAuditForceResponses {
+		changed = append(changed, service.SettingKeyRequestAuditForceResponses)
 	}
 	if before.LoginAgreementEnabled != after.LoginAgreementEnabled {
 		changed = append(changed, "login_agreement_enabled")

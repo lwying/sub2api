@@ -168,6 +168,10 @@ func openAIChannelForwardModel(mapping service.ChannelMappingResult, requestedMo
 	return requestedModel
 }
 
+func openAIMessagesPostNormalizeModel(mapping service.ChannelMappingResult, requestedModel string) string {
+	return service.NormalizeOpenAICompatRequestedModel(openAIChannelForwardModel(mapping, requestedModel))
+}
+
 type grokMediaEligibilityProber interface {
 	ProbeMediaEligibility(ctx context.Context, accountID int64) (bool, string, error)
 }
@@ -425,8 +429,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
 
 	setOpsRequestContext(c, "", false)
+	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteResponses, false) {
+		return
+	}
 	sessionHashBody := body
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
@@ -442,7 +450,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// body-signal compact：上游 unary 等待期间向下游发 SSE 注释行心跳，防止
 	// 反向代理空闲超时掐断长压缩连接（#3887）。首拍延迟一个心跳间隔，快速
 	// 失败仍走 JSON+状态码链路；未标记客户端流式或间隔为 0 时是 no-op。
-	stopCompactKeepalive := service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+	stopCompactKeepalive := func() {}
+	if !requestAuditIsForced(c) {
+		stopCompactKeepalive = service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+	}
 	defer stopCompactKeepalive()
 
 	// 校验请求体 JSON 合法性
@@ -622,6 +633,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	requestAuditHeaders := cloneRequestAuditHeaders(c)
+	var requestAuditAttempts []service.RequestAuditAttempt
+	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
+	if requestAuditFingerprint != nil {
+		requestAuditFingerprint.DigestRequest(body)
+		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
+	}
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	var passthroughFailoverState openAIPassthroughFailoverState
@@ -766,6 +784,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 从不可变的 canonical forwardBody 派生本次尝试 body 并整块剔除上游私有的加密
 		// reasoning item（含耦合的 id/summary），避免非透传上游 400 拒绝 Kiro reasoning 形态。
 		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
+		before := len(service.RequestAuditHTTPAttemptMetadata(c))
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -774,11 +793,24 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}()
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
+		requestAuditAttempts = appendOpenAITransportAttempts(
+			requestAuditAttempts,
+			service.RequestAuditHTTPAttemptMetadata(c),
+			before,
+			reqModel,
+			forwardModel,
+			requestAuditFingerprint,
+			service.RequestAuditProtocolOpenAIResp,
+		)
+		if service.IsRequestAuditRequiredError(err) {
+			writeRequestAuditUnavailable(c, false)
+			return
+		}
 		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, result != nil, cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -804,25 +836,53 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			requestAuditAttemptsForRecord := append([]service.RequestAuditAttempt(nil), requestAuditAttempts...)
+			requestAuditHeadersForRecord := requestAuditHeaders
+			if len(requestAuditAttemptsForRecord) == 0 {
+				requestAuditHeadersForRecord = nil
+			}
+			auditLogicalKey := service.RequestAuditLogicalKeyFromGin(c)
+			notCapturedReason := ""
+			if service.RequestAuditLastTransportWasPlugin(c) {
+				notCapturedReason = service.RequestAuditNotCapturedReasonPhase1Uncovered
+			}
+			localRequestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+			upstreamRequestID := ""
+			if notCapturedReason == "" && len(requestAuditAttemptsForRecord) > 0 && !res.OpenAIWSMode {
+				upstreamRequestID = service.UpstreamRequestIDFromHeaders(account, res.UpstreamHeaders)
+			}
+			requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, res.ResponseID, localRequestID, upstreamRequestID)
+			requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
+			// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
+			// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
+			if notCapturedReason == "" {
+				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
+			}
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					APIKeyService:      h.apiKeyService,
-					QuotaPlatform:      quotaPlatform,
-					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
-					PricingAt:          pricingAt,
-					CyberBlocked:       cyberBlocked,
-					NativeCompactionV2: nativeV2,
+					Result:                  res,
+					APIKey:                  apiKey,
+					User:                    apiKey.User,
+					Account:                 account,
+					Subscription:            subscription,
+					InboundEndpoint:         inboundEndpoint,
+					UpstreamEndpoint:        upstreamEndpoint,
+					UserAgent:               userAgent,
+					IPAddress:               clientIP,
+					RequestPayloadHash:      requestPayloadHash,
+					APIKeyService:           h.apiKeyService,
+					QuotaPlatform:           quotaPlatform,
+					SessionID:               sessionID,
+					ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
+					PricingAt:               pricingAt,
+					CyberBlocked:            cyberBlocked,
+					NativeCompactionV2:      nativeV2,
+					RequestAuditHeaders:     requestAuditHeadersForRecord,
+					RequestAuditAttempts:    requestAuditAttemptsForRecord,
+					RequestAuditFingerprint: requestAuditFingerprint,
+					RequestAuditMetadata:    requestAuditMetadata,
+					NotCapturedReason:       notCapturedReason,
+					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.responses"),
@@ -1182,6 +1242,24 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+
+	mode := service.ThinkingDisabledFormModeNormalize
+	if apiKey.Group != nil && apiKey.Group.ThinkingDisabledStrict {
+		mode = service.ThinkingDisabledFormModeStrict
+	}
+	rewritten, formErr := service.ApplyThinkingDisabledForm(body, mode)
+	if formErr != nil {
+		var thinkingFormErr *service.ThinkingDisabledFormError
+		if errors.As(formErr, &thinkingFormErr) {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+			h.anthropicErrorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+			return
+		}
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	body = rewritten
 
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
@@ -1207,6 +1285,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.anthropicSecurityAuditError(c, decision)
 		return
+	}
+
+	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteMessages, true) {
+		return
+	}
+	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
+	if requestAuditFingerprint != nil {
+		requestAuditFingerprint.DigestRequest(body)
+		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
 	}
 
 	// 解析渠道级模型映射
@@ -1355,11 +1442,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
 		}()
+		if service.IsRequestAuditRequiredError(err) {
+			writeRequestAuditUnavailable(c, true)
+			return
+		}
 		var cyberBlockBodyMsg []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyMsg = body
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyMsg, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, result != nil, cyberBlockBodyMsg, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1386,24 +1477,58 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			requestAuditAttempts := appendOpenAITransportAttempts(
+				nil,
+				service.RequestAuditHTTPAttemptMetadata(c),
+				0,
+				reqModel,
+				openAIMessagesPostNormalizeModel(channelMappingMsg, reqModel),
+				requestAuditFingerprint,
+				service.RequestAuditProtocolAnthropic,
+			)
+			requestAuditHeaders := cloneRequestAuditHeaders(c)
+			auditLogicalKey := service.RequestAuditLogicalKeyFromGin(c)
+			notCapturedReason := ""
+			if len(requestAuditAttempts) == 0 || service.RequestAuditLastTransportWasPlugin(c) {
+				requestAuditHeaders = nil
+				notCapturedReason = service.RequestAuditNotCapturedReasonPhase1Uncovered
+			}
+			localRequestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+			upstreamRequestID := ""
+			if notCapturedReason == "" && len(requestAuditAttempts) > 0 && !res.OpenAIWSMode {
+				upstreamRequestID = service.UpstreamRequestIDFromHeaders(account, res.UpstreamHeaders)
+			}
+			requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, res.ResponseID, localRequestID, upstreamRequestID)
+			requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
+			// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
+			// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
+			if notCapturedReason == "" {
+				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
+			}
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					APIKeyService:      h.apiKeyService,
-					QuotaPlatform:      quotaPlatform,
-					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
-					PricingAt:          pricingAt,
-					CyberBlocked:       cyberBlocked,
+					Result:                  res,
+					APIKey:                  apiKey,
+					User:                    apiKey.User,
+					Account:                 account,
+					Subscription:            subscription,
+					InboundEndpoint:         inboundEndpoint,
+					UpstreamEndpoint:        upstreamEndpoint,
+					UserAgent:               userAgent,
+					IPAddress:               clientIP,
+					RequestPayloadHash:      requestPayloadHash,
+					APIKeyService:           h.apiKeyService,
+					QuotaPlatform:           quotaPlatform,
+					SessionID:               sessionID,
+					ChannelUsageFields:      clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
+					PricingAt:               pricingAt,
+					CyberBlocked:            cyberBlocked,
+					RequestAuditHeaders:     requestAuditHeaders,
+					RequestAuditAttempts:    requestAuditAttempts,
+					RequestAuditFingerprint: requestAuditFingerprint,
+					RequestAuditMetadata:    requestAuditMetadata,
+					NotCapturedReason:       notCapturedReason,
+					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.messages"),
@@ -2304,6 +2429,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
+	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteResponses, false) {
+		return
+	}
+	if requestAuditIsForced(c) {
+		writeRequestAuditUnavailable(c, false)
+		return
+	}
 	reqLog.Info("openai.websocket_ingress_started")
 	clientIP := ip.GetClientIP(c)
 	userAgent := strings.TrimSpace(c.GetHeader("User-Agent"))
@@ -2926,7 +3058,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
-				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash)
+				// WS turn：cyber 命中的 turn 不走下方正常 RecordUsage（见紧随其后的
+				// GetOpsCyberPolicy 早退），用量与审计都由 cyber 路径负责，因此
+				// normalSubmitterOwnsUsage 恒为 false。
+				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, false, cyberBlockBody, turnUsageFields, requestPayloadHash)
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
 					cyberBlockedThisConn,
 					cyberBlockPendingAfterFailover,
@@ -2991,6 +3126,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						ChannelUsageFields: turnUsageFields,
 						PricingAt:          turnRecordPricingAt,
 						CyberBlocked:       cyberBlocked,
+						NotCapturedReason:  service.RequestAuditNotCapturedReasonPhase1Uncovered,
 					}); err != nil {
 						reqLog.Error("openai.websocket_record_usage_failed",
 							zap.Int64("account_id", account.ID),
@@ -3245,6 +3381,10 @@ func getContextInt64(c *gin.Context, key string) (int64, bool) {
 
 func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
 	if task == nil {
+		return
+	}
+	if service.RequestAuditForcedFromContext(parent) {
+		h.submitMandatoryUsageRecordTask(parent, task)
 		return
 	}
 	task = wrapUsageRecordTaskContext(parent, task)
@@ -4123,11 +4263,36 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 	enqueueOpsErrorLog(h.opsService, buildCyberSessionBlockedOpsEntry(meta))
 }
 
+// cyberPolicyUsageAudit 采集 cyber 拒绝路径可用的审计事实。必须在启动异步任务之前同步调用：
+// gin.Context 与 attempt 计数器都不是 goroutine 安全的（读取计数器会惰性创建它）。
+// 只取上游传输尝试元数据（账号 / 协议 / 状态 / 白名单头 / 字节）与脱敏后的入站请求头快照，
+// 绝不携带上游错误 message 或 body。没有传输尝试（WS / 插件等未覆盖传输）时返回空，
+// 由服务层标未采集，而不是伪造尝试。
+func cyberPolicyUsageAudit(c *gin.Context) ([]service.RequestAuditAttempt, http.Header) {
+	if c == nil {
+		return nil, nil
+	}
+	attempts := service.RequestAuditAttemptsFromHTTPMetadata(service.RequestAuditHTTPAttemptMetadata(c), nil)
+	if len(attempts) == 0 {
+		return nil, nil
+	}
+	if c.Request == nil {
+		return attempts, nil
+	}
+	return attempts, service.SanitizeRequestAuditHeadersSnapshot(c.Request.Header)
+}
+
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
-// 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
+// 并在 forward 返回错误时写一条用量行。标记由 gateway 服务层在透传 cyber 后设置；
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
 // 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
-func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+//
+// normalSubmitterOwnsUsage 为 true 表示本次请求的 result 非 nil，正常 usage submitter 会写
+// 同一条使用记录及其审计（含事件骨架/尝试），此时 cyber 侧不再写用量与审计：usage_logs 按
+// (request_id, api_key_id) 去重后两者指向同一行，而 request_audits.usage_log_id 唯一，
+// 双写只会冲突并把更完整的记录换成局部记录。result 为 nil 时（cyber 透传路径）由本方法落
+// 使用记录，并附上转发前快照的传输尝试，使审计为 incomplete 而不是 complete/缺失。
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, normalSubmitterOwnsUsage bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -4189,6 +4354,13 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	// 提前拍成标量，避免在下方 goroutine 内访问 gin.Context。
 	sessionID := service.ExtractClientSessionID(c)
 	nativeCompactionV2 := service.IsOpenAINativeCompactionV2(c)
+	auditLogicalKey := service.RequestAuditLogicalKeyFromGin(c)
+	// 只有本方法真正写用量行时才需要审计事实；正常 submitter 拥有 usage 时快照是无用功。
+	var cyberAuditAttempts []service.RequestAuditAttempt
+	var cyberAuditHeaders http.Header
+	if forwardErrored && !normalSubmitterOwnsUsage {
+		cyberAuditAttempts, cyberAuditHeaders = cyberPolicyUsageAudit(c)
+	}
 	apiKeyPrefix := ""
 	if apiKey != nil {
 		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
@@ -4239,25 +4411,28 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				UpstreamOutTok:  mark.UpstreamOutTok,
 			})
 		}
-		if forwardErrored && gwSvc != nil {
+		if forwardErrored && !normalSubmitterOwnsUsage && gwSvc != nil {
 			gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
-				APIKey:             apiKey,
-				Account:            account,
-				Subscription:       subscription,
-				RequestID:          requestID,
-				Model:              model,
-				Stream:             stream,
-				InputTokens:        mark.UpstreamInTok,
-				OutputTokens:       mark.UpstreamOutTok,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIPStr,
-				SessionID:          sessionID,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      apiKeySvc,
-				NativeCompactionV2: nativeCompactionV2,
-				ChannelUsageFields: channelFields,
+				APIKey:               apiKey,
+				Account:              account,
+				Subscription:         subscription,
+				RequestID:            requestID,
+				Model:                model,
+				Stream:               stream,
+				InputTokens:          mark.UpstreamInTok,
+				OutputTokens:         mark.UpstreamOutTok,
+				InboundEndpoint:      inboundEndpoint,
+				UpstreamEndpoint:     upstreamEndpoint,
+				UserAgent:            userAgent,
+				IPAddress:            clientIPStr,
+				SessionID:            sessionID,
+				RequestPayloadHash:   requestPayloadHash,
+				APIKeyService:        apiKeySvc,
+				NativeCompactionV2:   nativeCompactionV2,
+				AuditLogicalKey:      auditLogicalKey,
+				RequestAuditAttempts: cyberAuditAttempts,
+				RequestAuditHeaders:  cyberAuditHeaders,
+				ChannelUsageFields:   channelFields,
 			})
 		}
 		if opsSvc != nil {

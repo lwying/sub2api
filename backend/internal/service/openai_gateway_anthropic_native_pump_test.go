@@ -205,6 +205,44 @@ func TestResponsesStreamingFromNativeAnthropic_HangTimesOut(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamingFromNativeAnthropic_CollectsSSESkeletonsWithoutDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newNativeAnthropicHangTestService(5)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp, pr, pw := newHangingUpstreamResponse()
+	go func() {
+		_, _ = pw.Write([]byte(miniAnthropicSSEStream()))
+		_ = pw.Close()
+	}()
+	defer func() { _ = pr.Close() }()
+
+	res, err := svc.handleResponsesStreamingFromNativeAnthropic(resp, c, "glm-4.7", "glm-4.7", "glm-4.7", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected result")
+	}
+	if len(res.SSEEvents) < 2 {
+		t.Fatalf("expected SSE skeletons, got %#v", res.SSEEvents)
+	}
+	for _, ev := range res.SSEEvents {
+		if len(ev.Data) != 0 {
+			t.Fatalf("must not store event data: %#v", ev)
+		}
+		if ev.Bytes <= 0 {
+			t.Fatalf("expected bytes: %#v", ev)
+		}
+		if strings.Contains(ev.Type, "Hello") {
+			t.Fatalf("must not store model body: %#v", ev)
+		}
+	}
+}
+
 func TestCCStreamingFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newNativeAnthropicHangTestService(5)
@@ -233,6 +271,20 @@ func TestCCStreamingFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	}
 	if !strings.Contains(body, "data: [DONE]") {
 		t.Fatalf("expected [DONE] terminator, got %q", body)
+	}
+	if len(res.SSEEvents) < 2 {
+		t.Fatalf("expected SSE skeletons, got %#v", res.SSEEvents)
+	}
+	for _, ev := range res.SSEEvents {
+		if len(ev.Data) != 0 {
+			t.Fatalf("must not store event data: %#v", ev)
+		}
+		if ev.Bytes <= 0 {
+			t.Fatalf("expected bytes: %#v", ev)
+		}
+		if strings.Contains(ev.Type, "Hello") {
+			t.Fatalf("must not store model body: %#v", ev)
+		}
 	}
 }
 

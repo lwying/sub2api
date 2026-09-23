@@ -4,6 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
@@ -63,6 +67,22 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 	return newSchedulerCacheWithChunkSizes(rdb, mgetChunkSize, writeChunkSize)
 }
 
+func ProvideRequestAuditFingerprinter(client *ent.Client) (service.RequestAuditFingerprinter, error) {
+	row, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyAuditHMAC)).Only(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("load request audit fingerprint secret: %w", err)
+	}
+	return service.NewRequestAuditFingerprinter(strings.TrimSpace(row.Value))
+}
+
+func ProvideRequestAuditReservationRepository(repo service.RequestAuditRepository) (service.RequestAuditReservationRepository, error) {
+	forced, ok := repo.(service.RequestAuditReservationRepository)
+	if !ok {
+		return nil, errors.New("request audit repository lacks reservation support")
+	}
+	return forced, nil
+}
+
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
 	NewUserRepository,
@@ -80,6 +100,9 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementRepository,
 	NewAnnouncementReadRepository,
 	NewUsageLogRepository,
+	NewRequestAuditRepository,
+	ProvideRequestAuditFingerprinter,
+	ProvideRequestAuditReservationRepository,
 	NewUsageBillingRepository,
 	NewBatchImageRepository,
 	NewIdempotencyRepository,

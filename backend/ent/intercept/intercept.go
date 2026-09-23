@@ -36,6 +36,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/requestaudit"
+	"github.com/Wei-Shaw/sub2api/ent/requestauditreservation"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
@@ -835,6 +837,60 @@ func (f TraverseRedeemCode) Traverse(ctx context.Context, q ent.Query) error {
 	return fmt.Errorf("unexpected query type %T. expect *ent.RedeemCodeQuery", q)
 }
 
+// The RequestAuditFunc type is an adapter to allow the use of ordinary function as a Querier.
+type RequestAuditFunc func(context.Context, *ent.RequestAuditQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f RequestAuditFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.RequestAuditQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.RequestAuditQuery", q)
+}
+
+// The TraverseRequestAudit type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseRequestAudit func(context.Context, *ent.RequestAuditQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseRequestAudit) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseRequestAudit) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.RequestAuditQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.RequestAuditQuery", q)
+}
+
+// The RequestAuditReservationFunc type is an adapter to allow the use of ordinary function as a Querier.
+type RequestAuditReservationFunc func(context.Context, *ent.RequestAuditReservationQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f RequestAuditReservationFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.RequestAuditReservationQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.RequestAuditReservationQuery", q)
+}
+
+// The TraverseRequestAuditReservation type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseRequestAuditReservation func(context.Context, *ent.RequestAuditReservationQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseRequestAuditReservation) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseRequestAuditReservation) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.RequestAuditReservationQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.RequestAuditReservationQuery", q)
+}
+
 // The SecuritySecretFunc type is an adapter to allow the use of ordinary function as a Querier.
 type SecuritySecretFunc func(context.Context, *ent.SecuritySecretQuery) (ent.Value, error)
 
@@ -1216,6 +1272,10 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.ProxyQuery, predicate.Proxy, proxy.OrderOption]{typ: ent.TypeProxy, tq: q}, nil
 	case *ent.RedeemCodeQuery:
 		return &query[*ent.RedeemCodeQuery, predicate.RedeemCode, redeemcode.OrderOption]{typ: ent.TypeRedeemCode, tq: q}, nil
+	case *ent.RequestAuditQuery:
+		return &query[*ent.RequestAuditQuery, predicate.RequestAudit, requestaudit.OrderOption]{typ: ent.TypeRequestAudit, tq: q}, nil
+	case *ent.RequestAuditReservationQuery:
+		return &query[*ent.RequestAuditReservationQuery, predicate.RequestAuditReservation, requestauditreservation.OrderOption]{typ: ent.TypeRequestAuditReservation, tq: q}, nil
 	case *ent.SecuritySecretQuery:
 		return &query[*ent.SecuritySecretQuery, predicate.SecuritySecret, securitysecret.OrderOption]{typ: ent.TypeSecuritySecret, tq: q}, nil
 	case *ent.SettingQuery:

@@ -277,15 +277,19 @@ type OpenAIForwardResult struct {
 	Duration              time.Duration
 	FirstTokenMs          *int
 	ClientDisconnect      bool
-	ImageCount            int
-	ImageSize             string
-	ImageInputSize        string
-	ImageOutputSize       string
-	ImageOutputSizes      []string
-	ImageSizeSource       string
-	ImageSizeBreakdown    map[string]int
-	VideoCount            int
-	VideoResolution       string
+	// StreamIncomplete marks a post-start upstream termination that is not a client disconnect.
+	StreamIncomplete bool
+	// SSEEvents is the stream event skeleton input (type + bytes only; Data must stay empty).
+	SSEEvents          []RequestAuditSSEEvent
+	ImageCount         int
+	ImageSize          string
+	ImageInputSize     string
+	ImageOutputSize    string
+	ImageOutputSizes   []string
+	ImageSizeSource    string
+	ImageSizeBreakdown map[string]int
+	VideoCount         int
+	VideoResolution    string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
@@ -442,34 +446,36 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	accountRepo           AccountRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	cache                 GatewayCache
-	cfg                   *config.Config
-	codexDetector         CodexClientRestrictionDetector
-	schedulerSnapshot     *SchedulerSnapshotService
-	concurrencyService    *ConcurrencyService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	userGroupRateResolver *userGroupRateResolver
-	httpUpstream          HTTPUpstream
-	pluginManager         *PluginManager
-	deferredService       *DeferredService
-	openAITokenProvider   *OpenAITokenProvider
-	grokTokenProvider     *GrokTokenProvider
-	toolCorrector         *CodexToolCorrector
-	openaiWSResolver      OpenAIWSProtocolResolver
-	resolver              *ModelPricingResolver
-	channelService        *ChannelService
-	balanceNotifyService  *BalanceNotifyService
-	settingService        *SettingService
-	userPlatformQuotaRepo UserPlatformQuotaRepository
-	liveAttestation       liveattestation.Provider
-	liveAttestationCipher SecretEncryptor
+	accountRepo               AccountRepository
+	usageLogRepo              UsageLogRepository
+	requestAuditRepo          RequestAuditRepository
+	usageBillingRepo          UsageBillingRepository
+	userRepo                  UserRepository
+	userSubRepo               UserSubscriptionRepository
+	cache                     GatewayCache
+	cfg                       *config.Config
+	codexDetector             CodexClientRestrictionDetector
+	schedulerSnapshot         *SchedulerSnapshotService
+	concurrencyService        *ConcurrencyService
+	billingService            *BillingService
+	rateLimitService          *RateLimitService
+	billingCacheService       *BillingCacheService
+	userGroupRateResolver     *userGroupRateResolver
+	httpUpstream              HTTPUpstream
+	pluginManager             *PluginManager
+	deferredService           *DeferredService
+	openAITokenProvider       *OpenAITokenProvider
+	grokTokenProvider         *GrokTokenProvider
+	toolCorrector             *CodexToolCorrector
+	openaiWSResolver          OpenAIWSProtocolResolver
+	resolver                  *ModelPricingResolver
+	channelService            *ChannelService
+	balanceNotifyService      *BalanceNotifyService
+	settingService            *SettingService
+	userPlatformQuotaRepo     UserPlatformQuotaRepository
+	requestAuditFingerprinter RequestAuditFingerprinter
+	liveAttestation           liveattestation.Provider
+	liveAttestationCipher     SecretEncryptor
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
@@ -594,6 +600,27 @@ func NewOpenAIGatewayService(
 	svc.logOpenAIWSModeBootstrap()
 	svc.StartOpenAICodexTicketHarvester()
 	return svc
+}
+
+// SetRequestAuditRepository attaches the shared request-audit store.
+func (s *OpenAIGatewayService) SetRequestAuditRepository(repo RequestAuditRepository) {
+	if s == nil {
+		return
+	}
+	s.requestAuditRepo = repo
+}
+
+func (s *OpenAIGatewayService) SetRequestAuditFingerprinter(f RequestAuditFingerprinter) {
+	if s != nil {
+		s.requestAuditFingerprinter = f
+	}
+}
+
+func (s *OpenAIGatewayService) NewRequestAuditFingerprint(userID int64) (*RequestAuditFingerprintInput, error) {
+	if s == nil || s.requestAuditFingerprinter == nil {
+		return nil, nil
+	}
+	return s.requestAuditFingerprinter.BeginForUser(userID)
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

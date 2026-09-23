@@ -333,6 +333,30 @@ func (f RedeemCodeFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, 
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RedeemCodeMutation", m)
 }
 
+// The RequestAuditFunc type is an adapter to allow the use of ordinary
+// function as RequestAudit mutator.
+type RequestAuditFunc func(context.Context, *ent.RequestAuditMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f RequestAuditFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.RequestAuditMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RequestAuditMutation", m)
+}
+
+// The RequestAuditReservationFunc type is an adapter to allow the use of ordinary
+// function as RequestAuditReservation mutator.
+type RequestAuditReservationFunc func(context.Context, *ent.RequestAuditReservationMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f RequestAuditReservationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.RequestAuditReservationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RequestAuditReservationMutation", m)
+}
+
 // The SecuritySecretFunc type is an adapter to allow the use of ordinary
 // function as SecuritySecret mutator.
 type SecuritySecretFunc func(context.Context, *ent.SecuritySecretMutation) (ent.Value, error)

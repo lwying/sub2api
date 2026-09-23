@@ -4,7 +4,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,7 @@ func newGatewayRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo 
 		nil,
 		nil,
 		usageRepo,
+		nil,
 		nil,
 		userRepo,
 		subRepo,
@@ -824,4 +827,133 @@ func TestGatewayServiceRecordUsage_FastSpeedHonouredKeepsPremium(t *testing.T) {
 	fastCost, err := svc.billingService.CalculateCostWithServiceTier("claude-opus-5", UsageTokens{InputTokens: 100, OutputTokens: 50}, 1.0, "fast")
 	require.NoError(t, err)
 	require.InDelta(t, fastCost.TotalCost, usageRepo.lastLog.TotalCost, 1e-10)
+}
+
+func TestGatewayServiceRecordUsage_AttachesRequestAuditWhenUsageIDPresent(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	auditRepo := &stubRequestAuditRepo{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.requestAuditRepo = auditRepo
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_audit",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+		RequestAuditHeaders: http.Header{
+			"X-Stainless-Lang": []string{"js"},
+			"Authorization":    []string{"Bearer sk-leak"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, auditRepo.created)
+	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
+	require.Equal(t, "js", auditRepo.created.Headers["X-Stainless-Lang"])
+	require.Equal(t, map[string]any{"present": true}, auditRepo.created.Headers["Authorization"])
+}
+
+func TestGatewayServiceRecordUsage_AttachesRequestAuditSSEEventsWithoutDelta(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	auditRepo := &stubRequestAuditRepo{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.requestAuditRepo = auditRepo
+
+	delta := []byte(`{"type":"content_block_delta","delta":{"type":"text_delta","text":"secret delta"}}`)
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_audit_sse",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+			SSEEvents: []RequestAuditSSEEvent{
+				{Type: "message_start", Bytes: 12},
+				{Type: "content_block_delta", Bytes: len(delta), Data: delta},
+				{Type: "message_stop", Bytes: 8},
+			},
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+		RequestAuditHeaders: http.Header{
+			"X-Stainless-Lang": []string{"js"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, auditRepo.created)
+	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
+	require.Len(t, auditRepo.created.Events, 3)
+	require.Equal(t, "message_start", auditRepo.created.Events[0].Type)
+	require.Equal(t, 0, auditRepo.created.Events[0].Index)
+	require.Equal(t, "content_block_delta", auditRepo.created.Events[1].Type)
+	require.Equal(t, 1, auditRepo.created.Events[1].Index)
+	require.Equal(t, len(delta), auditRepo.created.Events[1].Bytes)
+	require.Equal(t, "message_stop", auditRepo.created.Events[2].Type)
+	encoded, err := json.Marshal(auditRepo.created)
+	require.NoError(t, err)
+	dump := string(encoded)
+	require.NotContains(t, dump, "secret delta")
+	require.NotContains(t, dump, "text_delta")
+	require.NotContains(t, dump, `"data"`)
+}
+
+func TestGatewayServiceRecordUsage_MarksIncompleteWhenClientDisconnect(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	auditRepo := &stubRequestAuditRepo{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.requestAuditRepo = auditRepo
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID:        "gateway_audit_incomplete",
+			Usage:            ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:            "claude-sonnet-4",
+			Duration:         time.Second,
+			ClientDisconnect: true,
+			SSEEvents: []RequestAuditSSEEvent{
+				{Type: "message_start", Bytes: 12},
+			},
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, auditRepo.created)
+	require.Equal(t, RequestAuditCaptureIncomplete, auditRepo.created.CaptureCompleteness)
+}
+
+func TestGatewayServiceRecordUsage_AttachesRequestAuditWhenCallerContextCanceled(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	auditRepo := &stubRequestAuditRepo{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.requestAuditRepo = auditRepo
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := svc.RecordUsage(reqCtx, &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_audit_canceled_ctx",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+		RequestAuditHeaders: http.Header{
+			"X-Stainless-Lang": []string{"js"},
+			"Authorization":    []string{"Bearer sk-leak"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, auditRepo.created)
+	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
+	require.Equal(t, "js", auditRepo.created.Headers["X-Stainless-Lang"])
+	require.Equal(t, map[string]any{"present": true}, auditRepo.created.Headers["Authorization"])
 }

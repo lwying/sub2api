@@ -766,6 +766,43 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
   })
 })
 
+describe('admin UsageTable request audit', () => {
+  it('emits openRequestAudit with the usage log id when a row is clicked', async () => {
+    const DataTableClickStub = {
+      props: ['data'],
+      emits: ['rowClick'],
+      template: `
+        <div>
+          <button
+            v-for="row in data"
+            :key="row.id"
+            data-testid="usage-row"
+            @click="$emit('rowClick', row)"
+          >{{ row.id }}</button>
+        </div>
+      `,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ id: 7, request_id: 'req-audit-1', model: 'gpt-5.1' }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableClickStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('[data-testid="usage-row"]').trigger('click')
+    expect(wrapper.emitted('openRequestAudit')).toEqual([[7]])
+  })
+})
+
 // A DataTable stub that also renders cell-user, so the deleted badge can be asserted.
 const DataTableStubWithUser = {
   props: ['data'],

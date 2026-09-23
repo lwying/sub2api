@@ -1440,6 +1440,30 @@
           </div>
         </div>
 
+        <div v-if="createForm.platform === 'anthropic'" class="border-t pt-4">
+          <div class="mb-1.5 flex items-center gap-1">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t("admin.groups.thinkingDisabledStrict.title") }}
+            </label>
+            <div class="group relative">
+              <Icon name="questionCircle" size="sm" class="cursor-help text-gray-400" />
+              <div class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded bg-gray-800 p-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                {{ t("admin.groups.thinkingDisabledStrict.tooltip") }}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+          <Toggle v-model="createForm.thinking_disabled_strict" />
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+              createForm.thinking_disabled_strict
+                  ? t("admin.groups.thinkingDisabledStrict.enabled")
+                  : t("admin.groups.thinkingDisabledStrict.disabled")
+              }}
+            </span>
+          </div>
+        </div>
+
         <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
         <div
           v-if="createForm.platform === 'openai'"
@@ -3077,6 +3101,30 @@
             <p class="input-hint">
               {{ t("admin.groups.claudeCode.fallbackHint") }}
             </p>
+          </div>
+        </div>
+
+        <div v-if="editForm.platform === 'anthropic'" class="border-t pt-4">
+          <div class="mb-1.5 flex items-center gap-1">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t("admin.groups.thinkingDisabledStrict.title") }}
+            </label>
+            <div class="group relative">
+              <Icon name="questionCircle" size="sm" class="cursor-help text-gray-400" />
+              <div class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded bg-gray-800 p-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                {{ t("admin.groups.thinkingDisabledStrict.tooltip") }}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+          <Toggle v-model="editForm.thinking_disabled_strict" />
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+              editForm.thinking_disabled_strict
+                  ? t("admin.groups.thinkingDisabledStrict.enabled")
+                  : t("admin.groups.thinkingDisabledStrict.disabled")
+              }}
+            </span>
           </div>
         </div>
 
@@ -4976,6 +5024,7 @@ const createForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  thinking_disabled_strict: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -5341,6 +5390,7 @@ const editForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  thinking_disabled_strict: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -5797,6 +5847,7 @@ const closeCreateModal = () => {
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
   createForm.claude_code_only = false;
+  createForm.thinking_disabled_strict = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
@@ -6076,6 +6127,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.profit_safety_buffer ?? 0,
   );
   editForm.claude_code_only = group.claude_code_only || false;
+  editForm.thinking_disabled_strict = group.thinking_disabled_strict || false;
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;

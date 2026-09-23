@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -154,6 +155,18 @@ func (h *OpenAIGatewayHandler) GrokCountTokens(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey.Group != nil {
+		parsedReq.ThinkingDisabledStrict = apiKey.Group.ThinkingDisabledStrict
+	}
+	if formErr := service.ApplyThinkingDisabledFormToParsed(parsedReq); formErr != nil {
+		var thinkingFormErr *service.ThinkingDisabledFormError
+		if errors.As(formErr, &thinkingFormErr) {
+			h.anthropicErrorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+			return
+		}
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
 	if parsedReq.Model == "" {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -221,6 +234,18 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
 	if err != nil {
 		logRequestBodyParseFailure(reqLog, body, err)
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	if apiKey.Group != nil {
+		parsedReq.ThinkingDisabledStrict = apiKey.Group.ThinkingDisabledStrict
+	}
+	if formErr := service.ApplyThinkingDisabledFormToParsed(parsedReq); formErr != nil {
+		var thinkingFormErr *service.ThinkingDisabledFormError
+		if errors.As(formErr, &thinkingFormErr) {
+			h.anthropicErrorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+			return
+		}
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}

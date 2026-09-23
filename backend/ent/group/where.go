@@ -255,6 +255,11 @@ func ClaudeCodeOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldClaudeCodeOnly, v))
 }
 
+// ThinkingDisabledStrict applies equality check predicate on the "thinking_disabled_strict" field. It's identical to ThinkingDisabledStrictEQ.
+func ThinkingDisabledStrict(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldThinkingDisabledStrict, v))
+}
+
 // FallbackGroupID applies equality check predicate on the "fallback_group_id" field. It's identical to FallbackGroupIDEQ.
 func FallbackGroupID(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupID, v))
@@ -2093,6 +2098,16 @@ func ClaudeCodeOnlyEQ(v bool) predicate.Group {
 // ClaudeCodeOnlyNEQ applies the NEQ predicate on the "claude_code_only" field.
 func ClaudeCodeOnlyNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldClaudeCodeOnly, v))
+}
+
+// ThinkingDisabledStrictEQ applies the EQ predicate on the "thinking_disabled_strict" field.
+func ThinkingDisabledStrictEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldThinkingDisabledStrict, v))
+}
+
+// ThinkingDisabledStrictNEQ applies the NEQ predicate on the "thinking_disabled_strict" field.
+func ThinkingDisabledStrictNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldThinkingDisabledStrict, v))
 }
 
 // FallbackGroupIDEQ applies the EQ predicate on the "fallback_group_id" field.

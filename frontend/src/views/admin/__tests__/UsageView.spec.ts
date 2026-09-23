@@ -136,8 +136,8 @@ const UsageFiltersStub = defineComponent({
 })
 const UsageTableStub = {
   props: ['columns'],
-  emits: ['userClick'],
-  template: '<div data-test="usage-table"><button class="user-click" @click="$emit(\'userClick\', 2)">user</button></div>',
+  emits: ['userClick', 'openRequestAudit'],
+  template: '<div data-test="usage-table"><button class="user-click" @click="$emit(\'userClick\', 2)">user</button><button class="open-audit" @click="$emit(\'openRequestAudit\', 7)">audit</button></div>',
 }
 const UserTokenRankingStub = {
   emits: ['select-user'],
@@ -799,4 +799,69 @@ describe('admin UsageView model audit export', () => {
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
 	})
+})
+
+describe('admin UsageView request audit drawer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    list.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStats.mockReset().mockResolvedValue({
+      total_requests: 0, total_input_tokens: 0, total_output_tokens: 0,
+      total_cache_tokens: 0, total_tokens: 0, total_cost: 0, total_actual_cost: 0, average_duration_ms: 0,
+    })
+    getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens the same request audit drawer from a usage row', async () => {
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: UsageTableStub,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          AuditLogModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          UserTokenRanking: true,
+          UsageRequestAuditDrawer: {
+            props: ['show', 'usageLogId'],
+            data: () => ({
+              attempts: ['client_entry', 'post_normalize', 'wire', 'wire'],
+            }),
+            template: '<div data-testid="request-audit-drawer">{{ show }}:{{ usageLogId }}<span v-for="(stage, index) in attempts" :key="index" data-testid="request-audit-attempt">{{ stage }}</span></div>',
+          },
+        },
+      },
+    })
+
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    await wrapper.find('[data-test="usage-table"] .open-audit').trigger('click')
+    await flushPromises()
+
+    const drawer = wrapper.get('[data-testid="request-audit-drawer"]')
+    expect(drawer.text()).toContain('true')
+    expect(drawer.text()).toContain('7')
+    expect(drawer.findAll('[data-testid="request-audit-attempt"]').map((node) => node.text())).toEqual([
+      'client_entry',
+      'post_normalize',
+      'wire',
+      'wire',
+    ])
+  })
 })

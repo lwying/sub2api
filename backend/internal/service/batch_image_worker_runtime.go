@@ -27,6 +27,7 @@ func ProvideBatchImageWorkerRuntime(
 	queue BatchImageQueue,
 	billingRepo UsageBillingRepository,
 	usageLogRepo UsageLogRepository,
+	requestAuditRepo RequestAuditRepository,
 	pricing *BatchImageModelPricingResolver,
 	authCache APIKeyAuthCacheInvalidator,
 	cfg *config.Config,
@@ -40,12 +41,13 @@ func ProvideBatchImageWorkerRuntime(
 			AuthCache:        authCache,
 		},
 		SettlementService: &BatchImageSettlementService{
-			Repo:         repo,
-			BillingRepo:  billingRepo,
-			UsageLogRepo: usageLogRepo,
-			Pricing:      pricing,
-			AuthCache:    authCache,
-			Config:       cfg,
+			Repo:             repo,
+			BillingRepo:      billingRepo,
+			UsageLogRepo:     usageLogRepo,
+			RequestAuditRepo: requestAuditRepo,
+			Pricing:          pricing,
+			AuthCache:        authCache,
+			Config:           cfg,
 		},
 	}
 	runtime := NewBatchImageWorkerRuntime(NewBatchImageWorker(queue, processor, NewBatchImageWorkerOptionsFromConfig(cfg)), cfg)
