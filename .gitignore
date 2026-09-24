@@ -119,6 +119,9 @@ backend/.installed
 tests
 !deploy/tests/
 !deploy/tests/**
+# fork 上游同步的离线测试同属需要提交的内容（与 deploy/tests 同样按目录显式放开）
+!/.github/fork-sync/tests/
+!/.github/fork-sync/tests/**
 CLAUDE.md
 .claude
 scripts
@@ -142,6 +145,7 @@ docs/*
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md
+!docs/fork-release-contract.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/
@@ -158,3 +162,4 @@ output/
 .vite/
 # 本地闭源插件开发目录及构建产物不进入 Sub2API 仓库
 /plugins/
+/.scratch/
