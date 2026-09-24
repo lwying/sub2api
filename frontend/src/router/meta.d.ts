@@ -62,6 +62,13 @@ declare module 'vue-router' {
     requiresSubscription?: boolean
 
     /**
+     * 是否要求普通用户具备「查看已分配账号」能力。
+     * 路由守卫会用当前用户资料实时复核该能力，缓存状态不得直接放行。
+     * @default false
+     */
+    requiresAssignedAccounts?: boolean
+
+    /**
      * i18n key for the page title
      */
     titleKey?: string

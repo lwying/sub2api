@@ -128,3 +128,6 @@ type UserPlatformQuota func(*sql.Selector)
 
 // UserSubscription is the predicate function for usersubscription builders.
 type UserSubscription func(*sql.Selector)
+
+// UserVisibleAccount is the predicate function for uservisibleaccount builders.
+type UserVisibleAccount func(*sql.Selector)

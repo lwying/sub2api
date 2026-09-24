@@ -99,6 +99,10 @@ type userProfileResponse struct {
 	OIDCBound         bool                                   `json:"oidc_bound"`
 	WeChatBound       bool                                   `json:"wechat_bound"`
 	DingTalkBound     bool                                   `json:"dingtalk_bound"`
+	// CanViewAssignedAccounts 是该普通用户的「已分配账号只读查看」能力开关，
+	// 默认 false。它只决定账号管理菜单与 /api/v1/accounts 是否可用，
+	// 不改变 API Key、模型调用、个人用量或管理员权限。
+	CanViewAssignedAccounts bool `json:"can_view_assigned_accounts"`
 }
 
 type userProfileSourceContext struct {
@@ -561,6 +565,8 @@ func userProfileResponseFromService(user *service.User, identities service.UserI
 		OIDCBound:         identities.OIDC.Bound,
 		WeChatBound:       identities.WeChat.Bound,
 		DingTalkBound:     identities.DingTalk.Bound,
+		// 能力开关直接来自用户行，二者不会出现第二个事实来源。
+		CanViewAssignedAccounts: user.CanViewAssignedAccounts,
 	}
 }
 

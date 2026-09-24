@@ -99,6 +99,15 @@ export const useAuthStore = defineStore('auth', () => {
   const isSimpleMode = computed(() => runMode.value === 'simple')
   const hasPendingAuthSession = computed(() => pendingAuthSession.value !== null)
 
+  /**
+   * 菜单提示用的只读账号查看能力。它来自缓存的当前用户资料，
+   * 只决定「是否显示入口」；真正的授权判定由路由守卫实时刷新资料
+   * 以及后端对象级校验负责。
+   */
+  const canViewAssignedAccounts = computed(() => {
+    return user.value?.can_view_assigned_accounts === true && user.value?.role !== 'admin'
+  })
+
   // ==================== Actions ====================
 
   /**
@@ -459,6 +468,28 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * Re-read the current user and report whether the signed-in non-admin user
+   * may open the read-only assigned-account view.
+   *
+   * The capability must never be decided from a cached profile, so callers use
+   * this at navigation time: a grant revoked after the page was cached flips
+   * the local flag off immediately. Any failure fails closed.
+   */
+  async function verifyAssignedAccountAccess(): Promise<boolean> {
+    if (!token.value) {
+      return false
+    }
+
+    try {
+      const fresh = await refreshUser()
+      return fresh.role !== 'admin' && fresh.can_view_assigned_accounts === true
+    } catch (error) {
+      console.warn('Assigned account access could not be verified, denying access', error)
+      return false
+    }
+  }
+
+  /**
    * Clear all authentication state
    * Internal helper function
    */
@@ -500,6 +531,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     isSimpleMode,
     hasPendingAuthSession,
+    canViewAssignedAccounts,
 
     // Actions
     login,
@@ -510,6 +542,7 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
     checkAuth,
     refreshUser,
+    verifyAssignedAccountAccess,
     setPendingAuthSession,
     clearPendingAuthSession
   }

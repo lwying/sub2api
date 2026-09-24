@@ -56,6 +56,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/uservisibleaccount"
 
 	stdsql "database/sql"
 )
@@ -147,6 +148,8 @@ type Client struct {
 	UserPlatformQuota *UserPlatformQuotaClient
 	// UserSubscription is the client for interacting with the UserSubscription builders.
 	UserSubscription *UserSubscriptionClient
+	// UserVisibleAccount is the client for interacting with the UserVisibleAccount builders.
+	UserVisibleAccount *UserVisibleAccountClient
 }
 
 // NewClient creates a new client configured with the given options.
@@ -199,6 +202,7 @@ func (c *Client) init() {
 	c.UserAttributeValue = NewUserAttributeValueClient(c.config)
 	c.UserPlatformQuota = NewUserPlatformQuotaClient(c.config)
 	c.UserSubscription = NewUserSubscriptionClient(c.config)
+	c.UserVisibleAccount = NewUserVisibleAccountClient(c.config)
 }
 
 type (
@@ -332,6 +336,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		UserAttributeValue:            NewUserAttributeValueClient(cfg),
 		UserPlatformQuota:             NewUserPlatformQuotaClient(cfg),
 		UserSubscription:              NewUserSubscriptionClient(cfg),
+		UserVisibleAccount:            NewUserVisibleAccountClient(cfg),
 	}, nil
 }
 
@@ -392,6 +397,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		UserAttributeValue:            NewUserAttributeValueClient(cfg),
 		UserPlatformQuota:             NewUserPlatformQuotaClient(cfg),
 		UserSubscription:              NewUserSubscriptionClient(cfg),
+		UserVisibleAccount:            NewUserVisibleAccountClient(cfg),
 	}, nil
 }
 
@@ -432,7 +438,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.SecuritySecret, c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile,
 		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
 		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
-		c.UserSubscription,
+		c.UserSubscription, c.UserVisibleAccount,
 	} {
 		n.Use(hooks...)
 	}
@@ -453,7 +459,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.SecuritySecret, c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile,
 		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
 		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
-		c.UserSubscription,
+		c.UserSubscription, c.UserVisibleAccount,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -544,6 +550,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.UserPlatformQuota.mutate(ctx, m)
 	case *UserSubscriptionMutation:
 		return c.UserSubscription.mutate(ctx, m)
+	case *UserVisibleAccountMutation:
+		return c.UserVisibleAccount.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
 	}
@@ -920,6 +928,22 @@ func (c *AccountClient) QueryUsageLogs(_m *Account) *UsageLogQuery {
 	return query
 }
 
+// QueryVisibleUsers queries the visible_users edge of a Account.
+func (c *AccountClient) QueryVisibleUsers(_m *Account) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(account.Table, account.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2M, true, account.VisibleUsersTable, account.VisibleUsersPrimaryKey...),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // QueryAccountGroups queries the account_groups edge of a Account.
 func (c *AccountClient) QueryAccountGroups(_m *Account) *AccountGroupQuery {
 	query := (&AccountGroupClient{config: c.config}).Query()
@@ -929,6 +953,22 @@ func (c *AccountClient) QueryAccountGroups(_m *Account) *AccountGroupQuery {
 			sqlgraph.From(account.Table, account.FieldID, id),
 			sqlgraph.To(accountgroup.Table, accountgroup.AccountColumn),
 			sqlgraph.Edge(sqlgraph.O2M, true, account.AccountGroupsTable, account.AccountGroupsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryUserVisibleAccounts queries the user_visible_accounts edge of a Account.
+func (c *AccountClient) QueryUserVisibleAccounts(_m *Account) *UserVisibleAccountQuery {
+	query := (&UserVisibleAccountClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(account.Table, account.FieldID, id),
+			sqlgraph.To(uservisibleaccount.Table, uservisibleaccount.AccountColumn),
+			sqlgraph.Edge(sqlgraph.O2M, true, account.UserVisibleAccountsTable, account.UserVisibleAccountsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -6249,6 +6289,22 @@ func (c *UserClient) QueryAllowedGroups(_m *User) *GroupQuery {
 	return query
 }
 
+// QueryVisibleAccounts queries the visible_accounts edge of a User.
+func (c *UserClient) QueryVisibleAccounts(_m *User) *AccountQuery {
+	query := (&AccountClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(account.Table, account.FieldID),
+			sqlgraph.Edge(sqlgraph.M2M, false, user.VisibleAccountsTable, user.VisibleAccountsPrimaryKey...),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // QueryUsageLogs queries the usage_logs edge of a User.
 func (c *UserClient) QueryUsageLogs(_m *User) *UsageLogQuery {
 	query := (&UsageLogClient{config: c.config}).Query()
@@ -6370,6 +6426,22 @@ func (c *UserClient) QueryUserAllowedGroups(_m *User) *UserAllowedGroupQuery {
 			sqlgraph.From(user.Table, user.FieldID, id),
 			sqlgraph.To(userallowedgroup.Table, userallowedgroup.UserColumn),
 			sqlgraph.Edge(sqlgraph.O2M, true, user.UserAllowedGroupsTable, user.UserAllowedGroupsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryUserVisibleAccounts queries the user_visible_accounts edge of a User.
+func (c *UserClient) QueryUserVisibleAccounts(_m *User) *UserVisibleAccountQuery {
+	query := (&UserVisibleAccountClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(uservisibleaccount.Table, uservisibleaccount.UserColumn),
+			sqlgraph.Edge(sqlgraph.O2M, true, user.UserVisibleAccountsTable, user.UserVisibleAccountsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -7186,6 +7258,122 @@ func (c *UserSubscriptionClient) mutate(ctx context.Context, m *UserSubscription
 	}
 }
 
+// UserVisibleAccountClient is a client for the UserVisibleAccount schema.
+type UserVisibleAccountClient struct {
+	config
+}
+
+// NewUserVisibleAccountClient returns a client for the UserVisibleAccount from the given config.
+func NewUserVisibleAccountClient(c config) *UserVisibleAccountClient {
+	return &UserVisibleAccountClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `uservisibleaccount.Hooks(f(g(h())))`.
+func (c *UserVisibleAccountClient) Use(hooks ...Hook) {
+	c.hooks.UserVisibleAccount = append(c.hooks.UserVisibleAccount, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `uservisibleaccount.Intercept(f(g(h())))`.
+func (c *UserVisibleAccountClient) Intercept(interceptors ...Interceptor) {
+	c.inters.UserVisibleAccount = append(c.inters.UserVisibleAccount, interceptors...)
+}
+
+// Create returns a builder for creating a UserVisibleAccount entity.
+func (c *UserVisibleAccountClient) Create() *UserVisibleAccountCreate {
+	mutation := newUserVisibleAccountMutation(c.config, OpCreate)
+	return &UserVisibleAccountCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of UserVisibleAccount entities.
+func (c *UserVisibleAccountClient) CreateBulk(builders ...*UserVisibleAccountCreate) *UserVisibleAccountCreateBulk {
+	return &UserVisibleAccountCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *UserVisibleAccountClient) MapCreateBulk(slice any, setFunc func(*UserVisibleAccountCreate, int)) *UserVisibleAccountCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &UserVisibleAccountCreateBulk{err: fmt.Errorf("calling to UserVisibleAccountClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*UserVisibleAccountCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &UserVisibleAccountCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for UserVisibleAccount.
+func (c *UserVisibleAccountClient) Update() *UserVisibleAccountUpdate {
+	mutation := newUserVisibleAccountMutation(c.config, OpUpdate)
+	return &UserVisibleAccountUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *UserVisibleAccountClient) UpdateOne(_m *UserVisibleAccount) *UserVisibleAccountUpdateOne {
+	mutation := newUserVisibleAccountMutation(c.config, OpUpdateOne)
+	mutation.user = &_m.UserID
+	mutation.account = &_m.AccountID
+	return &UserVisibleAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for UserVisibleAccount.
+func (c *UserVisibleAccountClient) Delete() *UserVisibleAccountDelete {
+	mutation := newUserVisibleAccountMutation(c.config, OpDelete)
+	return &UserVisibleAccountDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Query returns a query builder for UserVisibleAccount.
+func (c *UserVisibleAccountClient) Query() *UserVisibleAccountQuery {
+	return &UserVisibleAccountQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeUserVisibleAccount},
+		inters: c.Interceptors(),
+	}
+}
+
+// QueryUser queries the user edge of a UserVisibleAccount.
+func (c *UserVisibleAccountClient) QueryUser(_m *UserVisibleAccount) *UserQuery {
+	return c.Query().
+		Where(uservisibleaccount.UserID(_m.UserID), uservisibleaccount.AccountID(_m.AccountID)).
+		QueryUser()
+}
+
+// QueryAccount queries the account edge of a UserVisibleAccount.
+func (c *UserVisibleAccountClient) QueryAccount(_m *UserVisibleAccount) *AccountQuery {
+	return c.Query().
+		Where(uservisibleaccount.UserID(_m.UserID), uservisibleaccount.AccountID(_m.AccountID)).
+		QueryAccount()
+}
+
+// Hooks returns the client hooks.
+func (c *UserVisibleAccountClient) Hooks() []Hook {
+	return c.hooks.UserVisibleAccount
+}
+
+// Interceptors returns the client interceptors.
+func (c *UserVisibleAccountClient) Interceptors() []Interceptor {
+	return c.inters.UserVisibleAccount
+}
+
+func (c *UserVisibleAccountClient) mutate(ctx context.Context, m *UserVisibleAccountMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&UserVisibleAccountCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&UserVisibleAccountUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&UserVisibleAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&UserVisibleAccountDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown UserVisibleAccount mutation op: %q", m.Op())
+	}
+}
+
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
@@ -7198,7 +7386,8 @@ type (
 		PromoCodeUsage, Proxy, RedeemCode, RequestAudit, RequestAuditReservation,
 		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
 		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
-		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Hook
+		UserAttributeValue, UserPlatformQuota, UserSubscription,
+		UserVisibleAccount []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
@@ -7210,7 +7399,8 @@ type (
 		PromoCodeUsage, Proxy, RedeemCode, RequestAudit, RequestAuditReservation,
 		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
 		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
-		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Interceptor
+		UserAttributeValue, UserPlatformQuota, UserSubscription,
+		UserVisibleAccount []ent.Interceptor
 	}
 )
 

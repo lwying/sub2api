@@ -50,6 +50,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/uservisibleaccount"
 )
 
 // The Query interface represents an operation that queries a graph.
@@ -1215,6 +1216,33 @@ func (f TraverseUserSubscription) Traverse(ctx context.Context, q ent.Query) err
 	return fmt.Errorf("unexpected query type %T. expect *ent.UserSubscriptionQuery", q)
 }
 
+// The UserVisibleAccountFunc type is an adapter to allow the use of ordinary function as a Querier.
+type UserVisibleAccountFunc func(context.Context, *ent.UserVisibleAccountQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f UserVisibleAccountFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.UserVisibleAccountQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.UserVisibleAccountQuery", q)
+}
+
+// The TraverseUserVisibleAccount type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseUserVisibleAccount func(context.Context, *ent.UserVisibleAccountQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseUserVisibleAccount) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseUserVisibleAccount) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.UserVisibleAccountQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.UserVisibleAccountQuery", q)
+}
+
 // NewQuery returns the generic Query interface for the given typed query.
 func NewQuery(q ent.Query) (Query, error) {
 	switch q := q.(type) {
@@ -1300,6 +1328,8 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.UserPlatformQuotaQuery, predicate.UserPlatformQuota, userplatformquota.OrderOption]{typ: ent.TypeUserPlatformQuota, tq: q}, nil
 	case *ent.UserSubscriptionQuery:
 		return &query[*ent.UserSubscriptionQuery, predicate.UserSubscription, usersubscription.OrderOption]{typ: ent.TypeUserSubscription, tq: q}, nil
+	case *ent.UserVisibleAccountQuery:
+		return &query[*ent.UserVisibleAccountQuery, predicate.UserVisibleAccount, uservisibleaccount.OrderOption]{typ: ent.TypeUserVisibleAccount, tq: q}, nil
 	default:
 		return nil, fmt.Errorf("unknown query type %T", q)
 	}

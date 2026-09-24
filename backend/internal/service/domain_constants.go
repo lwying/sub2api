@@ -14,6 +14,8 @@ const (
 	StatusUnused   = domain.StatusUnused
 	StatusUsed     = domain.StatusUsed
 	StatusExpired  = domain.StatusExpired
+	// StatusInactive 是账号手动停用的历史取值，语义等同 disabled（见 domain 常量）。
+	StatusInactive = domain.StatusInactive
 )
 
 // Role constants

@@ -387,4 +387,93 @@ describe('useAuthStore', () => {
       expect(store.isSimpleMode).toBe(false)
     })
   })
+
+  // --- 只读账号查看能力（普通用户菜单 + 进入页面前的实时复核）---
+
+  describe('canViewAssignedAccounts', () => {
+    it('普通用户获得授权时为 true', async () => {
+      mockLogin.mockResolvedValue({
+        ...fakeAuthResponse,
+        user: { ...fakeUser, can_view_assigned_accounts: true },
+      })
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      expect(store.canViewAssignedAccounts).toBe(true)
+    })
+
+    it('默认未授权时为 false', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      expect(store.canViewAssignedAccounts).toBe(false)
+    })
+
+    it('管理员不使用该入口，即使响应带有能力位', async () => {
+      mockLogin.mockResolvedValue({
+        ...fakeAuthResponse,
+        user: { ...fakeAdminUser, can_view_assigned_accounts: true },
+      })
+      const store = useAuthStore()
+
+      await store.login({ email: 'admin@example.com', password: '123456' })
+
+      expect(store.canViewAssignedAccounts).toBe(false)
+    })
+  })
+
+  describe('verifyAssignedAccountAccess', () => {
+    it('以服务端最新资料为准，忽略缓存中的旧授权', async () => {
+      mockLogin.mockResolvedValue({
+        ...fakeAuthResponse,
+        user: { ...fakeUser, can_view_assigned_accounts: true },
+      })
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      expect(store.canViewAssignedAccounts).toBe(true)
+
+      // 授权被撤销：刷新返回的資料不再包含能力位。
+      mockGetCurrentUser.mockResolvedValue({ data: { ...fakeUser } })
+      const allowed = await store.verifyAssignedAccountAccess()
+
+      expect(allowed).toBe(false)
+      expect(store.canViewAssignedAccounts).toBe(false)
+      expect(JSON.parse(localStorage.getItem('auth_user')!)).toEqual(fakeUser)
+    })
+
+    it('服务端确认授权时返回 true', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      mockGetCurrentUser.mockResolvedValue({
+        data: { ...fakeUser, can_view_assigned_accounts: true },
+      })
+
+      await expect(store.verifyAssignedAccountAccess()).resolves.toBe(true)
+    })
+
+    it('校验失败时 fail-closed 返回 false', async () => {
+      mockLogin.mockResolvedValue({
+        ...fakeAuthResponse,
+        user: { ...fakeUser, can_view_assigned_accounts: true },
+      })
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      mockGetCurrentUser.mockRejectedValue(new Error('network down'))
+
+      await expect(store.verifyAssignedAccountAccess()).resolves.toBe(false)
+    })
+
+    it('未持有有效会话时返回 false', async () => {
+      const store = useAuthStore()
+
+      await expect(store.verifyAssignedAccountAccess()).resolves.toBe(false)
+      expect(mockGetCurrentUser).not.toHaveBeenCalled()
+    })
+  })
 })

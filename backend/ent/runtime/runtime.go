@@ -47,6 +47,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/uservisibleaccount"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
@@ -2339,6 +2340,10 @@ func init() {
 	userDescRpmLimit := userFields[21].Descriptor()
 	// user.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	user.DefaultRpmLimit = userDescRpmLimit.Default.(int)
+	// userDescCanViewAssignedAccounts is the schema descriptor for can_view_assigned_accounts field.
+	userDescCanViewAssignedAccounts := userFields[22].Descriptor()
+	// user.DefaultCanViewAssignedAccounts holds the default value on creation for the can_view_assigned_accounts field.
+	user.DefaultCanViewAssignedAccounts = userDescCanViewAssignedAccounts.Default.(bool)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()
 	_ = userallowedgroupFields
 	// userallowedgroupDescCreatedAt is the schema descriptor for created_at field.
@@ -2558,6 +2563,12 @@ func init() {
 	usersubscriptionDescAssignedAt := usersubscriptionFields[12].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
+	uservisibleaccountFields := schema.UserVisibleAccount{}.Fields()
+	_ = uservisibleaccountFields
+	// uservisibleaccountDescCreatedAt is the schema descriptor for created_at field.
+	uservisibleaccountDescCreatedAt := uservisibleaccountFields[3].Descriptor()
+	// uservisibleaccount.DefaultCreatedAt holds the default value on creation for the created_at field.
+	uservisibleaccount.DefaultCreatedAt = uservisibleaccountDescCreatedAt.Default.(func() time.Time)
 }
 
 const (

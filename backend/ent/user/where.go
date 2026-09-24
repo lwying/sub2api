@@ -180,6 +180,11 @@ func RpmLimit(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// CanViewAssignedAccounts applies equality check predicate on the "can_view_assigned_accounts" field. It's identical to CanViewAssignedAccountsEQ.
+func CanViewAssignedAccounts(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldCanViewAssignedAccounts, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1400,6 +1405,16 @@ func RpmLimitLTE(v int) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldRpmLimit, v))
 }
 
+// CanViewAssignedAccountsEQ applies the EQ predicate on the "can_view_assigned_accounts" field.
+func CanViewAssignedAccountsEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldCanViewAssignedAccounts, v))
+}
+
+// CanViewAssignedAccountsNEQ applies the NEQ predicate on the "can_view_assigned_accounts" field.
+func CanViewAssignedAccountsNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldCanViewAssignedAccounts, v))
+}
+
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.
 func HasAPIKeys() predicate.User {
 	return predicate.User(func(s *sql.Selector) {
@@ -1530,6 +1545,29 @@ func HasAllowedGroups() predicate.User {
 func HasAllowedGroupsWith(preds ...predicate.Group) predicate.User {
 	return predicate.User(func(s *sql.Selector) {
 		step := newAllowedGroupsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasVisibleAccounts applies the HasEdge predicate on the "visible_accounts" edge.
+func HasVisibleAccounts() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2M, false, VisibleAccountsTable, VisibleAccountsPrimaryKey...),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasVisibleAccountsWith applies the HasEdge predicate on the "visible_accounts" edge with a given conditions (other predicates).
+func HasVisibleAccountsWith(preds ...predicate.Account) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newVisibleAccountsStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)
@@ -1714,6 +1752,29 @@ func HasUserAllowedGroups() predicate.User {
 func HasUserAllowedGroupsWith(preds ...predicate.UserAllowedGroup) predicate.User {
 	return predicate.User(func(s *sql.Selector) {
 		step := newUserAllowedGroupsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasUserVisibleAccounts applies the HasEdge predicate on the "user_visible_accounts" edge.
+func HasUserVisibleAccounts() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, UserVisibleAccountsTable, UserVisibleAccountsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasUserVisibleAccountsWith applies the HasEdge predicate on the "user_visible_accounts" edge with a given conditions (other predicates).
+func HasUserVisibleAccountsWith(preds ...predicate.UserVisibleAccount) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newUserVisibleAccountsStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

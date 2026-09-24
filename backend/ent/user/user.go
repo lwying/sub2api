@@ -65,6 +65,8 @@ const (
 	FieldTotalRecharged = "total_recharged"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
+	// FieldCanViewAssignedAccounts holds the string denoting the can_view_assigned_accounts field in the database.
+	FieldCanViewAssignedAccounts = "can_view_assigned_accounts"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -77,6 +79,8 @@ const (
 	EdgeAnnouncementReads = "announcement_reads"
 	// EdgeAllowedGroups holds the string denoting the allowed_groups edge name in mutations.
 	EdgeAllowedGroups = "allowed_groups"
+	// EdgeVisibleAccounts holds the string denoting the visible_accounts edge name in mutations.
+	EdgeVisibleAccounts = "visible_accounts"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
 	// EdgeAttributeValues holds the string denoting the attribute_values edge name in mutations.
@@ -93,6 +97,8 @@ const (
 	EdgePlatformQuotas = "platform_quotas"
 	// EdgeUserAllowedGroups holds the string denoting the user_allowed_groups edge name in mutations.
 	EdgeUserAllowedGroups = "user_allowed_groups"
+	// EdgeUserVisibleAccounts holds the string denoting the user_visible_accounts edge name in mutations.
+	EdgeUserVisibleAccounts = "user_visible_accounts"
 	// Table holds the table name of the user in the database.
 	Table = "users"
 	// APIKeysTable is the table that holds the api_keys relation/edge.
@@ -135,6 +141,11 @@ const (
 	// AllowedGroupsInverseTable is the table name for the Group entity.
 	// It exists in this package in order to avoid circular dependency with the "group" package.
 	AllowedGroupsInverseTable = "groups"
+	// VisibleAccountsTable is the table that holds the visible_accounts relation/edge. The primary key declared below.
+	VisibleAccountsTable = "user_visible_accounts"
+	// VisibleAccountsInverseTable is the table name for the Account entity.
+	// It exists in this package in order to avoid circular dependency with the "account" package.
+	VisibleAccountsInverseTable = "accounts"
 	// UsageLogsTable is the table that holds the usage_logs relation/edge.
 	UsageLogsTable = "usage_logs"
 	// UsageLogsInverseTable is the table name for the UsageLog entity.
@@ -191,6 +202,13 @@ const (
 	UserAllowedGroupsInverseTable = "user_allowed_groups"
 	// UserAllowedGroupsColumn is the table column denoting the user_allowed_groups relation/edge.
 	UserAllowedGroupsColumn = "user_id"
+	// UserVisibleAccountsTable is the table that holds the user_visible_accounts relation/edge.
+	UserVisibleAccountsTable = "user_visible_accounts"
+	// UserVisibleAccountsInverseTable is the table name for the UserVisibleAccount entity.
+	// It exists in this package in order to avoid circular dependency with the "uservisibleaccount" package.
+	UserVisibleAccountsInverseTable = "user_visible_accounts"
+	// UserVisibleAccountsColumn is the table column denoting the user_visible_accounts relation/edge.
+	UserVisibleAccountsColumn = "user_id"
 )
 
 // Columns holds all SQL columns for user fields.
@@ -221,12 +239,16 @@ var Columns = []string{
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
 	FieldRpmLimit,
+	FieldCanViewAssignedAccounts,
 }
 
 var (
 	// AllowedGroupsPrimaryKey and AllowedGroupsColumn2 are the table columns denoting the
 	// primary key for the allowed_groups relation (M2M).
 	AllowedGroupsPrimaryKey = []string{"user_id", "group_id"}
+	// VisibleAccountsPrimaryKey and VisibleAccountsColumn2 are the table columns denoting the
+	// primary key for the visible_accounts relation (M2M).
+	VisibleAccountsPrimaryKey = []string{"user_id", "account_id"}
 )
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -295,6 +317,8 @@ var (
 	DefaultTotalRecharged float64
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
 	DefaultRpmLimit int
+	// DefaultCanViewAssignedAccounts holds the default value on creation for the "can_view_assigned_accounts" field.
+	DefaultCanViewAssignedAccounts bool
 )
 
 // OrderOption defines the ordering options for the User queries.
@@ -430,6 +454,11 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
 }
 
+// ByCanViewAssignedAccounts orders the results by the can_view_assigned_accounts field.
+func ByCanViewAssignedAccounts(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCanViewAssignedAccounts, opts...).ToFunc()
+}
+
 // ByAPIKeysCount orders the results by api_keys count.
 func ByAPIKeysCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -511,6 +540,20 @@ func ByAllowedGroupsCount(opts ...sql.OrderTermOption) OrderOption {
 func ByAllowedGroups(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newAllowedGroupsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByVisibleAccountsCount orders the results by visible_accounts count.
+func ByVisibleAccountsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newVisibleAccountsStep(), opts...)
+	}
+}
+
+// ByVisibleAccounts orders the results by visible_accounts terms.
+func ByVisibleAccounts(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newVisibleAccountsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
 
@@ -625,6 +668,20 @@ func ByUserAllowedGroups(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption
 		sqlgraph.OrderByNeighborTerms(s, newUserAllowedGroupsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
+
+// ByUserVisibleAccountsCount orders the results by user_visible_accounts count.
+func ByUserVisibleAccountsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newUserVisibleAccountsStep(), opts...)
+	}
+}
+
+// ByUserVisibleAccounts orders the results by user_visible_accounts terms.
+func ByUserVisibleAccounts(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newUserVisibleAccountsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
 func newAPIKeysStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -665,6 +722,13 @@ func newAllowedGroupsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(AllowedGroupsInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2M, false, AllowedGroupsTable, AllowedGroupsPrimaryKey...),
+	)
+}
+func newVisibleAccountsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(VisibleAccountsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2M, false, VisibleAccountsTable, VisibleAccountsPrimaryKey...),
 	)
 }
 func newUsageLogsStep() *sqlgraph.Step {
@@ -721,5 +785,12 @@ func newUserAllowedGroupsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(UserAllowedGroupsInverseTable, UserAllowedGroupsColumn),
 		sqlgraph.Edge(sqlgraph.O2M, true, UserAllowedGroupsTable, UserAllowedGroupsColumn),
+	)
+}
+func newUserVisibleAccountsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(UserVisibleAccountsInverseTable, UserVisibleAccountsColumn),
+		sqlgraph.Edge(sqlgraph.O2M, true, UserVisibleAccountsTable, UserVisibleAccountsColumn),
 	)
 }

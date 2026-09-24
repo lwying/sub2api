@@ -82,6 +82,15 @@ func RegisterUserRoutes(
 			keys.DELETE("/:id", h.APIKey.Delete)
 		}
 
+		// 账号只读查看（票据 05）：仅显示管理员逐用户分配且当前未手动禁用的账号。
+		// 这是与 /admin/accounts 完全独立的只读入口，服务端对象级鉴权；
+		// 菜单隐藏不是安全边界。
+		accounts := authenticated.Group("/accounts")
+		{
+			accounts.GET("", h.VisibleAccount.List)
+			accounts.GET("/:id", h.VisibleAccount.Get)
+		}
+
 		// 用户可用分组（非管理员接口）
 		groups := authenticated.Group("/groups")
 		{

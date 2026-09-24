@@ -67,6 +67,8 @@ type User struct {
 	TotalRecharged float64 `json:"total_recharged,omitempty"`
 	// RpmLimit holds the value of the "rpm_limit" field.
 	RpmLimit int `json:"rpm_limit,omitempty"`
+	// CanViewAssignedAccounts holds the value of the "can_view_assigned_accounts" field.
+	CanViewAssignedAccounts bool `json:"can_view_assigned_accounts,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the UserQuery when eager-loading is set.
 	Edges        UserEdges `json:"edges"`
@@ -87,6 +89,8 @@ type UserEdges struct {
 	AnnouncementReads []*AnnouncementRead `json:"announcement_reads,omitempty"`
 	// AllowedGroups holds the value of the allowed_groups edge.
 	AllowedGroups []*Group `json:"allowed_groups,omitempty"`
+	// VisibleAccounts holds the value of the visible_accounts edge.
+	VisibleAccounts []*Account `json:"visible_accounts,omitempty"`
 	// UsageLogs holds the value of the usage_logs edge.
 	UsageLogs []*UsageLog `json:"usage_logs,omitempty"`
 	// AttributeValues holds the value of the attribute_values edge.
@@ -103,9 +107,11 @@ type UserEdges struct {
 	PlatformQuotas []*UserPlatformQuota `json:"platform_quotas,omitempty"`
 	// UserAllowedGroups holds the value of the user_allowed_groups edge.
 	UserAllowedGroups []*UserAllowedGroup `json:"user_allowed_groups,omitempty"`
+	// UserVisibleAccounts holds the value of the user_visible_accounts edge.
+	UserVisibleAccounts []*UserVisibleAccount `json:"user_visible_accounts,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [14]bool
+	loadedTypes [16]bool
 }
 
 // APIKeysOrErr returns the APIKeys value or an error if the edge
@@ -162,10 +168,19 @@ func (e UserEdges) AllowedGroupsOrErr() ([]*Group, error) {
 	return nil, &NotLoadedError{edge: "allowed_groups"}
 }
 
+// VisibleAccountsOrErr returns the VisibleAccounts value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserEdges) VisibleAccountsOrErr() ([]*Account, error) {
+	if e.loadedTypes[6] {
+		return e.VisibleAccounts, nil
+	}
+	return nil, &NotLoadedError{edge: "visible_accounts"}
+}
+
 // UsageLogsOrErr returns the UsageLogs value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) UsageLogsOrErr() ([]*UsageLog, error) {
-	if e.loadedTypes[6] {
+	if e.loadedTypes[7] {
 		return e.UsageLogs, nil
 	}
 	return nil, &NotLoadedError{edge: "usage_logs"}
@@ -174,7 +189,7 @@ func (e UserEdges) UsageLogsOrErr() ([]*UsageLog, error) {
 // AttributeValuesOrErr returns the AttributeValues value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) AttributeValuesOrErr() ([]*UserAttributeValue, error) {
-	if e.loadedTypes[7] {
+	if e.loadedTypes[8] {
 		return e.AttributeValues, nil
 	}
 	return nil, &NotLoadedError{edge: "attribute_values"}
@@ -183,7 +198,7 @@ func (e UserEdges) AttributeValuesOrErr() ([]*UserAttributeValue, error) {
 // PromoCodeUsagesOrErr returns the PromoCodeUsages value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) PromoCodeUsagesOrErr() ([]*PromoCodeUsage, error) {
-	if e.loadedTypes[8] {
+	if e.loadedTypes[9] {
 		return e.PromoCodeUsages, nil
 	}
 	return nil, &NotLoadedError{edge: "promo_code_usages"}
@@ -192,7 +207,7 @@ func (e UserEdges) PromoCodeUsagesOrErr() ([]*PromoCodeUsage, error) {
 // PaymentOrdersOrErr returns the PaymentOrders value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) PaymentOrdersOrErr() ([]*PaymentOrder, error) {
-	if e.loadedTypes[9] {
+	if e.loadedTypes[10] {
 		return e.PaymentOrders, nil
 	}
 	return nil, &NotLoadedError{edge: "payment_orders"}
@@ -201,7 +216,7 @@ func (e UserEdges) PaymentOrdersOrErr() ([]*PaymentOrder, error) {
 // AuthIdentitiesOrErr returns the AuthIdentities value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) AuthIdentitiesOrErr() ([]*AuthIdentity, error) {
-	if e.loadedTypes[10] {
+	if e.loadedTypes[11] {
 		return e.AuthIdentities, nil
 	}
 	return nil, &NotLoadedError{edge: "auth_identities"}
@@ -210,7 +225,7 @@ func (e UserEdges) AuthIdentitiesOrErr() ([]*AuthIdentity, error) {
 // PendingAuthSessionsOrErr returns the PendingAuthSessions value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) PendingAuthSessionsOrErr() ([]*PendingAuthSession, error) {
-	if e.loadedTypes[11] {
+	if e.loadedTypes[12] {
 		return e.PendingAuthSessions, nil
 	}
 	return nil, &NotLoadedError{edge: "pending_auth_sessions"}
@@ -219,7 +234,7 @@ func (e UserEdges) PendingAuthSessionsOrErr() ([]*PendingAuthSession, error) {
 // PlatformQuotasOrErr returns the PlatformQuotas value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) PlatformQuotasOrErr() ([]*UserPlatformQuota, error) {
-	if e.loadedTypes[12] {
+	if e.loadedTypes[13] {
 		return e.PlatformQuotas, nil
 	}
 	return nil, &NotLoadedError{edge: "platform_quotas"}
@@ -228,10 +243,19 @@ func (e UserEdges) PlatformQuotasOrErr() ([]*UserPlatformQuota, error) {
 // UserAllowedGroupsOrErr returns the UserAllowedGroups value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) UserAllowedGroupsOrErr() ([]*UserAllowedGroup, error) {
-	if e.loadedTypes[13] {
+	if e.loadedTypes[14] {
 		return e.UserAllowedGroups, nil
 	}
 	return nil, &NotLoadedError{edge: "user_allowed_groups"}
+}
+
+// UserVisibleAccountsOrErr returns the UserVisibleAccounts value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserEdges) UserVisibleAccountsOrErr() ([]*UserVisibleAccount, error) {
+	if e.loadedTypes[15] {
+		return e.UserVisibleAccounts, nil
+	}
+	return nil, &NotLoadedError{edge: "user_visible_accounts"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -239,7 +263,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldTotpEnabled, user.FieldRestrictPublicGroups, user.FieldBalanceNotifyEnabled:
+		case user.FieldTotpEnabled, user.FieldRestrictPublicGroups, user.FieldBalanceNotifyEnabled, user.FieldCanViewAssignedAccounts:
 			values[i] = new(sql.NullBool)
 		case user.FieldBalance, user.FieldFrozenBalance, user.FieldBalanceNotifyThreshold, user.FieldTotalRecharged:
 			values[i] = new(sql.NullFloat64)
@@ -426,6 +450,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.RpmLimit = int(value.Int64)
 			}
+		case user.FieldCanViewAssignedAccounts:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field can_view_assigned_accounts", values[i])
+			} else if value.Valid {
+				_m.CanViewAssignedAccounts = value.Bool
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -469,6 +499,11 @@ func (_m *User) QueryAllowedGroups() *GroupQuery {
 	return NewUserClient(_m.config).QueryAllowedGroups(_m)
 }
 
+// QueryVisibleAccounts queries the "visible_accounts" edge of the User entity.
+func (_m *User) QueryVisibleAccounts() *AccountQuery {
+	return NewUserClient(_m.config).QueryVisibleAccounts(_m)
+}
+
 // QueryUsageLogs queries the "usage_logs" edge of the User entity.
 func (_m *User) QueryUsageLogs() *UsageLogQuery {
 	return NewUserClient(_m.config).QueryUsageLogs(_m)
@@ -507,6 +542,11 @@ func (_m *User) QueryPlatformQuotas() *UserPlatformQuotaQuery {
 // QueryUserAllowedGroups queries the "user_allowed_groups" edge of the User entity.
 func (_m *User) QueryUserAllowedGroups() *UserAllowedGroupQuery {
 	return NewUserClient(_m.config).QueryUserAllowedGroups(_m)
+}
+
+// QueryUserVisibleAccounts queries the "user_visible_accounts" edge of the User entity.
+func (_m *User) QueryUserVisibleAccounts() *UserVisibleAccountQuery {
+	return NewUserClient(_m.config).QueryUserVisibleAccounts(_m)
 }
 
 // Update returns a builder for updating this User.
@@ -618,6 +658,9 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("rpm_limit=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RpmLimit))
+	builder.WriteString(", ")
+	builder.WriteString("can_view_assigned_accounts=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CanViewAssignedAccounts))
 	builder.WriteByte(')')
 	return builder.String()
 }

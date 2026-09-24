@@ -99,11 +99,15 @@ type AccountEdges struct {
 	Children []*Account `json:"children,omitempty"`
 	// UsageLogs holds the value of the usage_logs edge.
 	UsageLogs []*UsageLog `json:"usage_logs,omitempty"`
+	// VisibleUsers holds the value of the visible_users edge.
+	VisibleUsers []*User `json:"visible_users,omitempty"`
 	// AccountGroups holds the value of the account_groups edge.
 	AccountGroups []*AccountGroup `json:"account_groups,omitempty"`
+	// UserVisibleAccounts holds the value of the user_visible_accounts edge.
+	UserVisibleAccounts []*UserVisibleAccount `json:"user_visible_accounts,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [6]bool
+	loadedTypes [8]bool
 }
 
 // GroupsOrErr returns the Groups value or an error if the edge
@@ -155,13 +159,31 @@ func (e AccountEdges) UsageLogsOrErr() ([]*UsageLog, error) {
 	return nil, &NotLoadedError{edge: "usage_logs"}
 }
 
+// VisibleUsersOrErr returns the VisibleUsers value or an error if the edge
+// was not loaded in eager-loading.
+func (e AccountEdges) VisibleUsersOrErr() ([]*User, error) {
+	if e.loadedTypes[5] {
+		return e.VisibleUsers, nil
+	}
+	return nil, &NotLoadedError{edge: "visible_users"}
+}
+
 // AccountGroupsOrErr returns the AccountGroups value or an error if the edge
 // was not loaded in eager-loading.
 func (e AccountEdges) AccountGroupsOrErr() ([]*AccountGroup, error) {
-	if e.loadedTypes[5] {
+	if e.loadedTypes[6] {
 		return e.AccountGroups, nil
 	}
 	return nil, &NotLoadedError{edge: "account_groups"}
+}
+
+// UserVisibleAccountsOrErr returns the UserVisibleAccounts value or an error if the edge
+// was not loaded in eager-loading.
+func (e AccountEdges) UserVisibleAccountsOrErr() ([]*UserVisibleAccount, error) {
+	if e.loadedTypes[7] {
+		return e.UserVisibleAccounts, nil
+	}
+	return nil, &NotLoadedError{edge: "user_visible_accounts"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -447,9 +469,19 @@ func (_m *Account) QueryUsageLogs() *UsageLogQuery {
 	return NewAccountClient(_m.config).QueryUsageLogs(_m)
 }
 
+// QueryVisibleUsers queries the "visible_users" edge of the Account entity.
+func (_m *Account) QueryVisibleUsers() *UserQuery {
+	return NewAccountClient(_m.config).QueryVisibleUsers(_m)
+}
+
 // QueryAccountGroups queries the "account_groups" edge of the Account entity.
 func (_m *Account) QueryAccountGroups() *AccountGroupQuery {
 	return NewAccountClient(_m.config).QueryAccountGroups(_m)
+}
+
+// QueryUserVisibleAccounts queries the "user_visible_accounts" edge of the Account entity.
+func (_m *Account) QueryUserVisibleAccounts() *UserVisibleAccountQuery {
+	return NewAccountClient(_m.config).QueryUserVisibleAccounts(_m)
 }
 
 // Update returns a builder for updating this Account.

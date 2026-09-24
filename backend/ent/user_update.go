@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
@@ -446,6 +447,20 @@ func (_u *UserUpdate) AddRpmLimit(v int) *UserUpdate {
 	return _u
 }
 
+// SetCanViewAssignedAccounts sets the "can_view_assigned_accounts" field.
+func (_u *UserUpdate) SetCanViewAssignedAccounts(v bool) *UserUpdate {
+	_u.mutation.SetCanViewAssignedAccounts(v)
+	return _u
+}
+
+// SetNillableCanViewAssignedAccounts sets the "can_view_assigned_accounts" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableCanViewAssignedAccounts(v *bool) *UserUpdate {
+	if v != nil {
+		_u.SetCanViewAssignedAccounts(*v)
+	}
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *UserUpdate) AddAPIKeyIDs(ids ...int64) *UserUpdate {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -534,6 +549,21 @@ func (_u *UserUpdate) AddAllowedGroups(v ...*Group) *UserUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.AddAllowedGroupIDs(ids...)
+}
+
+// AddVisibleAccountIDs adds the "visible_accounts" edge to the Account entity by IDs.
+func (_u *UserUpdate) AddVisibleAccountIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddVisibleAccountIDs(ids...)
+	return _u
+}
+
+// AddVisibleAccounts adds the "visible_accounts" edges to the Account entity.
+func (_u *UserUpdate) AddVisibleAccounts(v ...*Account) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddVisibleAccountIDs(ids...)
 }
 
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
@@ -770,6 +800,27 @@ func (_u *UserUpdate) RemoveAllowedGroups(v ...*Group) *UserUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAllowedGroupIDs(ids...)
+}
+
+// ClearVisibleAccounts clears all "visible_accounts" edges to the Account entity.
+func (_u *UserUpdate) ClearVisibleAccounts() *UserUpdate {
+	_u.mutation.ClearVisibleAccounts()
+	return _u
+}
+
+// RemoveVisibleAccountIDs removes the "visible_accounts" edge to Account entities by IDs.
+func (_u *UserUpdate) RemoveVisibleAccountIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemoveVisibleAccountIDs(ids...)
+	return _u
+}
+
+// RemoveVisibleAccounts removes "visible_accounts" edges to Account entities.
+func (_u *UserUpdate) RemoveVisibleAccounts(v ...*Account) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveVisibleAccountIDs(ids...)
 }
 
 // ClearUsageLogs clears all "usage_logs" edges to the UsageLog entity.
@@ -1116,6 +1167,9 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(user.FieldRpmLimit, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.CanViewAssignedAccounts(); ok {
+		_spec.SetField(user.FieldCanViewAssignedAccounts, field.TypeBool, value)
+	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
@@ -1393,6 +1447,63 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &UserAllowedGroupCreate{config: _u.config, mutation: newUserAllowedGroupMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.VisibleAccountsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedVisibleAccountsIDs(); len(nodes) > 0 && !_u.mutation.VisibleAccountsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.VisibleAccountsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
 		createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
@@ -2139,6 +2250,20 @@ func (_u *UserUpdateOne) AddRpmLimit(v int) *UserUpdateOne {
 	return _u
 }
 
+// SetCanViewAssignedAccounts sets the "can_view_assigned_accounts" field.
+func (_u *UserUpdateOne) SetCanViewAssignedAccounts(v bool) *UserUpdateOne {
+	_u.mutation.SetCanViewAssignedAccounts(v)
+	return _u
+}
+
+// SetNillableCanViewAssignedAccounts sets the "can_view_assigned_accounts" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableCanViewAssignedAccounts(v *bool) *UserUpdateOne {
+	if v != nil {
+		_u.SetCanViewAssignedAccounts(*v)
+	}
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *UserUpdateOne) AddAPIKeyIDs(ids ...int64) *UserUpdateOne {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -2227,6 +2352,21 @@ func (_u *UserUpdateOne) AddAllowedGroups(v ...*Group) *UserUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.AddAllowedGroupIDs(ids...)
+}
+
+// AddVisibleAccountIDs adds the "visible_accounts" edge to the Account entity by IDs.
+func (_u *UserUpdateOne) AddVisibleAccountIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddVisibleAccountIDs(ids...)
+	return _u
+}
+
+// AddVisibleAccounts adds the "visible_accounts" edges to the Account entity.
+func (_u *UserUpdateOne) AddVisibleAccounts(v ...*Account) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddVisibleAccountIDs(ids...)
 }
 
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
@@ -2463,6 +2603,27 @@ func (_u *UserUpdateOne) RemoveAllowedGroups(v ...*Group) *UserUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAllowedGroupIDs(ids...)
+}
+
+// ClearVisibleAccounts clears all "visible_accounts" edges to the Account entity.
+func (_u *UserUpdateOne) ClearVisibleAccounts() *UserUpdateOne {
+	_u.mutation.ClearVisibleAccounts()
+	return _u
+}
+
+// RemoveVisibleAccountIDs removes the "visible_accounts" edge to Account entities by IDs.
+func (_u *UserUpdateOne) RemoveVisibleAccountIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemoveVisibleAccountIDs(ids...)
+	return _u
+}
+
+// RemoveVisibleAccounts removes "visible_accounts" edges to Account entities.
+func (_u *UserUpdateOne) RemoveVisibleAccounts(v ...*Account) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveVisibleAccountIDs(ids...)
 }
 
 // ClearUsageLogs clears all "usage_logs" edges to the UsageLog entity.
@@ -2839,6 +3000,9 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(user.FieldRpmLimit, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.CanViewAssignedAccounts(); ok {
+		_spec.SetField(user.FieldCanViewAssignedAccounts, field.TypeBool, value)
+	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
@@ -3116,6 +3280,63 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &UserAllowedGroupCreate{config: _u.config, mutation: newUserAllowedGroupMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.VisibleAccountsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedVisibleAccountsIDs(); len(nodes) > 0 && !_u.mutation.VisibleAccountsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.VisibleAccountsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
 		createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields

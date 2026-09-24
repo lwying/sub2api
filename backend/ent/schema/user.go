@@ -120,6 +120,13 @@ func (User) Fields() []ent.Field {
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").
 			Default(0),
+
+		// can_view_assigned_accounts 是该普通用户的「已分配账号只读查看」能力开关。
+		// 默认 false：未显式开启的用户看不到账号管理菜单，也读不到任何账号。
+		// 能力开启仅授权查看 user_visible_accounts 中显式分配且当前未手动禁用的账号，
+		// 不授予账号写、导出、代理、审计或诊断访问，也不改变原有 Key／调用／用量能力。
+		field.Bool("can_view_assigned_accounts").
+			Default(false),
 	}
 }
 
@@ -132,6 +139,10 @@ func (User) Edges() []ent.Edge {
 		edge.To("announcement_reads", AnnouncementRead.Type),
 		edge.To("allowed_groups", Group.Type).
 			Through("user_allowed_groups", UserAllowedGroup.Type),
+		// visible_accounts：管理员逐用户显式分配的只读可见账号（默认空）。
+		// 与分组／账号路由关系无关，不参与调度。
+		edge.To("visible_accounts", Account.Type).
+			Through("user_visible_accounts", UserVisibleAccount.Type),
 		edge.To("usage_logs", UsageLog.Type),
 		edge.To("attribute_values", UserAttributeValue.Type),
 		edge.To("promo_code_usages", PromoCodeUsage.Type),

@@ -13,6 +13,10 @@ import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
+import {
+  ASSIGNED_ACCOUNTS_FALLBACK_PATH,
+  resolveAssignedAccountsRedirect
+} from './assignedAccountsAccess'
 
 /**
  * Route definitions with lazy loading
@@ -213,6 +217,21 @@ const routes: RouteRecordRaw[] = [
       title: 'API Keys',
       titleKey: 'keys.title',
       descriptionKey: 'keys.description'
+    }
+  },
+  {
+    // 普通用户的只读账号视图：只呈现管理员逐用户分配且当前仍启用的账号，
+    // 与 /admin/accounts 完全独立（专用页面与专用 API，不复用管理员组件/DTO）。
+    path: '/accounts',
+    name: 'AssignedAccounts',
+    component: () => import('@/views/user/AssignedAccountsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresAssignedAccounts: true,
+      title: 'My Accounts',
+      titleKey: 'nav.assignedAccounts',
+      descriptionKey: 'assignedAccounts.description'
     }
   },
   {
@@ -959,6 +978,28 @@ router.beforeEach(async (to, _from, next) => {
       // 简易模式下访问受限页面,重定向到仪表板
       next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
       return
+    }
+  }
+
+  // 只读账号视图：本地缓存的能力位只决定菜单是否显示，这里必须实时向服务端
+  // 复核，否则管理员撤销授权后，旧浏览器状态仍能进入页面。
+  // backend mode 下非管理员本就会被下方拦截，无需额外探测。
+  if (to.meta.requiresAssignedAccounts) {
+    const assignedAccountsRedirect = resolveAssignedAccountsRedirect({
+      isAuthenticated: authStore.isAuthenticated,
+      isAdmin: authStore.isAdmin
+    })
+    if (assignedAccountsRedirect) {
+      next(assignedAccountsRedirect)
+      return
+    }
+
+    if (!appStore.backendModeEnabled) {
+      const allowed = await authStore.verifyAssignedAccountAccess()
+      if (!allowed) {
+        next(ASSIGNED_ACCOUNTS_FALLBACK_PATH)
+        return
+      }
     }
   }
 

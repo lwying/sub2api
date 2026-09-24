@@ -27,7 +27,11 @@ type User struct {
 	// ones listed in AllowedGroups. False keeps the default, where every public
 	// group is bindable.
 	RestrictPublicGroups bool
-	TokenVersion         int64 // Incremented on password change to invalidate existing tokens
+	// CanViewAssignedAccounts 是该普通用户的「已分配账号只读查看」能力开关，
+	// 由管理员逐用户开启，默认 false。它只影响账号只读视图，不改变该用户的
+	// API Key、模型调用、个人用量或任何管理员权限。
+	CanViewAssignedAccounts bool
+	TokenVersion            int64 // Incremented on password change to invalidate existing tokens
 	// TokenVersionResolved indicates TokenVersion already contains the fingerprint-derived
 	// value expected in JWT claims and refresh-token state.
 	TokenVersionResolved bool

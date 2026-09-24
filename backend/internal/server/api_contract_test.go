@@ -5,6 +5,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -70,6 +71,7 @@ func TestAPIContracts(t *testing.T) {
 					"oidc_bound": false,
 					"wechat_bound": false,
 					"dingtalk_bound": false,
+					"can_view_assigned_accounts": false,
 					"identities": {
 						"email": {
 							"provider": "email",
@@ -1430,10 +1432,42 @@ func TestAPIContracts(t *testing.T) {
 	}
 }
 
+// TestAuthMeReportsAccountViewCapabilityFreshly 验证 /auth/me 每次都按当前用户行
+// 重新给出查看能力：管理员开启后立即可见，撤销（或禁用能力）后立即消失，
+// 不依赖旧 JWT 或浏览器缓存的旧值。
+func TestAuthMeReportsAccountViewCapabilityFreshly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	deps := newContractDeps(t)
+
+	readCapability := func() bool {
+		status, body := doRequest(t, deps.router, http.MethodGet, "/api/v1/auth/me", "", nil)
+		require.Equal(t, http.StatusOK, status)
+		var payload struct {
+			Data struct {
+				CanViewAssignedAccounts bool `json:"can_view_assigned_accounts"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &payload))
+		return payload.Data.CanViewAssignedAccounts
+	}
+
+	// 默认关闭。
+	require.False(t, readCapability())
+
+	// 管理员开启后，同一个会话的下一次请求即可见。
+	deps.userRepo.users[1].CanViewAssignedAccounts = true
+	require.True(t, readCapability())
+
+	// 撤销后立即不可见（不需要重新登录）。
+	deps.userRepo.users[1].CanViewAssignedAccounts = false
+	require.False(t, readCapability())
+}
+
 type contractDeps struct {
 	now         time.Time
 	router      http.Handler
 	cfg         *config.Config
+	userRepo    *stubUserRepo
 	apiKeyRepo  *stubApiKeyRepo
 	groupRepo   *stubGroupRepo
 	userSubRepo *stubUserSubscriptionRepo
@@ -1555,6 +1589,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 		now:         now,
 		router:      r,
 		cfg:         cfg,
+		userRepo:    userRepo,
 		apiKeyRepo:  apiKeyRepo,
 		groupRepo:   groupRepo,
 		userSubRepo: userSubRepo,

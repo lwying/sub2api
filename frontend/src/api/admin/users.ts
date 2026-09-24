@@ -328,6 +328,50 @@ export async function bindUserAuthIdentity(
 }
 
 /**
+ * One account currently assigned to a user's read-only account view.
+ * Admins see the real account name here; customers never do.
+ */
+export interface AccountViewGrantAccount {
+  id: number
+  name: string
+  platform: string
+  account_type: string
+  status: string
+}
+
+/**
+ * Per-user grant for the customer-facing read-only account view.
+ * `enabled` is the capability switch; `account_ids` is the explicit assignment
+ * set. Both default to off/empty for every user.
+ */
+export interface AccountViewGrant {
+  user_id: number
+  enabled: boolean
+  account_ids: number[]
+  accounts: AccountViewGrantAccount[]
+}
+
+/**
+ * Read the read-only account view grant of a user
+ */
+export async function getAccountView(id: number): Promise<AccountViewGrant> {
+  const { data } = await apiClient.get<AccountViewGrant>(`/admin/users/${id}/account-view`)
+  return data
+}
+
+/**
+ * Replace the read-only account view grant of a user (replace-set semantics:
+ * the sent list is the complete assignment set, so revoking is immediate).
+ */
+export async function updateAccountView(
+  id: number,
+  grant: { enabled: boolean; account_ids: number[] }
+): Promise<AccountViewGrant> {
+  const { data } = await apiClient.put<AccountViewGrant>(`/admin/users/${id}/account-view`, grant)
+  return data
+}
+
+/**
  * Platform quota types
  */
 export type PlatformQuotaPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok'
@@ -413,6 +457,8 @@ export const usersAPI = {
   getUserUsageStats,
   getUserBalanceHistory,
   replaceGroup,
+  getAccountView,
+  updateAccountView,
   bindUserAuthIdentity,
   getPlatformQuotas,
   updatePlatformQuotas,

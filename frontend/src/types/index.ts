@@ -91,6 +91,9 @@ export interface User {
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
+  // 管理员为该用户开启的「查看已分配账号」能力；默认 false。
+  // 仅用于菜单提示，路由与页面仍以后端实时校验为准。
+  can_view_assigned_accounts?: boolean
   balance_notify_enabled: boolean
   balance_notify_threshold: number | null
   balance_notify_extra_emails: NotifyEmailEntry[]

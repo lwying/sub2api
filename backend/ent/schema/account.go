@@ -227,6 +227,10 @@ func (Account) Edges() []ent.Edge {
 			Unique(),
 		// usage_logs: 该账户的使用日志
 		edge.To("usage_logs", UsageLog.Type),
+		// visible_users: 被管理员显式分配了本账号只读查看权的普通用户（默认空）。
+		edge.From("visible_users", User.Type).
+			Ref("visible_accounts").
+			Through("user_visible_accounts", UserVisibleAccount.Type),
 	}
 }
 

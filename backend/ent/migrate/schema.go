@@ -1889,6 +1889,7 @@ var (
 		{Name: "balance_notify_extra_emails", Type: field.TypeString, Default: "[]", SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "total_recharged", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "can_view_assigned_accounts", Type: field.TypeBool, Default: false},
 	}
 	// UsersTable holds the schema information for the "users" table.
 	UsersTable = &schema.Table{
@@ -2163,6 +2164,40 @@ var (
 			},
 		},
 	}
+	// UserVisibleAccountsColumns holds the columns for the "user_visible_accounts" table.
+	UserVisibleAccountsColumns = []*schema.Column{
+		{Name: "granted_by", Type: field.TypeInt64, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "account_id", Type: field.TypeInt64},
+	}
+	// UserVisibleAccountsTable holds the schema information for the "user_visible_accounts" table.
+	UserVisibleAccountsTable = &schema.Table{
+		Name:       "user_visible_accounts",
+		Columns:    UserVisibleAccountsColumns,
+		PrimaryKey: []*schema.Column{UserVisibleAccountsColumns[2], UserVisibleAccountsColumns[3]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "user_visible_accounts_users_user",
+				Columns:    []*schema.Column{UserVisibleAccountsColumns[2]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+			{
+				Symbol:     "user_visible_accounts_accounts_account",
+				Columns:    []*schema.Column{UserVisibleAccountsColumns[3]},
+				RefColumns: []*schema.Column{AccountsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "uservisibleaccount_account_id",
+				Unique:  false,
+				Columns: []*schema.Column{UserVisibleAccountsColumns[3]},
+			},
+		},
+	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		APIKeysTable,
@@ -2206,6 +2241,7 @@ var (
 		UserAttributeValuesTable,
 		UserPlatformQuotasTable,
 		UserSubscriptionsTable,
+		UserVisibleAccountsTable,
 	}
 )
 
@@ -2370,5 +2406,10 @@ func init() {
 	UserSubscriptionsTable.ForeignKeys[2].RefTable = UsersTable
 	UserSubscriptionsTable.Annotation = &entsql.Annotation{
 		Table: "user_subscriptions",
+	}
+	UserVisibleAccountsTable.ForeignKeys[0].RefTable = UsersTable
+	UserVisibleAccountsTable.ForeignKeys[1].RefTable = AccountsTable
+	UserVisibleAccountsTable.Annotation = &entsql.Annotation{
+		Table: "user_visible_accounts",
 	}
 }

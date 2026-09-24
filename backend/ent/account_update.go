@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
+	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
 // AccountUpdate is the builder for updating Account entities.
@@ -633,6 +634,21 @@ func (_u *AccountUpdate) AddUsageLogs(v ...*UsageLog) *AccountUpdate {
 	return _u.AddUsageLogIDs(ids...)
 }
 
+// AddVisibleUserIDs adds the "visible_users" edge to the User entity by IDs.
+func (_u *AccountUpdate) AddVisibleUserIDs(ids ...int64) *AccountUpdate {
+	_u.mutation.AddVisibleUserIDs(ids...)
+	return _u
+}
+
+// AddVisibleUsers adds the "visible_users" edges to the User entity.
+func (_u *AccountUpdate) AddVisibleUsers(v ...*User) *AccountUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddVisibleUserIDs(ids...)
+}
+
 // Mutation returns the AccountMutation object of the builder.
 func (_u *AccountUpdate) Mutation() *AccountMutation {
 	return _u.mutation
@@ -711,6 +727,27 @@ func (_u *AccountUpdate) RemoveUsageLogs(v ...*UsageLog) *AccountUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveUsageLogIDs(ids...)
+}
+
+// ClearVisibleUsers clears all "visible_users" edges to the User entity.
+func (_u *AccountUpdate) ClearVisibleUsers() *AccountUpdate {
+	_u.mutation.ClearVisibleUsers()
+	return _u
+}
+
+// RemoveVisibleUserIDs removes the "visible_users" edge to User entities by IDs.
+func (_u *AccountUpdate) RemoveVisibleUserIDs(ids ...int64) *AccountUpdate {
+	_u.mutation.RemoveVisibleUserIDs(ids...)
+	return _u
+}
+
+// RemoveVisibleUsers removes "visible_users" edges to User entities.
+func (_u *AccountUpdate) RemoveVisibleUsers(v ...*User) *AccountUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveVisibleUserIDs(ids...)
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
@@ -1149,6 +1186,63 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.VisibleUsersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: true,
+			Table:   account.VisibleUsersTable,
+			Columns: account.VisibleUsersPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64),
+			},
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedVisibleUsersIDs(); len(nodes) > 0 && !_u.mutation.VisibleUsersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: true,
+			Table:   account.VisibleUsersTable,
+			Columns: account.VisibleUsersPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.VisibleUsersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: true,
+			Table:   account.VisibleUsersTable,
+			Columns: account.VisibleUsersPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
@@ -1773,6 +1867,21 @@ func (_u *AccountUpdateOne) AddUsageLogs(v ...*UsageLog) *AccountUpdateOne {
 	return _u.AddUsageLogIDs(ids...)
 }
 
+// AddVisibleUserIDs adds the "visible_users" edge to the User entity by IDs.
+func (_u *AccountUpdateOne) AddVisibleUserIDs(ids ...int64) *AccountUpdateOne {
+	_u.mutation.AddVisibleUserIDs(ids...)
+	return _u
+}
+
+// AddVisibleUsers adds the "visible_users" edges to the User entity.
+func (_u *AccountUpdateOne) AddVisibleUsers(v ...*User) *AccountUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddVisibleUserIDs(ids...)
+}
+
 // Mutation returns the AccountMutation object of the builder.
 func (_u *AccountUpdateOne) Mutation() *AccountMutation {
 	return _u.mutation
@@ -1851,6 +1960,27 @@ func (_u *AccountUpdateOne) RemoveUsageLogs(v ...*UsageLog) *AccountUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveUsageLogIDs(ids...)
+}
+
+// ClearVisibleUsers clears all "visible_users" edges to the User entity.
+func (_u *AccountUpdateOne) ClearVisibleUsers() *AccountUpdateOne {
+	_u.mutation.ClearVisibleUsers()
+	return _u
+}
+
+// RemoveVisibleUserIDs removes the "visible_users" edge to User entities by IDs.
+func (_u *AccountUpdateOne) RemoveVisibleUserIDs(ids ...int64) *AccountUpdateOne {
+	_u.mutation.RemoveVisibleUserIDs(ids...)
+	return _u
+}
+
+// RemoveVisibleUsers removes "visible_users" edges to User entities.
+func (_u *AccountUpdateOne) RemoveVisibleUsers(v ...*User) *AccountUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveVisibleUserIDs(ids...)
 }
 
 // Where appends a list predicates to the AccountUpdate builder.
@@ -2319,6 +2449,63 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.VisibleUsersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: true,
+			Table:   account.VisibleUsersTable,
+			Columns: account.VisibleUsersPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64),
+			},
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedVisibleUsersIDs(); len(nodes) > 0 && !_u.mutation.VisibleUsersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: true,
+			Table:   account.VisibleUsersTable,
+			Columns: account.VisibleUsersPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.VisibleUsersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: true,
+			Table:   account.VisibleUsersTable,
+			Columns: account.VisibleUsersPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _u.config, mutation: newUserVisibleAccountMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	_node = &Account{config: _u.config}

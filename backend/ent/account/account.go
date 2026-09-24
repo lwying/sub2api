@@ -88,8 +88,12 @@ const (
 	EdgeChildren = "children"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
+	// EdgeVisibleUsers holds the string denoting the visible_users edge name in mutations.
+	EdgeVisibleUsers = "visible_users"
 	// EdgeAccountGroups holds the string denoting the account_groups edge name in mutations.
 	EdgeAccountGroups = "account_groups"
+	// EdgeUserVisibleAccounts holds the string denoting the user_visible_accounts edge name in mutations.
+	EdgeUserVisibleAccounts = "user_visible_accounts"
 	// Table holds the table name of the account in the database.
 	Table = "accounts"
 	// GroupsTable is the table that holds the groups relation/edge. The primary key declared below.
@@ -119,6 +123,11 @@ const (
 	UsageLogsInverseTable = "usage_logs"
 	// UsageLogsColumn is the table column denoting the usage_logs relation/edge.
 	UsageLogsColumn = "account_id"
+	// VisibleUsersTable is the table that holds the visible_users relation/edge. The primary key declared below.
+	VisibleUsersTable = "user_visible_accounts"
+	// VisibleUsersInverseTable is the table name for the User entity.
+	// It exists in this package in order to avoid circular dependency with the "user" package.
+	VisibleUsersInverseTable = "users"
 	// AccountGroupsTable is the table that holds the account_groups relation/edge.
 	AccountGroupsTable = "account_groups"
 	// AccountGroupsInverseTable is the table name for the AccountGroup entity.
@@ -126,6 +135,13 @@ const (
 	AccountGroupsInverseTable = "account_groups"
 	// AccountGroupsColumn is the table column denoting the account_groups relation/edge.
 	AccountGroupsColumn = "account_id"
+	// UserVisibleAccountsTable is the table that holds the user_visible_accounts relation/edge.
+	UserVisibleAccountsTable = "user_visible_accounts"
+	// UserVisibleAccountsInverseTable is the table name for the UserVisibleAccount entity.
+	// It exists in this package in order to avoid circular dependency with the "uservisibleaccount" package.
+	UserVisibleAccountsInverseTable = "user_visible_accounts"
+	// UserVisibleAccountsColumn is the table column denoting the user_visible_accounts relation/edge.
+	UserVisibleAccountsColumn = "account_id"
 )
 
 // Columns holds all SQL columns for account fields.
@@ -168,6 +184,9 @@ var (
 	// GroupsPrimaryKey and GroupsColumn2 are the table columns denoting the
 	// primary key for the groups relation (M2M).
 	GroupsPrimaryKey = []string{"account_id", "group_id"}
+	// VisibleUsersPrimaryKey and VisibleUsersColumn2 are the table columns denoting the
+	// primary key for the visible_users relation (M2M).
+	VisibleUsersPrimaryKey = []string{"user_id", "account_id"}
 )
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -457,6 +476,20 @@ func ByUsageLogs(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	}
 }
 
+// ByVisibleUsersCount orders the results by visible_users count.
+func ByVisibleUsersCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newVisibleUsersStep(), opts...)
+	}
+}
+
+// ByVisibleUsers orders the results by visible_users terms.
+func ByVisibleUsers(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newVisibleUsersStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByAccountGroupsCount orders the results by account_groups count.
 func ByAccountGroupsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -468,6 +501,20 @@ func ByAccountGroupsCount(opts ...sql.OrderTermOption) OrderOption {
 func ByAccountGroups(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newAccountGroupsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByUserVisibleAccountsCount orders the results by user_visible_accounts count.
+func ByUserVisibleAccountsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newUserVisibleAccountsStep(), opts...)
+	}
+}
+
+// ByUserVisibleAccounts orders the results by user_visible_accounts terms.
+func ByUserVisibleAccounts(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newUserVisibleAccountsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
 func newGroupsStep() *sqlgraph.Step {
@@ -505,10 +552,24 @@ func newUsageLogsStep() *sqlgraph.Step {
 		sqlgraph.Edge(sqlgraph.O2M, false, UsageLogsTable, UsageLogsColumn),
 	)
 }
+func newVisibleUsersStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(VisibleUsersInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2M, true, VisibleUsersTable, VisibleUsersPrimaryKey...),
+	)
+}
 func newAccountGroupsStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(AccountGroupsInverseTable, AccountGroupsColumn),
 		sqlgraph.Edge(sqlgraph.O2M, true, AccountGroupsTable, AccountGroupsColumn),
+	)
+}
+func newUserVisibleAccountsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(UserVisibleAccountsInverseTable, UserVisibleAccountsColumn),
+		sqlgraph.Edge(sqlgraph.O2M, true, UserVisibleAccountsTable, UserVisibleAccountsColumn),
 	)
 }

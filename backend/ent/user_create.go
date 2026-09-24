@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
@@ -368,6 +369,20 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
+// SetCanViewAssignedAccounts sets the "can_view_assigned_accounts" field.
+func (_c *UserCreate) SetCanViewAssignedAccounts(v bool) *UserCreate {
+	_c.mutation.SetCanViewAssignedAccounts(v)
+	return _c
+}
+
+// SetNillableCanViewAssignedAccounts sets the "can_view_assigned_accounts" field if the given value is not nil.
+func (_c *UserCreate) SetNillableCanViewAssignedAccounts(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetCanViewAssignedAccounts(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -456,6 +471,21 @@ func (_c *UserCreate) AddAllowedGroups(v ...*Group) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddAllowedGroupIDs(ids...)
+}
+
+// AddVisibleAccountIDs adds the "visible_accounts" edge to the Account entity by IDs.
+func (_c *UserCreate) AddVisibleAccountIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddVisibleAccountIDs(ids...)
+	return _c
+}
+
+// AddVisibleAccounts adds the "visible_accounts" edges to the Account entity.
+func (_c *UserCreate) AddVisibleAccounts(v ...*Account) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddVisibleAccountIDs(ids...)
 }
 
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
@@ -674,6 +704,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.CanViewAssignedAccounts(); !ok {
+		v := user.DefaultCanViewAssignedAccounts
+		_c.mutation.SetCanViewAssignedAccounts(v)
+	}
 	return nil
 }
 
@@ -765,6 +799,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "User.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.CanViewAssignedAccounts(); !ok {
+		return &ValidationError{Name: "can_view_assigned_accounts", err: errors.New(`ent: missing required field "User.can_view_assigned_accounts"`)}
 	}
 	return nil
 }
@@ -893,6 +930,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
 	}
+	if value, ok := _c.mutation.CanViewAssignedAccounts(); ok {
+		_spec.SetField(user.FieldCanViewAssignedAccounts, field.TypeBool, value)
+		_node.CanViewAssignedAccounts = value
+	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
@@ -988,6 +1029,26 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &UserAllowedGroupCreate{config: _c.config, mutation: newUserAllowedGroupMutation(_c.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.VisibleAccountsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   user.VisibleAccountsTable,
+			Columns: user.VisibleAccountsPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &UserVisibleAccountCreate{config: _c.config, mutation: newUserVisibleAccountMutation(_c.config, OpCreate)}
 		createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
@@ -1517,6 +1578,18 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
+// SetCanViewAssignedAccounts sets the "can_view_assigned_accounts" field.
+func (u *UserUpsert) SetCanViewAssignedAccounts(v bool) *UserUpsert {
+	u.Set(user.FieldCanViewAssignedAccounts, v)
+	return u
+}
+
+// UpdateCanViewAssignedAccounts sets the "can_view_assigned_accounts" field to the value that was provided on create.
+func (u *UserUpsert) UpdateCanViewAssignedAccounts() *UserUpsert {
+	u.SetExcluded(user.FieldCanViewAssignedAccounts)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1979,6 +2052,20 @@ func (u *UserUpsertOne) AddRpmLimit(v int) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetCanViewAssignedAccounts sets the "can_view_assigned_accounts" field.
+func (u *UserUpsertOne) SetCanViewAssignedAccounts(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetCanViewAssignedAccounts(v)
+	})
+}
+
+// UpdateCanViewAssignedAccounts sets the "can_view_assigned_accounts" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateCanViewAssignedAccounts() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateCanViewAssignedAccounts()
 	})
 }
 
@@ -2610,6 +2697,20 @@ func (u *UserUpsertBulk) AddRpmLimit(v int) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetCanViewAssignedAccounts sets the "can_view_assigned_accounts" field.
+func (u *UserUpsertBulk) SetCanViewAssignedAccounts(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetCanViewAssignedAccounts(v)
+	})
+}
+
+// UpdateCanViewAssignedAccounts sets the "can_view_assigned_accounts" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateCanViewAssignedAccounts() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateCanViewAssignedAccounts()
 	})
 }
 

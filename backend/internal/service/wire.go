@@ -17,6 +17,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// ProvideVisibleAccountService 提供普通用户只读账号视图服务（票据 05）。
+// 该服务只读取分配关系与脱敏身份，不参与调度、计费或账号写路径。
+func ProvideVisibleAccountService(repo VisibleAccountRepository) *VisibleAccountService {
+	return NewVisibleAccountService(repo)
+}
+
 func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, cfg *config.Config, redisClient *redis.Client) *GrokOAuthService {
 	svc := NewGrokOAuthService(proxyRepo, oauthClient, cfg)
 	// wire.go is depguard-exempt for redis; construct the Redis session store here.
@@ -936,6 +942,7 @@ var ProviderSet = wire.NewSet(
 	ProvideIdempotencyCleanupService,
 	NewRequestAuditReservationCleanupService,
 	ProvideScheduledTestService,
+	ProvideVisibleAccountService,
 	ProvideScheduledTestRunnerService,
 	NewGroupCapacityService,
 	NewChannelService,

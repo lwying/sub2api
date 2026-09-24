@@ -315,6 +315,9 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		users.POST("/batch-concurrency", h.Admin.User.BatchUpdateConcurrency)
 		users.POST("/batch-limits", h.Admin.User.BatchUpdateLimits)
 		users.GET("/:id/platform-quotas", h.Admin.User.GetUserPlatformQuotas)
+		// 普通用户只读账号视图的逐用户分配（默认关闭、默认零个）。
+		users.GET("/:id/account-view", h.Admin.User.GetAccountView)
+		users.PUT("/:id/account-view", h.Admin.User.UpdateAccountView)
 		users.PUT("/:id/platform-quotas", h.Admin.User.UpdateUserPlatformQuotas)
 		users.POST("/:id/platform-quotas/reset", h.Admin.User.ResetUserPlatformQuotaWindow)
 

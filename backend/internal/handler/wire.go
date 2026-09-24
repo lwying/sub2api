@@ -49,11 +49,14 @@ func ProvideAdminHandlers(
 	auditLogHandler *admin.AuditLogHandler,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
+	visibleAccountService *service.VisibleAccountService,
 	settingService *service.SettingService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetCodexTicketSettings(settingService)
+	// 普通用户只读账号视图的管理员分配入口（逐用户、默认关闭）。
+	userHandler.SetVisibleAccountService(visibleAccountService)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
@@ -179,6 +182,7 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 func ProvideHandlers(
 	authHandler *AuthHandler,
 	userHandler *UserHandler,
+	visibleAccountHandler *VisibleAccountHandler,
 	apiKeyHandler *APIKeyHandler,
 	usageHandler *UsageHandler,
 	redeemHandler *RedeemHandler,
@@ -205,6 +209,7 @@ func ProvideHandlers(
 	return &Handlers{
 		Auth:             authHandler,
 		User:             userHandler,
+		VisibleAccount:   visibleAccountHandler,
 		APIKey:           apiKeyHandler,
 		Usage:            usageHandler,
 		Redeem:           redeemHandler,
@@ -232,6 +237,7 @@ var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	NewAuthHandler,
 	NewUserHandler,
+	NewVisibleAccountHandler,
 	NewAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,

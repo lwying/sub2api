@@ -8,6 +8,10 @@ const (
 	StatusUnused   = "unused"
 	StatusUsed     = "used"
 	StatusExpired  = "expired"
+	// StatusInactive 是账号编辑器侧沿用的「手动停用」取值，语义等同于 disabled
+	// （历史数据与编辑器都使用它）。它与 error／expired 这类故障或过期状态不同：
+	// 后者不是管理员手动禁用，客户只读视图仍应展示。
+	StatusInactive = "inactive"
 )
 
 // Role constants
