@@ -237,11 +237,13 @@ async function loadAccounts(): Promise<void> {
     pagination.value.total = page.total
     pagination.value.page_size = page.page_size
   } catch (error) {
+    // 过期响应不得据此判定权限：更新的请求若已成功，说明能力仍在。
+    // 当前代次仍以服务端为准，403 照常按撤销处理（fail-closed）。
+    if (generation !== listGeneration) return
     if (isAssignedAccountsAccessDenied(error)) {
       await handleAccessRevoked()
       return
     }
-    if (generation !== listGeneration) return
     appStore.showError(extractApiErrorMessage(error, t('assignedAccounts.loadFailed')))
   } finally {
     if (generation === listGeneration) {
@@ -269,12 +271,13 @@ async function loadDetail(id: number): Promise<void> {
     if (generation !== detailGeneration) return
     detail.value = account
   } catch (error) {
+    // 过期响应不得关闭当前详情或把用户踢出页面；当前代次的 403 仍按撤销处理。
+    if (generation !== detailGeneration) return
     if (isAssignedAccountsAccessDenied(error)) {
       closeDetail()
       await handleAccessRevoked()
       return
     }
-    if (generation !== detailGeneration) return
     // 未分配、已禁用、已删除与不存在都返回同一个 404：统一提示，不区分存在性。
     // 只有 404 表示「不可见」；网络或服务端故障如实报错，不能谎称无权查看。
     if (isAssignedAccountNotFound(error)) {

@@ -200,9 +200,14 @@ const candidatesFailed = ref(false)
 
 /**
  * 当前打开的授权请求代次。切换用户或重新打开时递增，晚到的响应一律丢弃，
- * 避免 A 用户的响应覆盖 B 用户的界面状态。
+ * 避免 A 用户的响应覆盖 B 用户的界面状态。保存也据此判断回显是否属于当前会话。
  */
 let requestGeneration = 0
+/**
+ * 候选列表的搜索代次。搜索词变化或重新打开时递增，
+ * 使旧搜索词的第 2 页响应无法追加到新搜索的候选上、也无法改写页数与总数。
+ */
+let candidateGeneration = 0
 /** 只作为详情缓存：account_ids 是权威集合，缺少详情的 id 仍要保留。 */
 const accountDetails = new Map<number, GrantAccount>()
 let loadMoreController: AbortController | null = null
@@ -335,7 +340,9 @@ function stopCandidateRequests(): void {
 
 /** 每个用户/每次打开都从干净状态开始：GET 成功前不展示、也不允许沿用任何旧授权。 */
 function resetForNewUser(): void {
+  // 代次同时作废在途的读取、保存回显与候选分页。
   requestGeneration += 1
+  candidateGeneration += 1
   loadedUserId.value = null
   loadFailed.value = false
   loadMoreController?.abort()
@@ -350,6 +357,8 @@ function resetForNewUser(): void {
   candidateTotal.value = 0
   candidatesLoading.value = false
   candidatesFailed.value = false
+  // 上一次会话的保存属于旧代次，不能让它继续禁用新会话的保存按钮。
+  submitting.value = false
 }
 
 const candidateSearch = useKeyedDebouncedSearch<PaginatedResponse<AccountListItem>>({
@@ -377,6 +386,11 @@ const candidateSearch = useKeyedDebouncedSearch<PaginatedResponse<AccountListIte
 })
 
 function handleSearchInput(): void {
+  // 搜索词变化即作废在途的 load-more：否则旧搜索词的第 2 页会追加到新搜索结果之后，
+  // 并把页数与总数改写成旧搜索词的值。
+  candidateGeneration += 1
+  loadMoreController?.abort()
+  loadMoreController = null
   candidatesLoading.value = true
   candidatesFailed.value = false
   candidateSearch.trigger(CANDIDATE_KEY, search.value)
@@ -394,13 +408,16 @@ async function loadMoreCandidates(): Promise<void> {
   const controller = new AbortController()
   loadMoreController = controller
   const nextPage = candidatePage.value + 1
+  // 响应只有仍属于当前搜索代次时才允许写入，避免旧搜索词的分页污染新结果。
+  const generation = candidateGeneration
+  const isCurrent = () => !controller.signal.aborted && generation === candidateGeneration
   candidatesLoading.value = true
 
   try {
     const page = await adminAPI.accounts.list(nextPage, CANDIDATE_PAGE_SIZE, filters, {
       signal: controller.signal
     })
-    if (controller.signal.aborted) return
+    if (!isCurrent()) return
 
     const known = new Set(candidates.value.map((candidate) => candidate.id))
     candidates.value = [
@@ -411,10 +428,11 @@ async function loadMoreCandidates(): Promise<void> {
     candidateTotal.value = page.total
     candidatesFailed.value = false
   } catch (error) {
-    if (controller.signal.aborted) return
+    if (!isCurrent()) return
     candidatesFailed.value = true
   } finally {
-    if (!controller.signal.aborted) {
+    // 已被新搜索作废的请求不得清除新搜索的加载状态。
+    if (isCurrent()) {
       candidatesLoading.value = false
     }
   }
@@ -482,6 +500,20 @@ async function load(): Promise<void> {
   candidateSearch.trigger(CANDIDATE_KEY, '')
 }
 
+/**
+ * 保存回显只在「发起保存的那次会话仍然有效」时生效：
+ * 弹窗仍打开、仍是同一个用户、该用户的授权已成功读取，且期间没有被关闭重开。
+ * 仅比较 userId 无法区分「关闭后又为同一用户重新打开」的情形。
+ */
+function isSameSaveSession(userId: number, generation: number): boolean {
+  return (
+    props.show &&
+    props.user?.id === userId &&
+    loadedUserId.value === userId &&
+    generation === requestGeneration
+  )
+}
+
 async function handleSave(): Promise<void> {
   if (!props.user || !canSave.value) {
     return
@@ -489,6 +521,7 @@ async function handleSave(): Promise<void> {
 
   const userId = props.user.id
   const submittedIds = assigned.value.map((account) => account.id)
+  const generation = requestGeneration
   submitting.value = true
 
   try {
@@ -497,7 +530,7 @@ async function handleSave(): Promise<void> {
       enabled: enabled.value,
       account_ids: submittedIds
     })
-    if (userId !== props.user?.id) {
+    if (!isSameSaveSession(userId, generation)) {
       return
     }
     // 响应缺少账号详情时沿用已有详情与提交的 id，避免界面把授权显示成空。
@@ -506,9 +539,15 @@ async function handleSave(): Promise<void> {
     emit('success')
     emit('close')
   } catch (error) {
+    if (!isSameSaveSession(userId, generation)) {
+      return
+    }
     appStore.showError(extractApiErrorMessage(error, t('assignedAccounts.admin.saveFailed')))
   } finally {
-    submitting.value = false
+    // 旧会话的保存不得解除新会话的保存中状态。
+    if (generation === requestGeneration) {
+      submitting.value = false
+    }
   }
 }
 </script>

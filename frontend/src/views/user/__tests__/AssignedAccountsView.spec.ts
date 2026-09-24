@@ -103,10 +103,12 @@ const mountView = () =>
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
+    reject = rejectPromise
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function accountPage(items: AssignedAccount[], page = 1) {
@@ -358,6 +360,69 @@ describe('AssignedAccountsView', () => {
     slowDetail.resolve(hostileAccount({ id: 7, email_masked: 's***t@example.com' }))
     await flushPromises()
 
+    expect(wrapper.get('[data-test="detail-email"]').text()).toBe('o***r@example.com')
+    wrapper.unmount()
+  })
+
+  // --- 过期的 403：能力已被更新的成功响应证明仍在，不得据此把用户踢出页面 ---
+
+  it('keeps the reader on the page when a superseded list request answers 403', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [hostileAccount({ id: 7 })],
+      total: 40,
+      page: 1,
+      page_size: 20,
+      pages: 2
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 第 2 页挂起，用户继续翻到第 3 页并先拿到成功结果。
+    const slowPageTwo = createDeferred<ReturnType<typeof accountPage>>()
+    listAccounts.mockImplementationOnce(() => slowPageTwo.promise)
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await flushPromises()
+
+    listAccounts.mockResolvedValueOnce(accountPage([hostileAccount({ id: 9 })], 3))
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="row-9"]').exists()).toBe(true)
+
+    // 过期的第 2 页返回 403：更新的请求已经成功，说明能力仍在。
+    slowPageTwo.reject({ status: 403, code: 'ACCOUNT_VIEW_DISABLED' })
+    await flushPromises()
+
+    expect(routerReplace).not.toHaveBeenCalled()
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="row-9"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps the opened detail when a superseded detail request answers 403', async () => {
+    listAccounts.mockResolvedValue(accountPage([hostileAccount({ id: 7 }), hostileAccount({ id: 8 })]))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 账号 7 的详情挂起，用户改看账号 8 并先拿到成功结果。
+    const slowDetail = createDeferred<ReturnType<typeof hostileAccount>>()
+    getAccount.mockImplementationOnce(() => slowDetail.promise)
+    await wrapper.findAll('[data-test="view-detail"]')[0].trigger('click')
+    await flushPromises()
+
+    getAccount.mockResolvedValueOnce(hostileAccount({ id: 8, email_masked: 'o***r@example.com' }))
+    await wrapper.findAll('[data-test="view-detail"]')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="detail-email"]').text()).toBe('o***r@example.com')
+
+    slowDetail.reject({ status: 403, code: 'ACCOUNT_VIEW_DISABLED' })
+    await flushPromises()
+
+    expect(routerReplace).not.toHaveBeenCalled()
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="detail-dialog"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="detail-email"]').text()).toBe('o***r@example.com')
     wrapper.unmount()
   })

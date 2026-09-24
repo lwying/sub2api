@@ -41,6 +41,7 @@ var ErrAccountViewUserNotFound = infraerrors.New(404, "USER_NOT_FOUND",
 
 // AssignedVisibleAccount 是管理员视角下的已分配账号摘要。
 // 仅供管理员接口使用（含真实名称与状态），普通用户响应绝不包含这些字段。
+// 它是管理员界面 account_ids 里「有详情」的那部分：已被软删除的分配只有 id。
 type AssignedVisibleAccount struct {
 	ID       int64
 	Name     string
@@ -55,15 +56,28 @@ type AssignedVisibleAccount struct {
 // 能力开关已开启、存在显式分配关系、账号未软删除且未被手动禁用。
 // 授权撤销、用户禁用与账号禁用都必须在下一个请求即生效，不依赖缓存。
 type VisibleAccountRepository interface {
-	// GetAccountViewEnabled 读取用户的能力开关；用户不存在或已软删除时返回 false。
+	// GetAccountViewEnabled 读取用户的能力开关；用户不存在、已软删除或已禁用时
+	// 返回 false（与列表／详情的门禁同口径）。
 	GetAccountViewEnabled(ctx context.Context, userID int64) (bool, error)
+	// GetStoredAccountViewEnabled 读取用户「存储」的能力开关（管理员视角）：
+	// 已禁用但未软删除的用户也返回真实存储值，避免管理员界面把 true 显示成 false
+	// 并在原样保存时误关闭能力。用户不存在或已软删除时返回 ErrAccountViewUserNotFound。
+	GetStoredAccountViewEnabled(ctx context.Context, userID int64) (bool, error)
 	// UpdateAccountView 在单个事务内更新能力开关与分配集合。
 	// enabled / accountIDs 为 nil 表示该项保持不变，accountIDs 为空切片表示清空。
-	// 任一 account id 不存在（含软删除）时返回 ErrUnknownVisibleAccount，
-	// 且开关与分配都不落库（整体回滚）；用户不存在时返回 ErrAccountViewUserNotFound。
+	// 「新分配」的 account id 不存在（含软删除）时返回 ErrUnknownVisibleAccount，
+	// 且开关与分配都不落库（整体回滚）；已在分配关系里的 id 允许保留（即使账号
+	// 已被软删除），保证管理员界面原样保存不会撤销既有分配。
+	// 用户不存在或已软删除时返回 ErrAccountViewUserNotFound。
+	// 同一用户的并发替换必须串行化，且保留的分配行不得改写 granted_by/created_at。
 	UpdateAccountView(ctx context.Context, userID int64, enabled *bool, accountIDs *[]int64, grantedBy *int64) error
-	// ListAssignedAccountSummaries 返回该用户当前全部分配（含手动禁用账号），
-	// 供管理员界面撤销用；不要求能力开关开启。
+	// ListAssignedAccountIDs 返回该用户全部已存储的分配 id（升序，含对应账号已
+	// 软删除的分配）：管理员界面的 account_ids 是权威集合，GET 与 PUT 都按整份
+	// 集合替换，缺 id 等于在原样保存时静默撤销关系。
+	ListAssignedAccountIDs(ctx context.Context, userID int64) ([]int64, error)
+	// ListAssignedAccountSummaries 返回该用户当前全部分配的账号详情（含手动禁用），
+	// 供管理员界面撤销用；不要求能力开关开启。已被软删除的账号没有详情，
+	// 它只出现在 ListAssignedAccountIDs 里。
 	ListAssignedAccountSummaries(ctx context.Context, userID int64) ([]AssignedVisibleAccount, error)
 	// ListVisibleAccounts 返回当前可见账号（分页）。search/platform 过滤只作用于
 	// 已分配且未禁用的集合内部，不会扩大或探测范围。
@@ -103,6 +117,10 @@ type VisibleAccountPage struct {
 }
 
 // AdminAccountView 是管理员分配界面所需的完整视图。
+//
+// AccountIDs 是权威集合：包含该用户全部已存储的分配，含对应账号已被软删除、
+// 因而没有出现在 Accounts 里的分配。界面对缺失详情的 id 保留占位条目，
+// 保存时原样回传整份集合。
 type AdminAccountView struct {
 	UserID     int64
 	Enabled    bool
@@ -179,12 +197,24 @@ func (s *VisibleAccountService) Get(ctx context.Context, userID, accountID int64
 	return BuildVisibleAccountView(account), nil
 }
 
-// AdminView 返回管理员视角的分配状态（含禁用账号，便于撤销）。
+// AdminView 返回管理员视角的分配状态（含手动禁用账号，便于撤销）。
+//
+// 与面向普通用户的读取有两处刻意的差别：
+//   - 开关读「存储值」而不是门禁值：已禁用用户也如实显示，界面原样保存时不会把
+//     存储的 true 写成 false；
+//   - account_ids 是完整权威集合，包含对应账号已软删除、因而没有详情的分配，
+//     否则界面原样保存会静默撤销那条关系。
+//
+// 用户不存在或已软删除时返回 ErrAccountViewUserNotFound（与 AdminUpdate 同口径）。
 func (s *VisibleAccountService) AdminView(ctx context.Context, userID int64) (AdminAccountView, error) {
 	if s == nil || s.repo == nil {
 		return AdminAccountView{}, ErrVisibleAccountNotFound
 	}
-	enabled, err := s.repo.GetAccountViewEnabled(ctx, userID)
+	enabled, err := s.repo.GetStoredAccountViewEnabled(ctx, userID)
+	if err != nil {
+		return AdminAccountView{}, err
+	}
+	accountIDs, err := s.repo.ListAssignedAccountIDs(ctx, userID)
 	if err != nil {
 		return AdminAccountView{}, err
 	}
@@ -192,7 +222,7 @@ func (s *VisibleAccountService) AdminView(ctx context.Context, userID int64) (Ad
 	if err != nil {
 		return AdminAccountView{}, err
 	}
-	return adminAccountView(userID, enabled, assigned), nil
+	return adminAccountView(userID, enabled, accountIDs, assigned), nil
 }
 
 // AdminUpdate 原子地更新能力开关与分配集合。
@@ -220,13 +250,20 @@ func (s *VisibleAccountService) AdminUpdate(
 	return s.AdminView(ctx, userID)
 }
 
-func adminAccountView(userID int64, enabled bool, assigned []AssignedVisibleAccount) AdminAccountView {
-	ids := make([]int64, 0, len(assigned))
+// adminAccountView 组装管理员视图。
+//
+// accountIDs 是权威集合（含没有详情的分配），accounts 是其中可读账号的详情，
+// 两者长度可以不同：界面按 id 保留占位条目，保存时原样回传整份集合。
+func adminAccountView(
+	userID int64,
+	enabled bool,
+	accountIDs []int64,
+	assigned []AssignedVisibleAccount,
+) AdminAccountView {
+	ids := make([]int64, 0, len(accountIDs))
+	ids = append(ids, accountIDs...)
 	accounts := make([]AssignedVisibleAccount, 0, len(assigned))
-	for _, item := range assigned {
-		ids = append(ids, item.ID)
-		accounts = append(accounts, item)
-	}
+	accounts = append(accounts, assigned...)
 	return AdminAccountView{
 		UserID:     userID,
 		Enabled:    enabled,

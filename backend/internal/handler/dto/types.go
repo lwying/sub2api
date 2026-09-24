@@ -34,6 +34,13 @@ type User struct {
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
 	RPMLimit int `json:"rpm_limit"`
 
+	// CanViewAssignedAccounts 是该普通用户的「已分配账号只读查看」能力开关，
+	// 默认 false。登录、注册与 2FA 完成的认证响应也下发该字段，使前端在登录后
+	// 立即（无需等待 /auth/me 或缓存刷新）就能决定账号管理入口是否可用。
+	// 它不改变 API Key、模型调用、个人用量或管理员权限；管理员菜单的可见性
+	// 由前端按 role 判断，不依赖本字段。
+	CanViewAssignedAccounts bool `json:"can_view_assigned_accounts"`
+
 	APIKeys       []APIKey           `json:"api_keys,omitempty"`
 	Subscriptions []UserSubscription `json:"subscriptions,omitempty"`
 }

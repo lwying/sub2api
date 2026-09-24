@@ -75,6 +75,33 @@ function emptyCandidates() {
   return { items: [], total: 0, page: 1, page_size: 20, pages: 0 }
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function candidatePage(ids: number[], options: { total?: number; page?: number } = {}) {
+  const items = ids.map((id) => ({
+    id,
+    name: `account-${id}`,
+    platform: 'openai',
+    type: 'oauth',
+    status: 'active'
+  }))
+  return {
+    items,
+    total: options.total ?? items.length,
+    page: options.page ?? 1,
+    page_size: 20,
+    pages: 1
+  }
+}
+
 describe('UserAssignedAccountsModal', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -299,6 +326,120 @@ describe('UserAssignedAccountsModal', () => {
     wrapper.unmount()
   })
 
+  // --- 同一用户关闭再打开：上一次会话的保存回显不得作用到新会话 ---
+
+  it('drops a save echo that lands after the dialog was closed and reopened for the same user', async () => {
+    const slowSave = createDeferred<Record<string, unknown>>()
+    updateAccountView.mockImplementationOnce(() => slowSave.promise)
+
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    // 旧会话提交了 [11, 12] 的保存，响应挂起。
+    await wrapper.get('[data-test="add-12"]').trigger('click')
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+    expect(updateAccountView).toHaveBeenCalledWith(42, { enabled: true, account_ids: [11, 12] })
+
+    // 关闭再打开同一个用户：新会话的 GET 先返回，仍是服务端的 [11]。
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(getAccountView).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="assigned-12"]').exists()).toBe(false)
+
+    // 旧保存的回显姗姗来迟：不得改写新会话，也不得替新会话关闭弹窗。
+    slowSave.resolve({ user_id: 42, enabled: true, account_ids: [11, 12], accounts: [] })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="assigned-12"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="grant-dialog"]').exists()).toBe(true)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(showSuccess).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not apply a save echo after the dialog was closed', async () => {
+    const slowSave = createDeferred<Record<string, unknown>>()
+    updateAccountView.mockImplementationOnce(() => slowSave.promise)
+
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    await wrapper.get('[data-test="add-12"]').trigger('click')
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+
+    slowSave.resolve({ user_id: 42, enabled: true, account_ids: [11, 12], accounts: [] })
+    await flushPromises()
+
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('success')).toBeUndefined()
+    expect(showSuccess).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('lets a save of the reopened session win over the previous session’s late save', async () => {
+    const slowOldSave = createDeferred<Record<string, unknown>>()
+    updateAccountView.mockImplementationOnce(() => slowOldSave.promise)
+
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    // 旧会话的保存挂起（[11, 12]）。
+    await wrapper.get('[data-test="add-12"]').trigger('click')
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    // 关闭再打开同一用户，新会话重新保存并先返回。
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    updateAccountView.mockResolvedValueOnce({
+      user_id: 42,
+      enabled: true,
+      account_ids: [11, 12],
+      accounts: []
+    })
+    await wrapper.get('[data-test="add-12"]').trigger('click')
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    expect(updateAccountView).toHaveBeenLastCalledWith(42, { enabled: true, account_ids: [11, 12] })
+    expect(wrapper.get('[data-test="assigned-12"]').exists()).toBe(true)
+
+    // 旧会话的保存姗姗来迟，带着与新会话不同的集合：必须被丢弃。
+    slowOldSave.resolve({ user_id: 42, enabled: true, account_ids: [99], accounts: [] })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="assigned-99"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="assigned-12"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    // 只有新会话那次保存产生了成功提示与关闭事件。
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   // --- 候选账号：远端搜索 + 服务端分页 ---
 
   it('searches candidates on the server instead of filtering a first page locally', async () => {
@@ -366,6 +507,71 @@ describe('UserAssignedAccountsModal', () => {
     expect(wrapper.get('[data-test="candidate-21"]').text()).toContain('twenty-first')
     expect(wrapper.get('[data-test="candidate-1"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="load-more-candidates"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('drops a page-two response of the previous keyword when the search changes mid-flight', async () => {
+    // 旧关键词：首页 20 条、总数 40，因此还有第 2 页。
+    listAccounts.mockResolvedValueOnce({
+      items: Array.from({ length: 20 }, (_, index) => ({
+        id: index + 1,
+        name: `old-page-one-${index + 1}`,
+        platform: 'openai',
+        type: 'oauth',
+        status: 'active'
+      })),
+      total: 40,
+      page: 1,
+      page_size: 20,
+      pages: 2
+    })
+
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    // 旧关键词的第 2 页挂起。
+    const slowOldPageTwo = createDeferred<ReturnType<typeof candidatePage>>()
+    listAccounts.mockImplementationOnce(() => slowOldPageTwo.promise)
+    await wrapper.get('[data-test="load-more-candidates"]').trigger('click')
+    await flushPromises()
+
+    // 用户改搜 'B'：新关键词的第 1 页先返回。
+    listAccounts.mockResolvedValueOnce(candidatePage([201], { total: 21 }))
+    await wrapper.get('[data-test="account-search"]').setValue('B')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      20,
+      { lite: '1', search: 'B' },
+      expect.anything()
+    )
+    expect(wrapper.get('[data-test="candidate-201"]').exists()).toBe(true)
+
+    // 旧关键词的第 2 页姗姗来迟：既不能追加进候选，也不能改写页数与总数。
+    slowOldPageTwo.resolve(candidatePage([999], { total: 40, page: 2 }))
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="candidate-999"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="candidate-1"]').exists()).toBe(false)
+
+    // 新关键词的第 2 页必须是它自己的第 2 页，而不是被旧响应顶到第 3 页。
+    listAccounts.mockResolvedValueOnce(candidatePage([202], { total: 21, page: 2 }))
+    await wrapper.get('[data-test="load-more-candidates"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      2,
+      20,
+      { lite: '1', search: 'B' },
+      expect.anything()
+    )
+    expect(wrapper.get('[data-test="candidate-202"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="candidate-201"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="candidate-999"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

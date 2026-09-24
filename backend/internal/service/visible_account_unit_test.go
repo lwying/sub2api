@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,6 +49,25 @@ func (f *visibleAccountRepoFake) GetAccountViewEnabled(_ context.Context, userID
 		return false, nil
 	}
 	return f.enabled[userID], nil
+}
+
+// GetStoredAccountViewEnabled 复刻管理员口径：只要求用户存在且未软删除，
+// 已禁用用户仍返回其存储值（面向用户的读取则 fail-closed）。
+func (f *visibleAccountRepoFake) GetStoredAccountViewEnabled(_ context.Context, userID int64) (bool, error) {
+	if !f.userExists[userID] {
+		return false, ErrAccountViewUserNotFound
+	}
+	return f.enabled[userID], nil
+}
+
+// ListAssignedAccountIDs 返回全部已存储的分配 id（升序，含对应账号已不可见的分配）。
+func (f *visibleAccountRepoFake) ListAssignedAccountIDs(_ context.Context, userID int64) ([]int64, error) {
+	if !f.userExists[userID] {
+		return []int64{}, nil
+	}
+	out := append([]int64{}, f.assigned[userID]...)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
 
 func (f *visibleAccountRepoFake) UpdateAccountView(
@@ -175,7 +195,13 @@ func TestVisibleAccountManuallyDisabledStatuses(t *testing.T) {
 	t.Parallel()
 
 	// 手动禁用：历史 disabled 与编辑器 inactive（含大小写/空白差异）。
-	for _, status := range []string{"disabled", "inactive", "DISABLED", "Inactive", " disabled "} {
+	// 空白口径与 strings.TrimSpace 一致（SQL 谓词必须同集合，见仓储层实现）：
+	// 制表符、换行、NBSP、全角空格都不能绕过禁用判定。
+	for _, status := range []string{
+		"disabled", "inactive", "DISABLED", "Inactive", " disabled ",
+		"\tdisabled\t", "\nInactive\r", "\v\fDISABLED\v\f",
+		"\u00a0disabled", "\u0085inactive", "\u3000Disabled", "\u1680Disabled",
+	} {
 		require.True(t, accountManuallyDisabled(status), "status %q must be hidden", status)
 	}
 
@@ -183,6 +209,80 @@ func TestVisibleAccountManuallyDisabledStatuses(t *testing.T) {
 	for _, status := range []string{"active", "error", "expired", "", "rate_limited", "overloaded"} {
 		require.False(t, accountManuallyDisabled(status), "status %q must stay visible", status)
 	}
+
+	// 零宽空格不是空白：两侧（Go 与 SQL）都不得把它当成禁用变体，
+	// 否则会隐藏一个仍处于调度中的账号。
+	require.False(t, accountManuallyDisabled("\u200bdisabled"))
+}
+
+// TestVisibleAccountServiceAdminViewKeepsStoredFlag 验证管理员视图与用户视图的
+// 读取口径分工：面向用户的读取对已禁用用户 fail-closed，而管理员视图必须读
+// 「存储值」，否则界面会把存储的 true 显示成 false，管理员原样保存一次就把
+// 能力真正关掉（一次误操作即永久撤销）。不存在的用户 GET 与 PUT 同为 404。
+func TestVisibleAccountServiceAdminViewKeepsStoredFlag(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newVisibleAccountRepoFake()
+	repo.addUser(1, true, false) // 已禁用用户，存储的查看能力为 true
+	repo.addAccount(&Account{ID: 31, Name: "alpha", Platform: "anthropic", Type: "oauth", Status: StatusActive})
+	repo.assign(1, 31)
+	svc := NewVisibleAccountService(repo)
+
+	// 面向普通用户：已禁用的用户即使存储为 true 也必须 fail-closed。
+	_, err := svc.List(ctx, 1, VisibleAccountFilter{})
+	require.ErrorIs(t, err, ErrAccountViewDisabled)
+
+	// 面向管理员：读存储值，不得把 true 显示成 false。
+	view, err := svc.AdminView(ctx, 1)
+	require.NoError(t, err)
+	require.True(t, view.Enabled, "已禁用用户的管理员视图必须显示存储的开关值")
+	require.Equal(t, []int64{31}, view.AccountIDs)
+
+	// 管理员界面「原样保存」（GET 的 enabled 与 account_ids 原封回传）不得关闭能力。
+	saved, err := svc.AdminUpdate(ctx, 1, &view.Enabled, &view.AccountIDs, nil)
+	require.NoError(t, err)
+	require.True(t, saved.Enabled, "原样保存不得把存储的 true 改写成 false")
+	require.Equal(t, []int64{31}, saved.AccountIDs)
+
+	// 用户仍然看不到账号：管理员口径没有放宽用户侧可见范围。
+	require.Empty(t, repo.visibleAccounts(1))
+
+	// 不存在的用户：GET 与 PUT 同为 USER_NOT_FOUND。
+	_, err = svc.AdminView(ctx, 999)
+	require.ErrorIs(t, err, ErrAccountViewUserNotFound)
+	_, err = svc.AdminUpdate(ctx, 999, &view.Enabled, nil, nil)
+	require.ErrorIs(t, err, ErrAccountViewUserNotFound)
+}
+
+// TestVisibleAccountServiceAdminAccountIDsKeepInvisibleAssignments 验证管理员视图的
+// account_ids 是完整权威集合：只要分配行还在（例如对应账号已被手动禁用或已软删除），
+// id 就不得从 account_ids 消失——否则管理员在界面上原样保存会静默撤销这条关系。
+func TestVisibleAccountServiceAdminAccountIDsKeepInvisibleAssignments(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newVisibleAccountRepoFake()
+	repo.addUser(1, true, true)
+	// 41 正常可见；42 已手动禁用（用户看不到，但分配行仍在）。
+	repo.addAccount(&Account{ID: 41, Name: "live", Platform: "openai", Type: "apikey", Status: StatusActive})
+	repo.addAccount(&Account{ID: 42, Name: "hidden", Platform: "openai", Type: "apikey", Status: StatusDisabled})
+	repo.assign(1, 42, 41)
+	// 43 已被软删除：连详情都读不到（仓储的详情列表会跳过它），但分配行仍在。
+	repo.addAccount(&Account{ID: 43, Name: "deleted", Platform: "openai", Type: "apikey", Status: StatusActive})
+	repo.assign(1, 43, 42, 41)
+	delete(repo.accounts, 43)
+	svc := NewVisibleAccountService(repo)
+
+	page, err := svc.List(ctx, 1, VisibleAccountFilter{})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1, "用户只看到未禁用的分配")
+
+	view, err := svc.AdminView(ctx, 1)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{41, 42, 43}, view.AccountIDs,
+		"管理员集合必须包含没有详情的分配 id，否则界面原样保存会静默撤销它")
+	require.Len(t, view.Accounts, 2, "详情只覆盖仍可读的账号")
 }
 
 func TestBuildVisibleAccountViewExcludesSensitiveFields(t *testing.T) {

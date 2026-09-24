@@ -33,6 +33,10 @@ func UserFromServiceShallow(u *service.User) *User {
 		TotalRecharged:             u.TotalRecharged,
 		RPMLimit:                   u.RPMLimit,
 		DeletedAt:                  u.DeletedAt,
+		// 登录、注册与 2FA 响应复用的正是这个映射，缺少该字段会让 /keys
+		// 深链在登录后 60s 内一直判定为「无查看资格」。值直接来自用户行，
+		// 与 /auth/me 的 profile 响应保持同一事实来源。
+		CanViewAssignedAccounts: u.CanViewAssignedAccounts,
 	}
 }
 

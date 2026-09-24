@@ -35,6 +35,16 @@ func (s *routesVisibleAccountRepoStub) GetAccountViewEnabled(_ context.Context, 
 	return s.enabled[userID], nil
 }
 
+// GetStoredAccountViewEnabled 与用户口径在此 stub 里同值：本文件只验证路由与
+// 鉴权注册，行级语义由 service / repository 的测试覆盖。
+func (s *routesVisibleAccountRepoStub) GetStoredAccountViewEnabled(_ context.Context, userID int64) (bool, error) {
+	return s.enabled[userID], nil
+}
+
+func (s *routesVisibleAccountRepoStub) ListAssignedAccountIDs(_ context.Context, userID int64) ([]int64, error) {
+	return append([]int64{}, s.assigned[userID]...), nil
+}
+
 func (s *routesVisibleAccountRepoStub) UpdateAccountView(
 	_ context.Context,
 	userID int64,

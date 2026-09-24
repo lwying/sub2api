@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 type visibleAccountHTTPRepoFake struct {
 	enabled     map[int64]bool
 	active      map[int64]bool
+	softDeleted map[int64]bool
 	assigned    map[int64][]int64
 	accounts    map[int64]*service.Account
 	lastGrantBy map[int64]*int64
@@ -36,6 +38,7 @@ func newVisibleAccountHTTPRepoFake() *visibleAccountHTTPRepoFake {
 	return &visibleAccountHTTPRepoFake{
 		enabled:     map[int64]bool{},
 		active:      map[int64]bool{},
+		softDeleted: map[int64]bool{},
 		assigned:    map[int64][]int64{},
 		accounts:    map[int64]*service.Account{},
 		lastGrantBy: map[int64]*int64{},
@@ -47,15 +50,50 @@ func (f *visibleAccountHTTPRepoFake) addUser(id int64, enabled bool, active bool
 	f.active[id] = active
 }
 
+// markSoftDeleted 把用户标记为已软删除：对普通用户与管理员读取都等同不存在。
+func (f *visibleAccountHTTPRepoFake) markSoftDeleted(id int64) {
+	f.softDeleted[id] = true
+}
+
 func (f *visibleAccountHTTPRepoFake) addAccount(account *service.Account) {
 	f.accounts[account.ID] = account
 }
 
+func (f *visibleAccountHTTPRepoFake) assign(userID int64, accountIDs ...int64) {
+	f.assigned[userID] = append([]int64{}, accountIDs...)
+}
+
+// exists 表示用户行仍在（未软删除）；active[id] 只是其状态值。
+func (f *visibleAccountHTTPRepoFake) exists(userID int64) bool {
+	if _, ok := f.active[userID]; !ok {
+		return false
+	}
+	return !f.softDeleted[userID]
+}
+
 func (f *visibleAccountHTTPRepoFake) GetAccountViewEnabled(_ context.Context, userID int64) (bool, error) {
-	if !f.active[userID] {
+	if !f.exists(userID) || !f.active[userID] {
 		return false, nil
 	}
 	return f.enabled[userID], nil
+}
+
+// GetStoredAccountViewEnabled 复刻管理员口径：只要求用户行存在且未软删除，
+// 已禁用用户仍返回存储值。
+func (f *visibleAccountHTTPRepoFake) GetStoredAccountViewEnabled(_ context.Context, userID int64) (bool, error) {
+	if !f.exists(userID) {
+		return false, service.ErrAccountViewUserNotFound
+	}
+	return f.enabled[userID], nil
+}
+
+func (f *visibleAccountHTTPRepoFake) ListAssignedAccountIDs(_ context.Context, userID int64) ([]int64, error) {
+	if !f.exists(userID) {
+		return []int64{}, nil
+	}
+	out := append([]int64{}, f.assigned[userID]...)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
 
 func (f *visibleAccountHTTPRepoFake) UpdateAccountView(
@@ -65,14 +103,24 @@ func (f *visibleAccountHTTPRepoFake) UpdateAccountView(
 	accountIDs *[]int64,
 	grantedBy *int64,
 ) error {
-	if _, ok := f.active[userID]; !ok {
+	if !f.exists(userID) {
 		return service.ErrAccountViewUserNotFound
 	}
 	if accountIDs != nil {
+		retained := map[int64]struct{}{}
+		for _, id := range f.assigned[userID] {
+			retained[id] = struct{}{}
+		}
 		for _, id := range *accountIDs {
-			if _, ok := f.accounts[id]; !ok {
-				return service.ErrUnknownVisibleAccount
+			if _, ok := f.accounts[id]; ok {
+				continue
 			}
+			// 已分配但已无详情的账号（例如被软删除）允许保留，
+			// 但不允许把它当成新分配。
+			if _, ok := retained[id]; ok {
+				continue
+			}
+			return service.ErrUnknownVisibleAccount
 		}
 	}
 	if enabled != nil {
@@ -86,6 +134,8 @@ func (f *visibleAccountHTTPRepoFake) UpdateAccountView(
 }
 
 func (f *visibleAccountHTTPRepoFake) ListAssignedAccountSummaries(_ context.Context, userID int64) ([]service.AssignedVisibleAccount, error) {
+	// 详情只覆盖仍可读的账号：已分配但已被软删除的账号仍留在
+	// ListAssignedAccountIDs 的权威集合里，这里没有详情可给（与真实仓储一致）。
 	out := []service.AssignedVisibleAccount{}
 	for _, id := range f.assigned[userID] {
 		account, ok := f.accounts[id]
@@ -128,7 +178,7 @@ func (f *visibleAccountHTTPRepoFake) GetVisibleAccount(_ context.Context, userID
 }
 
 func (f *visibleAccountHTTPRepoFake) visible(userID int64) []*service.Account {
-	if !f.active[userID] || !f.enabled[userID] {
+	if !f.exists(userID) || !f.active[userID] || !f.enabled[userID] {
 		return nil
 	}
 	out := []*service.Account{}
@@ -457,6 +507,93 @@ func TestVisibleAccountHTTP_AdminViewIncludesDisabledAssignments(t *testing.T) {
 	// 即便在管理员视图里也不返回凭据。
 	require.NotContains(t, rec.Body.String(), "sentinel-access-token")
 	require.NotContains(t, rec.Body.String(), "sk-sentinel")
+}
+
+// TestVisibleAccountHTTP_AdminViewKeepsStoredFlagAndRejectsDeletedUsers 验证管理员
+// GET 的口径：读存储的开关值（已禁用用户也如实返回，避免界面原样保存把 true
+// 改成 false），而用户不存在或已软删除时与 PUT 同为 404 USER_NOT_FOUND。
+func TestVisibleAccountHTTP_AdminViewKeepsStoredFlagAndRejectsDeletedUsers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newVisibleAccountHTTPRepoFake()
+	for _, account := range sentinelAccounts() {
+		repo.addAccount(account)
+	}
+	repo.addUser(1, true, false) // 已禁用用户，存储的查看能力为 true
+	engine := visibleAccountTestRouter(repo, nil)
+
+	// 已禁用（未软删除）用户：管理员 GET 如实返回存储值。
+	rec := doJSON(t, engine, http.MethodGet, "/api/v1/admin/users/1/account-view", "", 99)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"enabled":true`)
+
+	// 同一个用户面向自己的能力读取仍然 fail-closed。
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts", "", 1)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "ACCOUNT_VIEW_DISABLED")
+
+	// 不存在的用户：GET 与 PUT 同为 404 USER_NOT_FOUND。
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/admin/users/4242/account-view", "", 99)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "USER_NOT_FOUND")
+	rec = doJSON(t, engine, http.MethodPut, "/api/v1/admin/users/4242/account-view", `{"enabled":true}`, 99)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "USER_NOT_FOUND")
+
+	// 已软删除的用户：GET 与 PUT 同为 404，且不会写入任何数据。
+	repo.addUser(2, true, true)
+	repo.markSoftDeleted(2)
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/admin/users/2/account-view", "", 99)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "USER_NOT_FOUND")
+	rec = doJSON(t, engine, http.MethodPut, "/api/v1/admin/users/2/account-view", `{"enabled":false}`, 99)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "USER_NOT_FOUND")
+	require.True(t, repo.enabled[2], "被拒绝的 PUT 不得改动软删除用户的开关")
+}
+
+// TestVisibleAccountHTTP_AdminSaveRoundTripKeepsGrant 模拟管理员界面「打开即保存」：
+// GET 返回的 enabled 与 account_ids 原封回传，其中包含一条已无详情的分配
+// （对应账号已被软删除）。保存既不能关闭能力，也不能把这条分配关系撤销掉。
+func TestVisibleAccountHTTP_AdminSaveRoundTripKeepsGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newVisibleAccountHTTPRepoFake()
+	for _, account := range sentinelAccounts() {
+		repo.addAccount(account)
+	}
+	repo.addUser(1, true, true)
+	repo.assign(1, 10, 11)
+	// 11 号账号随后被软删除：分配行仍在，但界面上已无详情（不在候选集合里）。
+	delete(repo.accounts, 11)
+	engine := visibleAccountTestRouter(repo, nil)
+
+	rec := doJSON(t, engine, http.MethodGet, "/api/v1/admin/users/1/account-view", "", 99)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var payload struct {
+		Data struct {
+			Enabled    bool             `json:"enabled"`
+			AccountIDs []int64          `json:"account_ids"`
+			Accounts   []map[string]any `json:"accounts"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.True(t, payload.Data.Enabled)
+	require.ElementsMatch(t, []int64{10, 11}, payload.Data.AccountIDs,
+		"已软删除账号的 id 必须留在 account_ids 权威集合里")
+	require.Len(t, payload.Data.Accounts, 1, "已软删除账号没有详情可展示")
+
+	// 界面把 GET 的结果原样提交（account_ids 是权威集合，详情缺失的 id 也照传）。
+	rec = doJSON(t, engine, http.MethodPut, "/api/v1/admin/users/1/account-view",
+		`{"enabled":true,"account_ids":[10,11]}`, 99)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.ElementsMatch(t, []int64{10, 11}, repo.assigned[1], "原样保存不得撤销已软删除账号的分配")
+	require.True(t, repo.enabled[1], "原样保存不得关闭能力")
+
+	// 新分配一个已无详情的账号仍然被拒（保留 ≠ 允许新增）。
+	rec = doJSON(t, engine, http.MethodPut, "/api/v1/admin/users/1/account-view",
+		`{"enabled":true,"account_ids":[10,11,999]}`, 99)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "UNKNOWN_ACCOUNT")
+	require.ElementsMatch(t, []int64{10, 11}, repo.assigned[1], "失败的更新不得留下部分变更")
 }
 
 // TestTruncateSearchKeepsValidUTF8 覆盖多字节搜索词：按字节截断会切断 rune，
