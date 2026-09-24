@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -247,9 +250,9 @@ func TestOpenAIPassthroughStreamIncomplete_TerminalEventStaysComplete(t *testing
 	require.Equal(t, 7, result.usage.InputTokens)
 	requireOpenAIPassthroughAuditSkeletonIsDataFree(t, result.sseEvents)
 	requireOpenAIPassthroughAuditCompleteness(t, result, RequestAuditCaptureComplete, 15)
-	// 透传语义：上游 SSE 照常原样写出。
+	// 已刷出的终态事件足以结束流；上游随后发送的 [DONE] 不必等待。
 	require.Contains(t, recorder.Body.String(), openAIPassthroughIncompleteBodySentinel)
-	require.Contains(t, recorder.Body.String(), "data: [DONE]")
+	require.Contains(t, recorder.Body.String(), "data: "+openAIPassthroughIncompleteCompleted)
 }
 
 // 不完整标记必须一路传到 OpenAIForwardResult.StreamIncomplete：使用记录的请求
@@ -311,4 +314,134 @@ func TestOpenAIPassthroughStreamIncomplete_PropagatesToForwardResult(t *testing.
 	)
 	// 下游透传输出不受影响。
 	require.Contains(t, recorder.Body.String(), openAIPassthroughIncompleteBodySentinel)
+}
+
+// openAIPassthroughStalledBody 复现「上游在完整刷出终态事件后拖延关闭连接」：正文只交付
+// 一次，之后的读取一直阻塞，既不返回 EOF 也不返回错误，直到测试收尾放行。
+type openAIPassthroughStalledBody struct {
+	payload []byte
+	release chan struct{}
+	once    sync.Once
+	served  atomic.Bool
+}
+
+func newOpenAIPassthroughStalledBody(payload string) *openAIPassthroughStalledBody {
+	return &openAIPassthroughStalledBody{payload: []byte(payload), release: make(chan struct{})}
+}
+
+func (b *openAIPassthroughStalledBody) Read(data []byte) (int, error) {
+	if b.served.CompareAndSwap(false, true) {
+		return copy(data, b.payload), nil
+	}
+	<-b.release
+	return 0, io.EOF
+}
+
+func (b *openAIPassthroughStalledBody) Close() error { return nil }
+
+func (b *openAIPassthroughStalledBody) unblock() {
+	b.once.Do(func() { close(b.release) })
+}
+
+// runOpenAIPassthroughAttemptReadTest 在请求审计计数器上按生产顺序登记最近一次上游尝试
+// （状态/头/有正文 → 读取尚未完成），并把正文接到该尝试上，复现「提前 break → 调用方
+// 随后 Close 正文」的顺序。
+func runOpenAIPassthroughAttemptReadTest(
+	t *testing.T,
+	stalled *openAIPassthroughStalledBody,
+) (*openaiStreamingResultPassthrough, *httpattempt.Counter, error) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	counterCtx := WithRequestAuditHTTPAttemptCounter(c.Request.Context(), c)
+	attempt := httpattempt.StartAttempt(httpattempt.WithMetadata(counterCtx, httpattempt.Metadata{
+		AccountID: 1,
+		Model:     "gpt-5.4",
+		Protocol:  RequestAuditProtocolOpenAIResp,
+	}))
+	require.NotNil(t, attempt)
+	attempt.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+	counter, ok := httpattempt.FromContext(counterCtx)
+	require.True(t, ok, "请求审计计数器必须挂在 gin 上下文上")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+	}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"x-request-id": []string{"rid_passthrough_attempt_read"},
+		},
+		Body: httpattempt.NewResponseBody(stalled, attempt),
+	}
+	result, err := svc.handleStreamingResponsePassthrough(
+		context.Background(),
+		resp,
+		c,
+		&Account{ID: 1, Platform: PlatformOpenAI, Name: "passthrough-attempt-read"},
+		time.Now(),
+		"gpt-5.4",
+		"gpt-5.4",
+	)
+	// 生产路径由 forwardOpenAIPassthrough 的 defer 在 handler 返回后关闭上游正文。
+	require.NoError(t, resp.Body.Close())
+	return result, counter, err
+}
+
+// 上游在完整刷出终态事件后不发送 EOF 时，透传路径提前结束读取；最近一次尝试必须记成
+// 「已完整读取」，随后的正文 Close 不得把它降级成读取不完整。
+func TestOpenAIPassthroughStreamIncomplete_TerminalWithoutEOFKeepsAttemptReadComplete(t *testing.T) {
+	stalled := newOpenAIPassthroughStalledBody(openAIPassthroughTerminalStream())
+	t.Cleanup(stalled.unblock)
+
+	result, counter, err := runOpenAIPassthroughAttemptReadTest(t, stalled)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.streamIncomplete, "终态事件已完整刷出即视为完整流")
+	require.Equal(t, 7, result.usage.InputTokens)
+
+	got := counter.Metadata()
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].ResponseReadComplete)
+	require.True(t, *got[0].ResponseReadComplete,
+		"终态事件后的提前 Close 属于正常收尾，不得记成读取不完整")
+	require.Equal(t, int64(len(openAIPassthroughTerminalStream())), *got[0].ResponseBytes,
+		"服务层只补记读取结论，不碰体量")
+}
+
+// 缺终态事件的截断流不得补记读取结论：那条路径上正文是被截断的，不是正常收尾。
+func TestOpenAIPassthroughStreamIncomplete_MissingTerminalDoesNotMarkAttemptReadComplete(t *testing.T) {
+	var counter *httpattempt.Counter
+	result, _, err := runOpenAIPassthroughIncompleteTest(
+		t,
+		context.Background(),
+		io.NopCloser(strings.NewReader(openAIPassthroughPartialStream())),
+		func(c *gin.Context) {
+			counterCtx := WithRequestAuditHTTPAttemptCounter(c.Request.Context(), c)
+			attempt := httpattempt.StartAttempt(httpattempt.WithMetadata(counterCtx, httpattempt.Metadata{
+				AccountID: 1,
+				Model:     "gpt-5.4",
+				Protocol:  RequestAuditProtocolOpenAIResp,
+			}))
+			require.NotNil(t, attempt)
+			attempt.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+			counter, _ = httpattempt.FromContext(counterCtx)
+		},
+	)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing terminal event")
+	require.NotNil(t, result)
+	require.True(t, result.streamIncomplete)
+	require.NotNil(t, counter)
+	got := counter.Metadata()
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].ResponseReadComplete)
+	require.False(t, *got[0].ResponseReadComplete, "截断流不得补记成已完整读取")
 }

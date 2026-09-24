@@ -77,8 +77,8 @@ func readExecutableMigrationSQL(t *testing.T, name string) string {
 		if idx := strings.Index(line, "--"); idx >= 0 {
 			line = line[:idx]
 		}
-		builder.WriteString(line)
-		builder.WriteString("\n")
+		_, _ = builder.WriteString(line)
+		_, _ = builder.WriteString("\n")
 	}
 
 	return strings.Join(strings.Fields(builder.String()), " ")

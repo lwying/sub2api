@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -185,7 +187,9 @@ func TestRequestHeadersAreSanitizedAndMetadataSnapshotsAreIsolated(t *testing.T)
 	}, got[0].RequestHeaders)
 
 	headers.Set("X-Stainless-Lang", "changed")
-	got[0].RequestHeaders["X-Stainless-Lang"].([]string)[0] = "changed"
+	lang, ok := got[0].RequestHeaders["X-Stainless-Lang"].([]string)
+	require.True(t, ok, "X-Stainless-Lang must be recorded as []string")
+	lang[0] = "changed"
 	require.Equal(t, []string{"go", "rust"}, counter.Metadata()[0].RequestHeaders["X-Stainless-Lang"])
 }
 
@@ -424,4 +428,130 @@ func TestSanitizedHeaderMapReconstructionRedactsHistoricalFreeText(t *testing.T)
 		"X-Request-ID":        map[string]any{"present": true},
 		"X-Client-Request-ID": map[string]any{"present": true},
 	}, SanitizeRequestHeaders(got))
+}
+
+// 上游在完整刷出终态事件后拖延关闭连接时，服务层会提前停止读取并 Close。这次 Close
+// 不代表读取不完整，因此只能补记最近一次（仍打开的那次）尝试，不能把更早的尝试追认为
+// 完整读取；序列语义下一次尝试在时间上总是最新的。
+func TestMarkLastResponseReadCompleteIsScopedToMostRecentAttempt(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+
+	first := StartAttempt(WithMetadata(ctx, Metadata{AccountID: 11, Model: "model-a", Protocol: "openai.responses"}))
+	require.NotNil(t, first)
+	first.SetResponse(http.StatusBadGateway, http.Header{"Content-Type": {"application/json"}}, true)
+
+	second := StartAttempt(WithMetadata(ctx, Metadata{AccountID: 22, Model: "model-b", Protocol: "openai.responses"}))
+	require.NotNil(t, second)
+	second.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+
+	require.Len(t, counter.Metadata(), 2)
+	require.False(t, *counter.Metadata()[0].ResponseReadComplete)
+	require.False(t, *counter.Metadata()[1].ResponseReadComplete)
+
+	counter.MarkLastResponseReadComplete()
+
+	got := counter.Metadata()
+	require.False(t, *got[0].ResponseReadComplete,
+		"标记最新一次尝试的终态不得把更早的尝试追认为已完整读取")
+	require.True(t, *got[1].ResponseReadComplete)
+}
+
+// 插件接管的上游尝试不进传输尝试元数据：最新一次尝试没有响应事实，更早一次尝试的
+// 读取结论也不能被追认为完整。
+func TestMarkLastResponseReadCompleteSkipsPluginHandledAttempt(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+
+	first := StartAttempt(ctx)
+	require.NotNil(t, first)
+	first.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+	require.False(t, *counter.Metadata()[0].ResponseReadComplete)
+
+	// 后一次尝试由插件接管：只留下插件标记，不会追加传输元数据。
+	MarkPluginHandled(ctx)
+	counter.MarkLastResponseReadComplete()
+
+	require.False(t, *counter.Metadata()[0].ResponseReadComplete,
+		"插件接管的最新尝试没有响应事实，不得把更早一次尝试追认为已完整读取")
+}
+
+// 没有登记的响应（无尝试，或传输层从未拿到 HTTP 响应）就没有可补记的读取结论，
+// 不能凭空造出一条尝试。
+func TestMarkLastResponseReadCompleteNeedsRecordedResponse(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+
+	counter.MarkLastResponseReadComplete()
+	require.Empty(t, counter.Metadata())
+
+	attempt := StartAttempt(ctx)
+	require.NotNil(t, attempt)
+	counter.MarkLastResponseReadComplete()
+
+	require.Len(t, counter.Metadata(), 1)
+	require.Nil(t, counter.Metadata()[0].ResponseReadComplete,
+		"没有 HTTP 响应事实的尝试没有可补记的读取完整性")
+}
+
+// 终态事件后提前 Close 不得覆盖已经记下的「已完整读取」，也不得顺手落正文。
+func TestResponseBodyCloseDoesNotDowngradeCompletedRead(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+	attempt := StartAttempt(WithMetadata(ctx, Metadata{AccountID: 33, Protocol: "openai.responses"}))
+	require.NotNil(t, attempt)
+	attempt.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+
+	payload := "data: {\"type\":\"response.completed\"}\n\n"
+	body := NewResponseBody(io.NopCloser(strings.NewReader(payload)), attempt)
+
+	buf := make([]byte, 64)
+	n, err := body.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+	require.Equal(t, int64(len(payload)), *counter.Metadata()[0].ResponseBytes)
+
+	before := counter.Metadata()[0]
+	counter.MarkLastResponseReadComplete()
+
+	after := counter.Metadata()[0]
+	require.True(t, *after.ResponseReadComplete)
+	before.ResponseReadComplete = after.ResponseReadComplete
+	require.Equal(t, before, after, "补记终态只能改读取结论，不得保存正文或改动体量")
+
+	require.NoError(t, body.Close())
+	require.True(t, *counter.Metadata()[0].ResponseReadComplete,
+		"终态之后提前 Close 属于正常收尾，不得记成读取不完整")
+}
+
+// 没有终态标记时，EOF 之前 Close 仍然是「读取不完整」。
+func TestResponseBodyCloseWithoutTerminalRecordsIncompleteRead(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+	attempt := StartAttempt(ctx)
+	require.NotNil(t, attempt)
+	attempt.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+
+	body := NewResponseBody(io.NopCloser(strings.NewReader("data: {}\n\n")), attempt)
+	require.NoError(t, body.Close())
+
+	got := counter.Metadata()[0]
+	require.NotNil(t, got.ResponseReadComplete)
+	require.False(t, *got.ResponseReadComplete, "没有终态的提前 Close 必须记成读取不完整")
+}
+
+// 读到 EOF 仍是「已完整读取」的唯一传输证据，不能被后续 Close 或补记改动。
+func TestResponseBodyReadToEOFMarksReadComplete(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+	attempt := StartAttempt(ctx)
+	require.NotNil(t, attempt)
+	attempt.SetResponse(http.StatusOK, http.Header{"Content-Type": {"text/event-stream"}}, true)
+
+	body := NewResponseBody(io.NopCloser(strings.NewReader("data: {}\n\n")), attempt)
+	_, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.NoError(t, body.Close())
+
+	require.True(t, *counter.Metadata()[0].ResponseReadComplete)
 }

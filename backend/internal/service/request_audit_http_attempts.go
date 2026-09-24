@@ -45,6 +45,21 @@ func RequestAuditHTTPAttemptMetadata(c *gin.Context) []httpattempt.Metadata {
 	return counter.Metadata()
 }
 
+// markRequestAuditResponseTerminalRead 记录「最近一次上游尝试的响应已读到成功终态」。
+// 服务层在成功终态事件完整刷出后不再等待上游 EOF，随后那次 Close 属于正常收尾，不能把
+// 已经完整的一条响应记成读取不完整。失败终态与 bare error 不在此列：它们的提前结束是
+// 断流，必须保持读取不完整。
+func markRequestAuditResponseTerminalRead(c *gin.Context, sawTerminalEvent, sawFailedEvent, sawBareError bool) {
+	if !sawTerminalEvent || sawFailedEvent || sawBareError {
+		return
+	}
+	counter := requestAuditHTTPAttemptCounter(c)
+	if counter == nil {
+		return
+	}
+	counter.MarkLastResponseReadComplete()
+}
+
 func RequestAuditAttemptsFromHTTPMetadata(metadata []httpattempt.Metadata, fp *RequestAuditFingerprintInput) []RequestAuditAttempt {
 	if len(metadata) == 0 {
 		return nil
