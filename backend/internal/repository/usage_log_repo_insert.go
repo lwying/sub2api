@@ -663,21 +663,21 @@ func assignBestEffortUsageLogIDs(ctx context.Context, db *sql.DB, groups []*usag
 	}
 	var b strings.Builder
 	args := make([]any, 0, len(wanted)*2)
-	b.WriteString("SELECT id, request_id, api_key_id FROM usage_logs WHERE (request_id, api_key_id) IN (")
+	_, _ = b.WriteString("SELECT id, request_id, api_key_id FROM usage_logs WHERE (request_id, api_key_id) IN (")
 	for i, key := range wanted {
 		if i > 0 {
-			b.WriteByte(',')
+			_ = b.WriteByte(',')
 		}
 		fmt.Fprintf(&b, "($%d,$%d)", i*2+1, i*2+2)
 		args = append(args, key.requestID, key.apiKeyID)
 	}
-	b.WriteByte(')')
+	_ = b.WriteByte(')')
 	rows, err := db.QueryContext(ctx, b.String(), args...)
 	if err != nil {
 		logger.LegacyPrintf("repository.usage_log", "best-effort id lookup failed: %v", err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := make(map[lookupKey]int64, len(wanted))
 	for rows.Next() {
 		var id int64

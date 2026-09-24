@@ -257,13 +257,48 @@ func (a *Attempt) AddResponseBytes(n int64) {
 	})
 }
 
+// SetResponseReadComplete records whether this attempt's response body was read to its
+// end. A complete verdict is authoritative: the Close that follows an upstream which
+// flushes its terminal event and then keeps the connection open is a normal end of
+// stream, not an incomplete read, so it must not downgrade an already complete verdict.
 func (a *Attempt) SetResponseReadComplete(complete bool) {
 	if a == nil || a.counter == nil {
 		return
 	}
 	a.counter.updateMetadata(a.index, func(metadata *Metadata) {
+		if !complete && metadata.ResponseReadComplete != nil && *metadata.ResponseReadComplete {
+			return
+		}
 		metadata.ResponseReadComplete = &complete
 	})
+}
+
+// MarkLastResponseReadComplete records that the most recent recorded attempt was read to
+// its protocol terminal, without retaining any body bytes. Callers use it when they stop
+// reading a stream right after a successful terminal event instead of waiting for EOF.
+// Attempts are sequential, so the newest entry is the one still open: earlier attempts
+// keep their own verdict and are never retroactively completed. It is a no-op when the
+// newest attempt has no recorded HTTP response — no attempt at all, a transport failure,
+// or an attempt handled by a plugin, which records no transport metadata — because
+// completing an earlier attempt's record instead would be a retroactive lie.
+func (c *Counter) MarkLastResponseReadComplete() {
+	if c == nil {
+		return
+	}
+	if c.lastPluginHandled.Load() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.metadata) == 0 {
+		return
+	}
+	last := &c.metadata[len(c.metadata)-1]
+	if last.StatusCode == nil {
+		return
+	}
+	complete := true
+	last.ResponseReadComplete = &complete
 }
 
 func metadataFromContext(ctx context.Context) Metadata {

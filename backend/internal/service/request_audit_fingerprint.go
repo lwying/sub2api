@@ -47,8 +47,8 @@ func (f *auditFingerprinter) BeginForUser(authenticatedUserID int64) (*RequestAu
 	userID := make([]byte, 8)
 	binary.BigEndian.PutUint64(userID, uint64(authenticatedUserID))
 	userKey := hmac.New(sha256.New, f.key)
-	userKey.Write(lengthPrefixed([]byte("request-audit/user-key/v1")))
-	userKey.Write(lengthPrefixed(userID))
+	_, _ = userKey.Write(lengthPrefixed([]byte("request-audit/user-key/v1")))
+	_, _ = userKey.Write(lengthPrefixed(userID))
 
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {
@@ -141,9 +141,9 @@ func (in *RequestAuditFingerprintInput) DigestIdentifier(kind, value string) str
 
 func (r *requestAuditFingerprintRecord) digest(domain string, data []byte) string {
 	mac := hmac.New(sha256.New, r.key)
-	mac.Write(r.salt)
-	mac.Write(lengthPrefixed([]byte(domain)))
-	mac.Write(lengthPrefixed(data))
+	_, _ = mac.Write(r.salt)
+	_, _ = mac.Write(lengthPrefixed([]byte(domain)))
+	_, _ = mac.Write(lengthPrefixed(data))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 func lengthPrefixed(data []byte) []byte {

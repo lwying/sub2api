@@ -832,6 +832,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// Codex bare error 序列（error 后可能跟 response.failed 或翻盘的 completed）
 			// 必须继续读取，不适用提前结束。
 			if sawTerminalEvent && !eventInProgress && (!codexFailureTerminal || !sawBareError) {
+				// 成功终态已完整刷出，此处提前停止读取属于正常收尾：最近一次上游尝试
+				// 要记成「已完整读取」，不能被调用方随后的 Close 记成读取不完整。
+				markRequestAuditResponseTerminalRead(c, sawTerminalEvent, sawFailedEvent, sawBareError)
 				return finalizeStream()
 			}
 		}
@@ -919,6 +922,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// Codex bare error 序列（error 后可能跟 response.failed 或翻盘的 completed）
 			// 必须继续读取，不适用提前结束。
 			if sawTerminalEvent && !eventInProgress && (!codexFailureTerminal || !sawBareError) {
+				// 成功终态已完整刷出，此处提前停止读取属于正常收尾：最近一次上游尝试
+				// 要记成「已完整读取」，不能被紧接着的 Close 记成读取不完整。
+				markRequestAuditResponseTerminalRead(c, sawTerminalEvent, sawFailedEvent, sawBareError)
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}

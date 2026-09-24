@@ -57,6 +57,9 @@ func (r *ResponseBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Close ends the read. Closing before EOF is normally an incomplete read, but a stream
+// stopped right after an explicit terminal event is not: SetResponseReadComplete keeps
+// the already complete verdict recorded for this attempt (see MarkLastResponseReadComplete).
 func (r *ResponseBody) Close() error {
 	err := r.ReadCloser.Close()
 	if r.attempt != nil && !r.complete.Load() {

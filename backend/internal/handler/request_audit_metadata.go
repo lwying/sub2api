@@ -72,10 +72,6 @@ func digestRequestAuditIdentifierWithLimit(fp *service.RequestAuditFingerprintIn
 	return digest, true
 }
 
-func safeRequestAuditIdentifier(value string) bool {
-	return safeRequestAuditIdentifierWithLimit(value, maxRequestAuditIdentifierBytes)
-}
-
 func safeRequestAuditIdentifierWithLimit(value string, maxBytes int) bool {
 	if len(value) == 0 || len(value) > maxBytes || strings.TrimSpace(value) == "" {
 		return false
