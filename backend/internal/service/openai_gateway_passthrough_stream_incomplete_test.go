@@ -247,9 +247,9 @@ func TestOpenAIPassthroughStreamIncomplete_TerminalEventStaysComplete(t *testing
 	require.Equal(t, 7, result.usage.InputTokens)
 	requireOpenAIPassthroughAuditSkeletonIsDataFree(t, result.sseEvents)
 	requireOpenAIPassthroughAuditCompleteness(t, result, RequestAuditCaptureComplete, 15)
-	// 透传语义：上游 SSE 照常原样写出。
+	// 已刷出的终态事件足以结束流；上游随后发送的 [DONE] 不必等待。
 	require.Contains(t, recorder.Body.String(), openAIPassthroughIncompleteBodySentinel)
-	require.Contains(t, recorder.Body.String(), "data: [DONE]")
+	require.Contains(t, recorder.Body.String(), "data: "+openAIPassthroughIncompleteCompleted)
 }
 
 // 不完整标记必须一路传到 OpenAIForwardResult.StreamIncomplete：使用记录的请求
