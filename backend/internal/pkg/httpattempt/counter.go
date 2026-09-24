@@ -185,6 +185,34 @@ func startAttempt(ctx context.Context, metadata Metadata) *Attempt {
 	return &Attempt{counter: counter, index: index}
 }
 
+// ordinal is the 1-based position of this attempt among the logical request's attempts.
+func (a *Attempt) ordinal() int {
+	if a == nil || a.counter == nil {
+		return 0
+	}
+	return a.index + 1
+}
+
+// requestBytes is the payload byte count recorded for this attempt so far.
+func (a *Attempt) requestBytes() int64 {
+	if a == nil || a.counter == nil {
+		return 0
+	}
+	a.counter.mu.Lock()
+	defer a.counter.mu.Unlock()
+	if a.index < 0 || a.index >= len(a.counter.metadata) {
+		return 0
+	}
+	return dereferenceInt64(a.counter.metadata[a.index].RequestBytes)
+}
+
+func dereferenceInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
 func (a *Attempt) AddRequestBytes(n int64) {
 	if a == nil || a.counter == nil || n <= 0 {
 		return

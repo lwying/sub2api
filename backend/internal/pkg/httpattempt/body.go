@@ -10,12 +10,19 @@ import (
 type CountingReadCloser struct {
 	io.ReadCloser
 	OnRead func(int64)
+	// Capture, when set, receives exactly the bytes the transport consumed so an
+	// explicitly opted-in diagnostic can keep a bounded copy. It is nil unless the
+	// request opted in to body capture.
+	Capture *DiagnosticBodyCapture
 }
 
 func (r *CountingReadCloser) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
 	if n > 0 && r.OnRead != nil {
 		r.OnRead(int64(n))
+	}
+	if r.Capture != nil {
+		r.Capture.Consume(p[:n], err)
 	}
 	return n, err
 }

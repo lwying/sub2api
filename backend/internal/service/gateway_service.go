@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -280,14 +281,40 @@ func redactAuthHeaderValue(v string) string {
 	return "[redacted]"
 }
 
+// credentialLogHeaders 是必须以整值脱敏记录的凭据类请求头，对应 ADR 0005 已排除的结构化凭据
+// （应用／平台注入的认证头、Cookie、API Key、代理凭据）。
+//
+// 这里用显式清单而不是「名字里带 token/key/secret 就脱敏」的启发式：后者会把
+// anthropic-beta、x-stainless-* 等语义头误伤成 [redacted]，让排障信息失真。
+var credentialLogHeaders = map[string]struct{}{
+	"authorization":       {},
+	"proxy-authorization": {},
+	"x-api-key":           {},
+	"api-key":             {},
+	"x-goog-api-key":      {},
+	"cookie":              {},
+	"set-cookie":          {},
+}
+
 func safeHeaderValueForLog(key string, v string) string {
-	key = strings.ToLower(strings.TrimSpace(key))
-	switch key {
-	case "authorization", "x-api-key":
+	if _, ok := credentialLogHeaders[strings.ToLower(strings.TrimSpace(key))]; ok {
 		return redactAuthHeaderValue(v)
-	default:
-		return strings.TrimSpace(v)
 	}
+	return strings.TrimSpace(v)
+}
+
+// redactURLQueryForLog 脱敏 URL 查询串中的凭据取值（ADR 0005 已排除的 URL query 密钥），
+// 保留路径与其余查询参数，便于排障。复用审计日志已有的查询串脱敏规则，保持单一事实来源。
+func redactURLQueryForLog(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	if strings.TrimSpace(u.RawQuery) == "" {
+		return u.String()
+	}
+	redacted := *u
+	redacted.RawQuery = RedactAuditQuery(u.RawQuery)
+	return redacted.String()
 }
 
 func extractSystemPreviewFromBody(body []byte) string {
@@ -319,6 +346,10 @@ func extractSystemPreviewFromBody(body []byte) string {
 	}
 }
 
+// buildClaudeMimicDebugLine 构造 Claude Code 伪装指纹行。该行既用于显式调试开关
+// （SUB2API_DEBUG_CLAUDE_MIMIC），也会在 Claude Code 凭据域错误时**无条件**打印
+// （见 gateway_upstream_response.go 的 [ClaudeMimicDebugOnError]），因此这里只允许
+// 出现安全的协议元数据：模型正文（system prompt 等）与凭据明文一律不记录。
 func buildClaudeMimicDebugLine(req *http.Request, body []byte, account *Account, tokenType string, mimicClaudeCode bool) string {
 	if req == nil {
 		return ""
@@ -354,14 +385,10 @@ func buildClaudeMimicDebugLine(req *http.Request, body []byte, account *Account,
 	}
 
 	metaUserID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
-	sysPreview := strings.TrimSpace(extractSystemPreviewFromBody(body))
-
-	// Truncate preview to keep logs sane.
-	if len(sysPreview) > 300 {
-		sysPreview = sysPreview[:300] + "..."
-	}
-	sysPreview = strings.ReplaceAll(sysPreview, "\n", "\\n")
-	sysPreview = strings.ReplaceAll(sysPreview, "\r", "\\r")
+	// system prompt 是模型正文（ADR 0005／CONTEXT.md 禁止进入普通日志）：只保留「是否存在」
+	// 与体量这类有界结构信号，不记录自由文本。改动前该字段会以 system.preview= 打印最多 300
+	// 字节的 system 文本，且在凭据域错误时无需开启任何调试标志即可写出。
+	systemBytes := len(extractSystemPreviewFromBody(body))
 
 	aid := int64(0)
 	aname := ""
@@ -371,14 +398,15 @@ func buildClaudeMimicDebugLine(req *http.Request, body []byte, account *Account,
 	}
 
 	return fmt.Sprintf(
-		"url=%s account=%d(%s) tokenType=%s mimic=%t meta.user_id=%q system.preview=%q headers={%s}",
-		req.URL.String(),
+		"url=%s account=%d(%s) tokenType=%s mimic=%t meta.user_id=%q system.present=%t system.bytes=%d headers={%s}",
+		redactURLQueryForLog(req.URL),
 		aid,
 		aname,
 		tokenType,
 		mimicClaudeCode,
 		metaUserID,
-		sysPreview,
+		systemBytes > 0,
+		systemBytes,
 		strings.Join(h, " "),
 	)
 }
@@ -803,6 +831,10 @@ type GatewayService struct {
 	tlsFPProfileService       *TLSFingerprintProfileService
 	balanceNotifyService      *BalanceNotifyService
 	userPlatformQuotaRepo     UserPlatformQuotaRepository
+	// errorDiagnostics 是上游错误诊断接缝（见 error_diagnostic_observer.go），
+	// 供各协议分支在真实发送接缝显式绑定。
+	// nil 表示未注入，一律不采集。
+	errorDiagnostics *errorDiagnosticObserver
 }
 
 func (s *GatewayService) SetRequestAuditFingerprinter(f RequestAuditFingerprinter) {
@@ -1661,6 +1693,11 @@ func (s *GatewayService) initDebugGatewayBodyFile(path string) {
 //	SUB2API_DEBUG_GATEWAY_BODY=/tmp/gateway_debug.log     # 写入指定路径
 //
 // tag: "CLIENT_ORIGINAL" 或 "UPSTREAM_FORWARD"
+//
+// 已声明的剩余风险：显式开启后本函数按设计原样写入完整请求正文（含模型正文自由文本），
+// 因此它不是可长期开启的运维能力；ADR 0005 与本地规格把「旧调试日志敏感信息处置」列为
+// 待决项，本处按仓库既有约定保留行为不变，只保证默认关闭且凭据类请求头整值脱敏
+// （见 credentialLogHeaders）。排障结束应关闭该开关并清理已产生的调试文件。
 func (s *GatewayService) debugLogGatewaySnapshot(tag string, headers http.Header, body []byte, extra map[string]string) {
 	f := s.debugGatewayBodyFile.Load()
 	if f == nil {

@@ -112,6 +112,8 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, strings.TrimSpace(input.RequestModel), RequestAuditProtocolAnthropic,
 		)
+		// 真实发送接缝：按门控显式绑定错误诊断观察者（正文只在门控与票 02 opt-in 同时允许时才采）。
+		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 		if err != nil {
 			if resp != nil && resp.Body != nil {

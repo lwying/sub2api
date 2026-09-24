@@ -315,10 +315,12 @@ func TestOpenCodeSessionForwardedByRawChatCompletionsAfterAccountOverride(t *tes
 	account := openCodeSessionTestAccount("https://opencode.ai/zen/v1")
 	c := newOpenCodeSessionTestContext(t, "conversation-789")
 
+	// 本用例走的是 raw chat completions 直转：入站路由是 /v1/chat/completions，
+	// 因此诊断协议取 chat_completions（闭合枚举，与调用方显式传入的取值一致）。
 	resp, err := svc.sendCCUpstreamRequest(
 		context.Background(), c, account,
 		"https://opencode.ai/zen/v1/chat/completions", []byte(`{"model":"gpt-5"}`),
-		false, "token", "", "",
+		false, "token", "", "", ErrorDiagnosticProtocolChatCompletions,
 	)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())

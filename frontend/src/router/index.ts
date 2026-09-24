@@ -545,6 +545,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/error-diagnostics',
+    name: 'AdminErrorDiagnostics',
+    component: () => import('@/features/error-diagnostics/ErrorDiagnosticsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Error diagnostics',
+      titleKey: 'admin.errorDiagnostics.title',
+      descriptionKey: 'admin.errorDiagnostics.description'
+    }
+  },
+  {
     path: '/admin/plugins',
     name: 'AdminPlugins',
     component: () => import('@/views/admin/PluginsView.vue'),

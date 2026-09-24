@@ -113,6 +113,10 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, mappedModel, RequestAuditProtocolAnthropic,
 	)
+	// 上游错误诊断按客户端入口协议归属：本分支的入站是 Chat Completions，
+	// 即使出站是原生 Messages，诊断协议也不能跟着 wire 形态漂移。
+	// 绑定在请求上（而不是整条链路的 ctx 上），使分支内的辅助发送不被观察。
+	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolChatCompletions)
 
 	// 11. Send request
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))

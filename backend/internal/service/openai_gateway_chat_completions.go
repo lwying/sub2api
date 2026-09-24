@@ -123,7 +123,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		if proto != APIProtocolResponses {
 			if isResponsesShape {
 				if proto == APIProtocolAnthropic {
-					return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")
+					// 入站仍是 /v1/chat/completions（只是 body 是 Responses 形状），
+					// 诊断协议按客户端入口记为 chat_completions。
+					return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "", ErrorDiagnosticProtocolChatCompletions)
 				}
 				var responsesReq apicompat.ResponsesRequest
 				if err := json.Unmarshal(body, &responsesReq); err != nil {
@@ -396,6 +398,10 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
 	)
+	// 上游错误诊断按客户端入口协议归属：本分支入站是 Chat Completions、出站是
+	// 转换后的 Responses，诊断协议仍记为 chat_completions。请求级绑定使本分支的
+	// 辅助发送不被观察。
+	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolChatCompletions)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

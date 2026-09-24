@@ -94,6 +94,9 @@ func RegisterAdminRoutes(
 		// 使用记录管理
 		registerUsageRoutes(admin, h)
 
+		// 上游错误诊断（管理员只读，正文需显式揭示）
+		registerErrorDiagnosticRoutes(admin, h)
+
 		// 用户属性管理
 		registerUserAttributeRoutes(admin, h)
 
@@ -603,6 +606,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+		// 错误诊断运维开关（ADR 0005）：默认关闭，开启需逐字风险确认
+		adminSettings.GET("/error-diagnostic", h.Admin.Setting.GetErrorDiagnosticOperatorSettings)
+		adminSettings.PUT("/error-diagnostic", h.Admin.Setting.UpdateErrorDiagnosticOperatorSettings)
 	}
 }
 
@@ -708,6 +714,19 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
 		usage.GET("/:id/request-audit", h.Admin.Usage.GetRequestAudit)
+	}
+}
+
+// registerErrorDiagnosticRoutes 注册上游错误诊断的管理员只读入口。
+//
+// 挂在既有 admin 组上，因此由 adminAuth 中间件保证仅管理员可访问（非管理员 403）：
+// 列表与详情只返回净化元数据，正文必须由管理员显式 POST 揭示，响应禁止中间缓存。
+func registerErrorDiagnosticRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	diagnostics := admin.Group("/error-diagnostics")
+	{
+		diagnostics.GET("", h.Admin.RequestErrorDiagnostic.List)
+		diagnostics.GET("/:id", h.Admin.RequestErrorDiagnostic.Get)
+		diagnostics.POST("/:id/body", h.Admin.RequestErrorDiagnostic.RevealBody)
 	}
 }
 

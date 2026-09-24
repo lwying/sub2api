@@ -203,6 +203,9 @@ func (s *GatewayService) executeBedrockUpstream(
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, strings.TrimSpace(modelID), RequestAuditProtocolAnthropic,
 		)
+		// 真实发送接缝：Bedrock 分支在 Forward 里提前返回，早于通用绑定点，
+		// 因此这里按入站 /v1/messages 的 messages 协议逐次绑定（每次重试各绑一次）。
+		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
 		if err != nil {
 			if resp != nil && resp.Body != nil {

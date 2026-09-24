@@ -398,6 +398,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
 		)
+		// 真实发送接缝：按门控显式绑定错误诊断观察者（正文只在门控与票 02 opt-in 同时允许时才采）。
+		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -464,6 +466,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						retryReq = bindRequestAuditHTTPAttempt(
 							retryReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
 						)
+						retryReq = s.bindMessagesErrorDiagnosticObserver(retryReq, c)
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 						if IsRequestAuditRequiredError(retryErr) {
 							if retryResp != nil && retryResp.Body != nil {
@@ -516,6 +519,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 										retryReq2 = bindRequestAuditHTTPAttempt(
 											retryReq2, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
 										)
+										retryReq2 = s.bindMessagesErrorDiagnosticObserver(retryReq2, c)
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
 										if IsRequestAuditRequiredError(retryErr2) {
 											if retryResp2 != nil && retryResp2.Body != nil {
@@ -608,6 +612,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 							budgetRetryReq = bindRequestAuditHTTPAttempt(
 								budgetRetryReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
 							)
+							budgetRetryReq = s.bindMessagesErrorDiagnosticObserver(budgetRetryReq, c)
 							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if IsRequestAuditRequiredError(retryErr) {
 								if budgetRetryResp != nil && budgetRetryResp.Body != nil {

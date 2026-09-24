@@ -108,7 +108,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
+	// 上游错误诊断（票 04）：入站是 /v1/responses，只是上游形态回退到 Chat Completions，
+	// 协议按入站路由记 responses，不随 wire 形态漂移。
+	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "", ErrorDiagnosticProtocolResponses)
 	if err != nil {
 		return nil, err
 	}

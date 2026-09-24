@@ -118,6 +118,12 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
 		)
+		// 上游错误诊断（票 04）：入站是 /v1/responses 的 Grok 分支，协议按入站路由记
+		// responses，不随请求审计的 wire 协议漂移。这里按「一次真实发送」绑定，紧跟审计
+		// 尝试绑定之后（重试的每次发送各自成一条）；调用方不为该分支套整段上下文，
+		// 因此同请求内不经此处的发送（例如 Grok composer 的图像描述探测，见
+		// describeGrokComposerImage）不会被采集。
+		upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolResponses)
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {

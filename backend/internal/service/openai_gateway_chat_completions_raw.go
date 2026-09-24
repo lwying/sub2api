@@ -188,7 +188,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = defaultGrokUpstreamUserAgent()
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
+	// 本分支的入站是 Chat Completions：即使上游协议是原生 CC 直转，
+	// 诊断协议也按客户端入口记为 chat_completions。
+	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity, ErrorDiagnosticProtocolChatCompletions)
 	if err != nil {
 		return nil, err
 	}

@@ -120,6 +120,9 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolAnthropic,
 	)
+	// 协议归属按客户端入口：入站 Chat Completions、出站原生 Messages 时，
+	// 诊断协议仍然是 chat_completions。
+	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolChatCompletions)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)

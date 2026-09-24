@@ -129,6 +129,8 @@ var ProviderSet = wire.NewSet(
 	NewAffiliateRepository,
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota
 	NewUserVisibleAccountRepository,    // 普通用户只读账号视图的分配关系
+	NewErrorDiagnosticRepository,       // 错误诊断记录的短期存储与清理（票 01／02）
+	ProvideErrorDiagnosticBodyCipher,   // 诊断正文加密器（缺密钥时返回 nil：正文不留存，绝不回退明文）
 	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
 
 	// Cache implementations

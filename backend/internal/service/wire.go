@@ -892,6 +892,8 @@ var ProviderSet = wire.NewSet(
 	ProvideOllamaCloudUsageService,
 	ProvideSettingService,
 	ProvideKeyBillingSnapshotService,
+	ProvideErrorDiagnosticService,        // 错误诊断记录（票 01／02）
+	ProvideErrorDiagnosticCleanupService, // 按 7／30 天清理在线主库诊断数据
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,

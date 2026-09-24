@@ -160,11 +160,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardGrokResponses(ctx, c, account, body, originalModel, reqStream, startTime)
 	}
 
+	// 上游错误诊断（票 04）：入站是 /v1/responses，闸口放在 Grok 分支之后、其余平台的
+	// 分流之前——Grok 的对话发送在 openai_gateway_grok.go 里按「一次真实发送」单独绑定
+	// （该分支还带辅助发送，套整段上下文会一并采集），这里因此不为 Grok 绑定。
+	// 绑定只作用于这个局部 ctx（下游 buildUpstreamRequest 用 NewRequestWithContext，
+	// detach*UpstreamContext 用 context.WithoutCancel 保留值），因此覆盖本分支的其余真实
+	// 发送（原生 Responses、内部重试、raw chat 回退、透传），而 WS 帧、插件进程与辅助端点
+	// 都不经过该 ctx，也不经过真实 RoundTrip 接缝。未注入接缝或门控未开启时原样返回。
+	ctx = s.bindResponsesErrorDiagnosticBranch(ctx, c)
+
 	if account.IsOpenCodeGo() {
 		mapped := resolveOpenCodeGoMappedModel(account, body, "")
 		switch openCodeGoNativeProtocol(account, mapped) {
 		case APIProtocolAnthropic:
-			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")
+			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "", ErrorDiagnosticProtocolResponses)
 		case APIProtocolResponses:
 			break
 		default:
@@ -176,7 +185,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// （Responses 客户端 × Anthropic 上游），转成 Anthropic 请求走原生端点。
 	// 不能落到下面的 raw-CC 分支——其 URL 构造会把 anthropic base 当 CC base 用。
 	if account.IsAnthropicProtocol() {
-		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel)
+		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel, ErrorDiagnosticProtocolResponses)
 	}
 	if account.IsOpenAIApiKey() {
 		if normalized, changed, normalizeErr := normalizeOpenAIParallelToolCallsWithoutTools(body, responsesLite); normalizeErr != nil {

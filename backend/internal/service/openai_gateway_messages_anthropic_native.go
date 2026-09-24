@@ -103,6 +103,8 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolAnthropic,
 	)
+	// 真实发送接缝：按门控显式绑定错误诊断观察者（正文只在门控与票 02 opt-in 同时允许时才采）。
+	upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)

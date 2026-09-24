@@ -521,6 +521,10 @@ type OpenAIGatewayService struct {
 	openaiCodexTicketCancel      context.CancelFunc
 	openaiCodexTicketDone        chan struct{}
 	openaiCodexTicketStopped     bool
+	// errorDiagnostics 是上游错误诊断接缝（见 error_diagnostic_observer.go），
+	// 供各协议分支在真实发送接缝显式绑定。
+	// nil 表示未注入，一律不采集。
+	errorDiagnostics *errorDiagnosticObserver
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

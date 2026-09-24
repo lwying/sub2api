@@ -32,6 +32,7 @@ func ProvideAdminHandlers(
 	systemHandler *admin.SystemHandler,
 	subscriptionHandler *admin.SubscriptionHandler,
 	usageHandler *admin.UsageHandler,
+	requestErrorDiagnosticHandler *admin.RequestErrorDiagnosticHandler,
 	userAttributeHandler *admin.UserAttributeHandler,
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
@@ -79,6 +80,7 @@ func ProvideAdminHandlers(
 		System:                 systemHandler,
 		Subscription:           subscriptionHandler,
 		Usage:                  usageHandler,
+		RequestErrorDiagnostic: requestErrorDiagnosticHandler,
 		UserAttribute:          userAttributeHandler,
 		ErrorPassthrough:       errorPassthroughHandler,
 		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
@@ -115,12 +117,16 @@ func ProvideGatewayHandler(
 	settingService *service.SettingService,
 	coordinator *securityaudit.Coordinator,
 	keyBillingSnapshot *service.KeyBillingSnapshotService,
+	errorDiagnosticService *service.ErrorDiagnosticService,
+	requestAuditFingerprinter service.RequestAuditFingerprinter,
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
 	h.securityAuditCoordinator = coordinator
 	h.SetKeyBillingSnapshotService(keyBillingSnapshot)
+	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
+	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	return h
 }
 
@@ -137,8 +143,14 @@ func ProvideOpenAIGatewayHandler(
 	grokQuotaService *service.GrokQuotaService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
+	errorDiagnosticService *service.ErrorDiagnosticService,
+	requestAuditRepo service.RequestAuditRepository,
+	requestAuditFingerprinter service.RequestAuditFingerprinter,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
+	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
+	gatewayService.SetRequestAuditRepository(requestAuditRepo)
+	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.securityAuditCoordinator = coordinator
@@ -232,6 +244,10 @@ func ProvideHandlers(
 	}
 }
 
+func ProvideRequestErrorDiagnosticHandler(diagnostics *service.ErrorDiagnosticService) *admin.RequestErrorDiagnosticHandler {
+	return admin.NewRequestErrorDiagnosticHandler(diagnostics)
+}
+
 // ProviderSet is the Wire provider set for all handlers
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
@@ -279,6 +295,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,
 	admin.NewUsageHandler,
+	ProvideRequestErrorDiagnosticHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

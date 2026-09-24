@@ -412,6 +412,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
 		)
+		// 真实发送接缝：/v1/messages 入站的 Responses 转换分支同样按 Messages 协议采集诊断
+		// （协议按入站路由推导，不跟随上游 wire 协议）。原始 Chat Completions 兜底路径走共享
+		// 发送器，跨路由安全边界未定，暂不在此绑定。
+		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

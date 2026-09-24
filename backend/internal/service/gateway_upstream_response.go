@@ -372,9 +372,11 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 			account.ID, account.Name, resp.StatusCode, readErr)
 	}
 
-	// 调试日志：打印上游错误响应
-	logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (non-retryable): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-		account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(body), 1000))
+	// 调试日志：只保留稳定的安全字段（阶段、账号、上游状态码、上游请求 ID、错误种类）。
+	// 上游响应自由文本可能包含模型正文或凭据（ADR 0005），不得无条件写普通日志；需要正文
+	// 排障时由 Gateway.LogUpstreamErrorBody 显式开启，走下方有界的受控日志与 Ops 事件。
+	logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (non-retryable): Account=%d(%s) Status=%d RequestID=%s Kind=%s",
+		account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), "http_error")
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)

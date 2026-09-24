@@ -610,6 +610,11 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
 	)
+	// 上游错误诊断按客户端入口协议归属：本桥接只由 /v1/chat/completions 入站
+	// （见 forwardAsChatCompletions 的 Grok 分流）触发，出站虽是 Responses 形状，
+	// 诊断协议仍是 chat_completions。请求级绑定因此不会覆盖辅助发送（例如
+	// compose-image 探测走的是 raw CC 分支里另外的请求）。
+	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolChatCompletions)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

@@ -172,6 +172,12 @@ func (s *OpenAIGatewayService) resolveCCFallbackTarget(account *Account) (apiKey
 // 统一由 handleOpenAIUpstreamTransportError 归一为 failover。
 //
 // userAgent 为空时保留默认 UA；Grok 的默认 UA 兜底由调用方解析后传入。
+//
+// diagnosticProtocol 是本次发送所属的**客户端入口协议**（闭合枚举），由调用方给出：
+// 同一个 CC 发送点服务三条入站路由（/v1/chat/completions、/v1/messages 与
+// /v1/responses 的 raw-chat 回退），从路径或 ctx 反推协议会把三条路由写成同一个协议，
+// 因此不做任何推断。绑定只作用于本次出站请求（请求级），不进入调用方的 ctx，
+// 因此同一分支的辅助发送不会被观察。
 func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	ctx context.Context,
 	c *gin.Context,
@@ -182,6 +188,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	bearerToken string,
 	userAgent string,
 	grokCacheIdentity string,
+	diagnosticProtocol string,
 ) (*http.Response, error) {
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
@@ -233,6 +240,8 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, gjson.GetBytes(body, "model").String(), RequestAuditProtocolOpenAIChat,
 	)
+	// 请求级绑定：只把本次真实发送纳入上游错误诊断，协议取调用方给出的客户端入口协议。
+	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, diagnosticProtocol)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

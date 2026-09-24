@@ -29,6 +29,7 @@ type Application struct {
 	PromptAudit                    *securityaudit.PromptService
 	PluginManager                  *service.PluginManager
 	RequestAuditReservationCleanup *service.RequestAuditReservationCleanupService
+	ErrorDiagnosticCleanup         *service.ErrorDiagnosticCleanupService
 	Cleanup                        func()
 }
 
@@ -59,7 +60,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "RequestAuditReservationCleanup", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "RequestAuditReservationCleanup", "ErrorDiagnosticCleanup", "Cleanup"),
 	)
 	return nil, nil
 }
@@ -106,6 +107,7 @@ func provideCleanup(
 	usageCleanup *service.UsageCleanupService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
 	requestAuditReservationCleanup *service.RequestAuditReservationCleanupService,
+	errorDiagnosticCleanup *service.ErrorDiagnosticCleanupService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -248,6 +250,12 @@ func provideCleanup(
 			{"RequestAuditReservationCleanupService", func() error {
 				if requestAuditReservationCleanup != nil {
 					requestAuditReservationCleanup.Stop()
+				}
+				return nil
+			}},
+			{"ErrorDiagnosticCleanupService", func() error {
+				if errorDiagnosticCleanup != nil {
+					errorDiagnosticCleanup.Stop()
 				}
 				return nil
 			}},

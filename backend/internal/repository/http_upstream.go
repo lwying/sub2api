@@ -399,12 +399,17 @@ func (t *grokAccessDeniedFallbackTransport) roundTripAttempt(req *http.Request) 
 		return nil, nil, err
 	}
 	attempt := httpattempt.StartRequestAttempt(req)
+	// Error diagnostics are explicitly opted in per request, bounded, and dropped as
+	// soon as this attempt ends. Nothing here runs before the send.
+	capture := httpattempt.NewDiagnosticBodyCapture(req)
+	defer capture.Release()
 	request := req
-	if attempt != nil && req.Body != nil && req.Body != http.NoBody {
+	if (attempt != nil || capture != nil) && req.Body != nil && req.Body != http.NoBody {
 		request = req.Clone(req.Context())
 		request.Body = &httpattempt.CountingReadCloser{
 			ReadCloser: req.Body,
 			OnRead:     attempt.AddRequestBytes,
+			Capture:    capture,
 		}
 	}
 	resp, err := t.base.RoundTrip(request)
@@ -413,6 +418,9 @@ func (t *grokAccessDeniedFallbackTransport) roundTripAttempt(req *http.Request) 
 			attempt.SetResponse(resp.StatusCode, resp.Header, resp.Body != nil && resp.Body != http.NoBody)
 		}
 		wrapHTTPAttemptResponse(attempt, resp)
+		// Observed after the real RoundTrip answered, so a connection failure or a
+		// pre-send block can never be reported as an upstream HTTP failure.
+		httpattempt.ObserveUpstreamError(req, attempt, resp, capture)
 	}
 	return resp, attempt, err
 }

@@ -21,6 +21,14 @@ const parseFailureSnippetLen = 256
 //
 // err may be nil for call sites that validate with gjson.ValidBytes directly;
 // the diagnostic error is derived from the body in that case.
+//
+// Sentinel review（ADR 0005／本地规格 error-request-diagnostics-readonly-accounts 的
+// 「既有调试／错误日志敏感路径盘点」）：本路径只处理**解析失败**的请求体（该请求不会发往
+// 上游，客户端只收到通用错误），输出被限制为固定 256 字节的 head／tail 片段并转义为单行。
+// 由于出站正文从未形成，且片段是有界的结构性上下文，本处按仓库既有约定保留行为不变；
+// 已知剩余风险是：畸形/被截断的客户端正文里的自由文本（理论上含客户端自行写入的未知密钥）
+// 仍可能落在这两个有界片段内。是否进一步净化属规格中尚未决的「旧调试日志敏感信息处置」，
+// 不在本次改动范围内，因此不要在此处扩大输出或放宽 parseFailureSnippetLen。
 func logRequestBodyParseFailure(reqLog *zap.Logger, body []byte, err error) {
 	if reqLog == nil {
 		return

@@ -35,6 +35,11 @@ func (s *GatewayService) ForwardAsResponses(
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
 	ctx = WithRequestAuditHTTPAttemptCounter(ctx, c)
+	// 上游错误诊断（票 04）：本函数就是 /v1/responses 的 Anthropic 交叉协议分支，
+	// 绑定点收在这里，覆盖本分支后续所有真实发送（含重试）。读 token 不走 httpUpstream，
+	// 本函数唯一的真实发送在下方，因此不会把辅助调用算成上游 HTTP 失败。
+	// 绑定只作用于这个局部 ctx，不落到 gin 请求上下文，WS／插件／辅助请求因此天然不采集。
+	ctx = s.bindResponsesErrorDiagnosticBranch(ctx, c)
 	startTime := time.Now()
 
 	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngress(body)
