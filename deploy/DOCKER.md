@@ -71,6 +71,36 @@ Docker restores existing containers after a host restart.
 | `REDIS_URL` | Redis connection string | Yes | - |
 | `PORT` | Server port | No | `8080` |
 | `GIN_MODE` | Gin framework mode (`debug`/`release`) | No | `release` |
+| `SUB2API_DEPLOYMENT` | Deployment marker for images that package a prebuilt binary. Set to `docker` by the published images; only `docker` is meaningful, any other value (or none) means a native install. | No | - |
+
+## Updating a Container Deployment
+
+The container image owns the binary at `/app/sub2api`. Replacing that file
+inside a running container would not change the image, would not survive the
+next container start, and would be lost on `docker compose up -d`, so the admin
+API does not offer in-app update or rollback for a container deployment:
+
+- `GET /api/v1/admin/system/check-updates` reports
+  `deployment_type: "docker"` with `binary_update_supported: false`.
+- `POST /api/v1/admin/system/update` and `POST /api/v1/admin/system/rollback`
+  (both the local `.backup` restore and a versioned rollback) return HTTP 409
+  with reason `BINARY_UPDATE_UNSUPPORTED` before downloading anything.
+
+Updating means pulling the new image tag and recreating the container:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Rolling *back* is the same operation with an older image tag. Treat the image
+tag as the unit of versioning; the container-internal `.backup` file path is an
+artifact of native (archive/systemd) installs only.
+
+A binary built by `Dockerfile` or `deploy/Dockerfile` carries the marker at build
+time, and `Dockerfile.goreleaser` declares it for the image it packages. A native
+archive build has no marker, so a native install that merely runs inside an
+unrelated container keeps its in-app updater.
 
 ## Supported Architectures
 

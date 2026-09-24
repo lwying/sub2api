@@ -35,9 +35,33 @@ var (
 	Commit    = "unknown"
 	Date      = "unknown"
 	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	// DeploymentType marks a binary owned by a container image ("docker"), which
+	// must not update itself in place. It is declared at build time by the
+	// compiling Dockerfiles; an empty value means a native install.
+	DeploymentType = ""
 )
 
+// deploymentTypeEnv is the image-level fallback for images that only package an
+// already-built binary and therefore cannot inject ldflags (Dockerfile.goreleaser).
+// Like the ldflag it is a deliberate declaration by the build or the image, never
+// a filesystem probe, so a native binary that merely runs inside an unrelated
+// container is not treated as a container deployment.
+const deploymentTypeEnv = "SUB2API_DEPLOYMENT"
+
+// resolveDeploymentType keeps an ldflag-injected deployment marker as-is and
+// otherwise falls back to the marker declared by the image environment. The
+// build-time marker always wins, so a container-built binary stays guarded even
+// if the environment was changed afterwards.
+func resolveDeploymentType() {
+	if strings.TrimSpace(DeploymentType) != "" {
+		return
+	}
+	DeploymentType = strings.TrimSpace(os.Getenv(deploymentTypeEnv))
+}
+
 func init() {
+	resolveDeploymentType()
+
 	// 如果 Version 已通过 ldflags 注入（例如 -X main.Version=...），则不要覆盖。
 	if strings.TrimSpace(Version) != "" {
 		return
@@ -144,8 +168,9 @@ func runMainServer() {
 	}
 
 	buildInfo := handler.BuildInfo{
-		Version:   Version,
-		BuildType: BuildType,
+		Version:        Version,
+		BuildType:      BuildType,
+		DeploymentType: DeploymentType,
 	}
 
 	app, err := initializeApplication(buildInfo)

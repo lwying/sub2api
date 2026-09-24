@@ -17,6 +17,10 @@ const {
   getOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
+  getRateLimit429AccountLimit,
+  updateRateLimit429AccountLimit,
+  getKeyBillingSnapshotSettings,
+  updateKeyBillingSnapshotSettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,
@@ -45,6 +49,10 @@ const {
   getOverloadCooldownSettings: vi.fn(),
   getRateLimit429CooldownSettings: vi.fn(),
   updateRateLimit429CooldownSettings: vi.fn(),
+  getRateLimit429AccountLimit: vi.fn().mockResolvedValue({ max_accounts: 2 }),
+  updateRateLimit429AccountLimit: vi.fn(),
+  getKeyBillingSnapshotSettings: vi.fn().mockResolvedValue({ enabled: false, max_stale_hours: 72 }),
+  updateKeyBillingSnapshotSettings: vi.fn(),
   getPanelRateLimitSettings: vi.fn().mockResolvedValue({
     enabled: true,
     user_rpm: 240,
@@ -92,6 +100,10 @@ vi.mock("@/api", () => ({
       getOverloadCooldownSettings,
       getRateLimit429CooldownSettings,
       updateRateLimit429CooldownSettings,
+      getRateLimit429AccountLimit,
+      updateRateLimit429AccountLimit,
+      getKeyBillingSnapshotSettings,
+      updateKeyBillingSnapshotSettings,
       getPanelRateLimitSettings,
       updatePanelRateLimitSettings,
       getStreamTimeoutSettings,
@@ -143,6 +155,7 @@ vi.mock("@/composables/useClipboard", () => ({
 
 vi.mock("@/utils/apiError", () => ({
   extractApiErrorMessage: () => "error",
+  extractI18nErrorMessage: () => "error",
 }));
 
 vi.mock("vue-i18n", async () => {
@@ -568,6 +581,54 @@ function mountView() {
   });
 }
 
+it("saves the request-scoped 429 account limit from gateway settings", async () => {
+  getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 2 });
+  updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  const input = wrapper.get('[data-testid="rate-limit-429-account-limit"]');
+  expect((input.element as HTMLInputElement).value).toBe("2");
+  await input.setValue("3");
+  await wrapper.get('[data-testid="save-rate-limit-429-account-limit"]').trigger("click");
+  await flushPromises();
+  expect(updateRateLimit429AccountLimit).toHaveBeenCalledWith({ max_accounts: 3 });
+});
+
+it("keeps the 429 account limit control inside the backend 1-100 contract", async () => {
+  getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 7 });
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  const input = wrapper.get('[data-testid="rate-limit-429-account-limit"]');
+  // 后端 SetRateLimit429AccountLimit 只接受 1–100，前端控件的边界必须一致。
+  expect((input.element as HTMLInputElement).min).toBe("1");
+  expect((input.element as HTMLInputElement).max).toBe("100");
+  // 已保存的非默认值按原值回显，而不是落到默认 2。
+  expect((input.element as HTMLInputElement).value).toBe("7");
+});
+
+it("configures the per-key outward billing snapshot without changing the default", async () => {
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  getKeyBillingSnapshotSettings.mockResolvedValue({ enabled: false, max_stale_hours: 72 });
+  updateKeyBillingSnapshotSettings.mockImplementation(async (payload) => payload);
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  const toggle = wrapper.get('[data-testid="key-billing-snapshot-enabled"]');
+  expect((toggle.element as HTMLInputElement).checked).toBe(false);
+  await toggle.setValue(true);
+  await wrapper.get('[data-testid="key-billing-snapshot-max-stale-hours"]').setValue("96");
+  await wrapper.get('[data-testid="save-key-billing-snapshot-settings"]').trigger("click");
+  await flushPromises();
+  expect(updateKeyBillingSnapshotSettings).toHaveBeenCalledWith({ enabled: true, max_stale_hours: 96 });
+});
+
 async function openPaymentTab(wrapper: ReturnType<typeof mountView>) {
   const paymentTabButton = wrapper
     .findAll("button")
@@ -685,6 +746,10 @@ describe("admin SettingsView payment visible method controls", () => {
       cooldown_seconds: 5,
     });
     updateRateLimit429CooldownSettings.mockImplementation(async (payload) => payload);
+    getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 2 });
+    updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
+    getKeyBillingSnapshotSettings.mockResolvedValue({ enabled: false, max_stale_hours: 72 });
+    updateKeyBillingSnapshotSettings.mockImplementation(async (payload) => payload);
     getStreamTimeoutSettings.mockResolvedValue({
       enabled: true,
       action: "temp_unsched",
@@ -1712,6 +1777,10 @@ describe("admin SettingsView wechat connect controls", () => {
       cooldown_seconds: 5,
     });
     updateRateLimit429CooldownSettings.mockImplementation(async (payload) => payload);
+    getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 2 });
+    updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
+    getKeyBillingSnapshotSettings.mockResolvedValue({ enabled: false, max_stale_hours: 72 });
+    updateKeyBillingSnapshotSettings.mockImplementation(async (payload) => payload);
     getStreamTimeoutSettings.mockResolvedValue({
       enabled: true,
       action: "temp_unsched",

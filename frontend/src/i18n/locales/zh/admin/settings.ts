@@ -1038,6 +1038,23 @@ export default {
         saved: '429 默认回避设置保存成功',
         saveFailed: '保存 429 默认回避设置失败'
       },
+      rateLimit429AccountLimit: {
+        title: '单次请求 429 账号上限',
+        description: '同一次请求中，最多允许多少个不同上游账号在同账号重试结束后返回 429；不会冷却共享 API Key。',
+        maxAccounts: '最多 429 账号数（1–100）',
+        saved: '单次请求 429 账号上限已保存',
+        loadFailed: '读取 429 账号上限失败',
+        saveFailed: '保存 429 账号上限失败'
+      },
+      keyBillingSnapshot: {
+        title: '对外倍率快照',
+        description: '默认实时声明。启用后每把密钥 24 小时内复用同一份倍率声明，实际计费仍实时计算；故障仅在允许的最长陈旧期内回退。',
+        enabled: '启用对外倍率快照',
+        maxStaleHours: '最长陈旧期（小时，24–720）',
+        saved: '对外倍率快照设置已保存',
+        loadFailed: '读取对外倍率快照设置失败',
+        saveFailed: '保存对外倍率快照设置失败'
+      },
       streamTimeout: {
         title: '流超时处理',
         description: '配置上游响应超时时的账户处理策略，避免问题账户持续被选中',

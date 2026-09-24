@@ -469,6 +469,10 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int  `json:"cooldown_seconds"`
 }
 
+type RateLimit429AccountLimit struct {
+	MaxAccounts int `json:"max_accounts"`
+}
+
 type OpenAIImagesOAuthUnavailableCooldownSettings struct {
 	CooldownMinutes int `json:"cooldown_minutes"`
 }

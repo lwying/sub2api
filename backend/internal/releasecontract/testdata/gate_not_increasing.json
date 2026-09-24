@@ -1,0 +1,9 @@
+{
+  "event": "push",
+  "candidate_tag": "v0.2.5",
+  "fork_repo": "lwying/sub2api",
+  "fork_published_versions": ["v0.2.6"],
+  "upstream_versions": ["v0.1.185", "v0.2.5", "v0.2.7"],
+  "current_version_file": "0.2.6",
+  "release_kind": "binary"
+}

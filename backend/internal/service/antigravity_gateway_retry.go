@@ -158,13 +158,15 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		}
 		s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
 
-		// 返回账号切换信号，让上层切换账号重试
+		// 返回账号切换信号，让上层切换账号重试。
+		// UpstreamStatusCode 保留触发切换的上游状态码，供上层区分真实 429。
 		return &smartRetryResult{
 			action: smartRetryActionBreakWithResp,
 			switchError: &AntigravityAccountSwitchError{
-				OriginalAccountID: p.account.ID,
-				RateLimitedModel:  modelName,
-				IsStickySession:   p.isStickySession,
+				OriginalAccountID:  p.account.ID,
+				RateLimitedModel:   modelName,
+				IsStickySession:    p.isStickySession,
+				UpstreamStatusCode: resp.StatusCode,
 			},
 		}
 	}
@@ -275,6 +277,15 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			retryBody = respBody
 		}
 
+		// 触发切换的上游状态码以「最后一次上游尝试」为准（与 retryBody 的来源保持一致）。
+		// 同账号智能重试本身只在 429/503 之间反复，最后一次的状态码可能与初始响应不同；
+		// 若沿用初始状态码，上层（请求内 429 账号上限）会按初始响应而非真实的终态
+		// 429 计数。全部重试均为网络错误时 lastRetryResp 为 nil，回退初始状态码。
+		switchStatus := resp.StatusCode
+		if lastRetryResp != nil {
+			switchStatus = lastRetryResp.StatusCode
+		}
+
 		// MODEL_CAPACITY_EXHAUSTED：模型容量不足，切换账号无意义
 		// 直接返回上游错误响应，不设置模型限流，不切换账号
 		if isModelCapacityExhausted {
@@ -312,21 +323,23 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		}
 
 		log.Printf("%s status=%d smart_retry_exhausted attempts=%d model=%s account=%d upstream_retry_delay=%v body=%s (switch account)",
-			p.prefix, resp.StatusCode, maxAttempts, modelName, p.account.ID, rateLimitDuration, truncateForLog(retryBody, 200))
+			p.prefix, switchStatus, maxAttempts, modelName, p.account.ID, rateLimitDuration, truncateForLog(retryBody, 200))
 
 		resetAt := time.Now().Add(rateLimitDuration)
-		s.setAntigravityModelRateLimits(p.ctx, p.accountRepo, p.account, modelName, p.prefix, resp.StatusCode, resetAt, true)
+		s.setAntigravityModelRateLimits(p.ctx, p.accountRepo, p.account, modelName, p.prefix, switchStatus, resetAt, true)
 
 		// 清除粘性会话绑定，避免下次请求仍命中限流账号
 		s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
 
-		// 返回账号切换信号，让上层切换账号重试
+		// 返回账号切换信号，让上层切换账号重试。
+		// UpstreamStatusCode 保留触发切换的上游状态码（最后一次上游尝试），供上层区分真实 429。
 		return &smartRetryResult{
 			action: smartRetryActionBreakWithResp,
 			switchError: &AntigravityAccountSwitchError{
-				OriginalAccountID: p.account.ID,
-				RateLimitedModel:  modelName,
-				IsStickySession:   p.isStickySession,
+				OriginalAccountID:  p.account.ID,
+				RateLimitedModel:   modelName,
+				IsStickySession:    p.isStickySession,
+				UpstreamStatusCode: switchStatus,
 			},
 		}
 	}
@@ -1148,9 +1161,10 @@ func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimit
 	return &handleModelRateLimitResult{
 		Handled: true,
 		SwitchError: &AntigravityAccountSwitchError{
-			OriginalAccountID: p.account.ID,
-			RateLimitedModel:  info.ModelName,
-			IsStickySession:   p.isStickySession,
+			OriginalAccountID:  p.account.ID,
+			RateLimitedModel:   info.ModelName,
+			IsStickySession:    p.isStickySession,
+			UpstreamStatusCode: p.statusCode,
 		},
 	}
 }

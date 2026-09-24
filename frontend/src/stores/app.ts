@@ -43,6 +43,17 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  // A version check can conclude "no update" for reasons that are not "you are
+  // on the latest version" (no matching binary asset, GitHub unreachable).
+  // The backend reports those through `warning`; a failed request is tracked
+  // separately. Both mean the result is unknown and must not be shown as
+  // "up to date". A normal `cached: true` hit is not a failure.
+  const versionWarning = ref<string>('')
+  const versionCheckFailed = ref<boolean>(false)
+  // Whether the backend can replace the running binary in place. Docker/image
+  // deployments report false, and so does a backend too old to answer.
+  const binaryUpdateSupported = ref<boolean>(false)
+  const deploymentType = ref<'' | 'native' | 'docker'>('')
 
   // Auto-incrementing ID for toasts
   let toastIdCounter = 0
@@ -249,7 +260,10 @@ export const useAppStore = defineStore('app', () => {
         has_update: hasUpdate.value,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
-        cached: true
+        cached: true,
+        warning: versionWarning.value || undefined,
+        deployment_type: deploymentType.value || undefined,
+        binary_update_supported: binaryUpdateSupported.value
       }
     }
 
@@ -266,10 +280,20 @@ export const useAppStore = defineStore('app', () => {
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
+      versionWarning.value = data.warning || ''
+      versionCheckFailed.value = false
+      // Absent field (older backend) stays false: never offer an in-place
+      // binary swap we cannot confirm is safe for this deployment.
+      binaryUpdateSupported.value = data.binary_update_supported === true
+      deploymentType.value = data.deployment_type || ''
       versionLoaded.value = true
       return data
     } catch (error) {
       console.error('Failed to fetch version:', error)
+      // The check failed, so nothing is known about the latest version. Keep
+      // the flag set so callers never render this as "already up to date".
+      versionWarning.value = ''
+      versionCheckFailed.value = true
       return null
     } finally {
       versionLoading.value = false
@@ -282,6 +306,8 @@ export const useAppStore = defineStore('app', () => {
   function clearVersionCache(): void {
     versionLoaded.value = false
     hasUpdate.value = false
+    versionWarning.value = ''
+    versionCheckFailed.value = false
   }
 
   // ==================== Public Settings Management ====================
@@ -462,6 +488,10 @@ export const useAppStore = defineStore('app', () => {
     hasUpdate,
     buildType,
     releaseInfo,
+    versionWarning,
+    versionCheckFailed,
+    binaryUpdateSupported,
+    deploymentType,
 
     // Computed
     hasActiveToasts,

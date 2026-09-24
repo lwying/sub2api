@@ -1,0 +1,12 @@
+{
+  "candidate_tag": "v0.2.8",
+  "release_kind": "binary",
+  "assets": [
+    "sub2api_0.2.8_linux_amd64.tar.gz",
+    "sub2api_0.2.8_linux_arm64.tar.gz",
+    "sub2api_0.2.8_darwin_amd64.tar.gz",
+    "sub2api_0.2.8_darwin_arm64.tar.gz",
+    "sub2api_0.2.8_windows_amd64.zip",
+    "checksums.txt"
+  ]
+}

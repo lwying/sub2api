@@ -1,3 +1,6 @@
+# 完整二进制发布：必须提供每个平台的归档与 checksums.txt，否则该 Release 视为
+# 不可安装。平台矩阵、归档命名与校验文件契约见 docs/fork-release-contract.md，
+# 并由 backend/internal/releasecontract 的测试断言（改动此处请同步该测试）。
 version: 2
 
 project_name: sub2api

@@ -1,4 +1,10 @@
 # 简化版 GoReleaser 配置 - 仅发布 x86_64 GHCR 镜像
+#
+# 这是一个 image-only 发布：没有平台归档、没有 checksums.txt，因此它在**任何平台
+# 都不可安装**，不得被内置更新提示或历史回滚候选使用（理由与判定见
+# docs/fork-release-contract.md 第 3 节）。本文件的不变量由
+# backend/internal/releasecontract 的测试断言：请不要在这里加回
+# archives / checksum 或 windows 构建，那会让一个仅镜像发布看起来可以一键安装。
 version: 2
 
 project_name: sub2api

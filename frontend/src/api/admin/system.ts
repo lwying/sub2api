@@ -19,6 +19,11 @@ export interface VersionInfo {
   cached: boolean
   warning?: string
   build_type: string // "source" for manual builds, "release" for CI builds
+  // How the running binary is deployed, and whether the backend can replace it
+  // in place. build_type is "release" for both binary and image builds, so it
+  // cannot be used to decide whether an in-app binary update is safe.
+  deployment_type?: 'native' | 'docker'
+  binary_update_supported?: boolean
 }
 
 /**
@@ -43,6 +48,10 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 export interface UpdateResult {
   message: string
   need_restart: boolean
+  // The backend answers 200 with this set when nothing was installed (no
+  // update available, or the check could not reach GitHub). It is not a
+  // completed update.
+  already_up_to_date?: boolean
 }
 
 export interface RollbackVersionInfo {

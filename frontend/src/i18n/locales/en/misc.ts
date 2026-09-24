@@ -44,6 +44,16 @@ export default {
     rollbackConfirm: 'Roll back to {version}',
     rollbackWarning:
       'Rollback downloads the selected version and replaces the current binary. A service restart is required afterwards.',
+    checkUnavailable: 'Latest version could not be confirmed',
+    checkUnavailableHint:
+      'The update check did not return a usable answer, so "up to date" cannot be claimed. Check the deployment method or retry.',
+    updateDockerHint:
+      'This service runs from a container image, so it cannot replace itself in place. Upgrade or roll back by pinning the image tag you published in your own compose file.',
+    updateUnsupportedHint:
+      'This deployment cannot replace its own binary. Use your usual operator-managed upgrade path.',
+    updateNothingToInstall: 'Nothing was installed - the service reported it is already up to date.',
+    rollbackDockerHint:
+      'Rolling back a container image means pinning the previous image tag in your own compose file; this UI does not change it.',
     rollingBack: 'Rolling back...',
     rollbackComplete: 'Rollback Complete',
     rollbackFailed: 'Rollback Failed',
@@ -56,7 +66,12 @@ export default {
     deployScript: 'Script',
     deployDocker: 'Docker',
     dockerEditCompose: 'Edit the image tag in docker-compose.yml',
-    dockerRecreate: 'Recreate the container'
+    dockerImagePlaceholder: '<published-fork-image>',
+    dockerOperatorManaged:
+      'This UI cannot confirm which fork image has been published. Use the image tag your operator actually published for {version}; swapping the binary inside a running container is not an image upgrade.',
+    dockerRecreate: 'Recreate the container',
+    rollbackWarningDocker:
+      'Docker deployments upgrade by image tag. The in-app rollback replaces the binary inside the container, so it does not change the image your Compose file pins.'
   },
 
   // Recharge / Subscription Page
@@ -618,6 +633,46 @@ export default {
         expired: 'Expired',
         revoked: 'Revoked',
       },
+    },
+  },
+
+  // Read-only account view for regular users plus the per-user admin grant UI.
+  // Identity fields arrive already masked from the server and stay plain text.
+  assignedAccounts: {
+    description: 'View the basic details of accounts an administrator assigned to you. Upstream identities are masked.',
+    readOnlyNotice: 'This page is read-only: accounts cannot be edited, exported, or inspected for credentials.',
+    identityMaskedNotice: 'Upstream email, username and account ID are masked by the server.',
+    loadFailed: 'Failed to load assigned accounts',
+    empty: 'No accounts available',
+    emptyHint: 'No account has been assigned to you yet, or the assigned accounts are currently unavailable.',
+    viewDetail: 'Details',
+    columns: {
+      platform: 'Platform',
+      accountType: 'Account Type',
+      email: 'Upstream Email',
+      username: 'Upstream Username',
+      upstreamAccountId: 'Upstream Account ID',
+      actions: 'Actions',
+    },
+    detail: {
+      title: 'Account Details',
+      notVisible: 'This account does not exist or you are not allowed to view it.',
+      loadFailed: 'Failed to load account details',
+    },
+    admin: {
+      title: 'Account View Grant',
+      hint: 'Choose the accounts {email} may view read-only. Nothing is granted by default.',
+      enableLabel: 'Allow this user to view assigned accounts',
+      assignedTitle: 'Assigned Accounts',
+      assignedCount: '{count} assigned',
+      noAssigned: 'No account assigned yet',
+      searchPlaceholder: 'Search accounts by name to add',
+      noCandidates: 'No accounts available to add',
+      add: 'Add',
+      remove: 'Remove',
+      saveSuccess: 'Account view grant updated',
+      loadFailed: 'Failed to load the account view grant',
+      saveFailed: 'Failed to save the account view grant',
     },
   },
 

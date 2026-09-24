@@ -174,6 +174,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, false)
+	fs.SetRequest429AccountLimit(request429AccountLimit(c, h.settingService))
 	var requestAuditAttempts []service.RequestAuditAttempt
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
 	if requestAuditFingerprint != nil {

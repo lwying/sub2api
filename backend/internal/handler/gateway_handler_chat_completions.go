@@ -172,6 +172,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	if groupPlatform == service.PlatformGemini {
 		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
 	}
+	fs.SetRequest429AccountLimit(request429AccountLimit(c, h.settingService))
 	var requestAuditAttempts []service.RequestAuditAttempt
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
 	if requestAuditFingerprint != nil {

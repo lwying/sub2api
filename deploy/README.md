@@ -21,7 +21,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `APPLE_CONTAINER.md` | Apple `container` deployment and operations guide |
 | `.env.example` | Container environment variables template |
 | `DOCKER.md` | Docker Hub documentation |
-| `install.sh` | One-click binary installation script |
+| `install.sh` | One-click binary installation script (fork releases; install/rollback verify the platform archive and `checksums.txt`) |
 | `install-datamanagementd.sh` | datamanagementd 一键安装脚本 |
 | `sub2api.service` | Systemd service unit file |
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
@@ -49,6 +49,14 @@ See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, pers
 ---
 
 ## Docker Deployment (Recommended)
+
+> **Container images are operator-managed.** This repository does not assert
+> that a fork container image is published. The Compose files, `.env.example`
+> and `docker-deploy.sh` below still reference the upstream project's image and
+> scripts, so replace them with an image and tag your operator actually
+> published before deploying. Docker deployments upgrade by image tag; the
+> binary `install.sh` (systemd) must not be used inside a container to replace
+> the executable in place, because that is not an image upgrade.
 
 ### Method 1: One-Click Deployment (Recommended)
 
@@ -398,12 +406,12 @@ For production servers using systemd.
 ### One-Line Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.sh | sudo bash
 ```
 
 ### Manual Installation
 
-1. Download the latest release from [GitHub Releases](https://github.com/Wei-Shaw/sub2api/releases)
+1. Download a release from the fork's [GitHub Releases](https://github.com/lwying/sub2api/releases)
 2. Extract and copy the binary to `/opt/sub2api/`
 3. Copy `sub2api.service` to `/etc/systemd/system/`
 4. Run:
@@ -426,6 +434,73 @@ sudo ./install.sh upgrade
 # Uninstall
 sudo ./install.sh uninstall
 ```
+
+### Fork Releases and Verification
+
+Binary install, upgrade and rollback in this repository resolve releases from
+[`lwying/sub2api`](https://github.com/lwying/sub2api), the same source the
+in-app update check uses. A release is installable only when it:
+
+- uses a strict `vX.Y.Z` tag (three numeric segments, no leading zeros);
+- publishes the archive for the current platform
+  (`sub2api_<X.Y.Z>_<os>_<arch>.tar.gz`; `.zip` on Windows); and
+- publishes `checksums.txt` containing that archive's SHA-256.
+
+`install.sh` checks all three **before downloading anything**, verifies the
+archive against `checksums.txt`, and only then replaces
+`/opt/sub2api/sub2api`. Installation aborts, leaving the running executable
+untouched, when:
+
+- the checksum file is missing, ambiguous or does not match the archive;
+- the member list cannot be read (a corrupt or tampered archive);
+- a member name is absolute, contains `..`, or cannot be addressed exactly;
+- a member is a symlink, a hard link, or any other non-regular file (a symlink
+  member could otherwise redirect a later member's write outside the extraction
+  directory);
+- the extracted `sub2api` is not a native executable image for this platform
+  (ELF on Linux, Mach-O on macOS).
+
+Members are streamed individually rather than unpacking the whole archive, so no
+member is ever written through a link, and an archive member named `deploy/sub2api`
+can never overwrite the verified binary. Releases that only publish a container
+image are never offered as installable or as rollback candidates, and the admin
+UI's rollback list applies the same platform/asset rule.
+
+Service handling during upgrade and rollback:
+
+- a running service is stopped only after the target release has passed the
+  checks above, so a rejected release leaves it running;
+- if the swap fails after the stop, the previous (still installed) binary is
+  started again, so a failed upgrade does not leave the host without service;
+- after a successful swap the service is started (or restarted when it was
+  already running), and a failed start is reported with a non-zero exit status
+  instead of being printed as a completed installation.
+
+To see what is installable on this machine:
+
+```bash
+sudo ./install.sh list-versions
+```
+
+#### Migrating an existing installation to the fork
+
+An already-installed binary does not change its update source by itself; the
+first switch is a manual step:
+
+1. Install the fork release explicitly from the fork's own release assets, for
+   example `sudo ./install.sh install -v v<X.Y.Z>`, or copy the verified binary
+   to `/opt/sub2api/sub2api` and restart the service.
+2. Only after that does the admin UI check fork releases for updates.
+
+Rollback candidates are limited to fork releases installable on the current
+platform. Source builds update with `git pull` instead.
+
+#### Docker / Compose deployments
+
+Docker and Compose deployments upgrade by image tag. `install.sh` manages the
+binary/systemd deployment only, and replacing the executable inside a running
+container is not an image upgrade. Pin the image tag your operator actually
+published — this repository does not assert that a fork image is published.
 
 ### Service Management
 

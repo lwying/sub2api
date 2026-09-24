@@ -1,0 +1,8 @@
+{
+  "candidate_tag": "v0.2.8",
+  "release_kind": "image_only",
+  "assets": [
+    "sub2api_0.2.8_linux_amd64.tar.gz",
+    "checksums.txt"
+  ]
+}

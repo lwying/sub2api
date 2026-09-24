@@ -1,0 +1,47 @@
+# fork 自有路径：上游同步**不得**自动改写这些文件。
+#
+# 上游对这些路径的改动会出现在同步 PR 的正文里（名称、diff、VERSION 值对比），
+# 但不会被写入同步分支；是否移植由维护者人工决定。
+#
+# 语法：一行一个路径；`#` 开头与空行忽略；以 `/` 结尾表示目录前缀。
+# 可通过环境变量 PROTECTED_PATHS（冒号分隔）覆盖本文件，便于临时加严。
+
+# 版本号：fork 独立递增，不能由上游 VERSION 自动覆盖（ticket 06）
+backend/cmd/server/VERSION
+VERSION
+
+# 发布配置与发布工作流：fork 发布门禁（ticket 06）
+.goreleaser.yaml
+.goreleaser.simple.yaml
+.goreleaser.simple.yml
+Dockerfile.goreleaser
+.github/workflows/release.yml
+.github/workflows/upstream-sync.yml
+
+# 发布契约实现（ticket 06）
+backend/internal/releasecontract/
+backend/cmd/releasegate/
+
+# 依赖注入接线（fork 在这里注册自己的 provider）。
+# 上游版本会重新生成/重写这些文件，从而把 fork 的注册删掉：
+#   - backend/cmd/server/wire_gen.go:257 `service.ProvideUpdateService(...)`（ticket 07 的 fork 更新器）
+#   - backend/cmd/server/wire_gen.go:306-308 `NewKeyBillingSnapshotRepository` /
+#     `ProvideKeyBillingSnapshotService` / `ProvideGatewayHandler(..., keyBillingSnapshotService)`（ticket 04-05）
+#   - backend/internal/service/wire.go:884,910 与 backend/internal/repository/wire.go:120,150 的同名 provider
+# 所以整文件按 fork 自有处理：上游改动在 PR 正文里列出，由维护者移植后再 go generate。
+backend/cmd/server/wire.go
+backend/cmd/server/wire_gen.go
+backend/internal/handler/wire.go
+backend/internal/service/wire.go
+backend/internal/repository/wire.go
+
+# 内置更新器：更新来源与资产校验属于 fork（ticket 07）
+backend/internal/service/update_service.go
+backend/internal/service/update_archive.go
+backend/internal/service/update_fork_release.go
+backend/internal/repository/update_cache.go
+backend/internal/repository/github_release_service.go
+frontend/src/components/common/VersionBadge.vue
+
+# 安装与回滚入口：下载来源与校验属于 fork（ticket 08）
+deploy/install.sh

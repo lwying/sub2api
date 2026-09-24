@@ -303,7 +303,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
 	legacyEngine := securityaudit.NewLegacyModerationAdapter(contentModerationService)
 	coordinator := securityaudit.NewCoordinator(legacyEngine, promptService)
-	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator)
+	keyBillingSnapshotStore := repository.NewKeyBillingSnapshotRepository(db)
+	keyBillingSnapshotService := service.ProvideKeyBillingSnapshotService(keyBillingSnapshotStore, settingService, userGroupRateRepository)
+	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator, keyBillingSnapshotService)
 	openAIGatewayHandler := handler.ProvideOpenAIGatewayHandler(openAIGatewayService, pluginManager, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, grokQuotaService, configConfig, coordinator)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	totpHandler := handler.NewTotpHandler(totpService)
@@ -388,8 +390,9 @@ func providePrivacyClientFactory() service.PrivacyClientFactory {
 
 func provideServiceBuildInfo(buildInfo handler.BuildInfo) service.BuildInfo {
 	return service.BuildInfo{
-		Version:   buildInfo.Version,
-		BuildType: buildInfo.BuildType,
+		Version:        buildInfo.Version,
+		BuildType:      buildInfo.BuildType,
+		DeploymentType: buildInfo.DeploymentType,
 	}
 }
 

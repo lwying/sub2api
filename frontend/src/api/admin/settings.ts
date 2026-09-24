@@ -1339,6 +1339,53 @@ export async function updateRateLimit429CooldownSettings(
   return data;
 }
 
+// ==================== Request-scoped 429 Account Limit ====================
+
+export interface RateLimit429AccountLimit {
+  max_accounts: number;
+}
+
+export async function getRateLimit429AccountLimit(): Promise<RateLimit429AccountLimit> {
+  const { data } = await apiClient.get<RateLimit429AccountLimit>(
+    "/admin/settings/rate-limit-429-account-limit",
+  );
+  return data;
+}
+
+export async function updateRateLimit429AccountLimit(
+  settings: RateLimit429AccountLimit,
+): Promise<RateLimit429AccountLimit> {
+  const { data } = await apiClient.put<RateLimit429AccountLimit>(
+    "/admin/settings/rate-limit-429-account-limit",
+    settings,
+  );
+  return data;
+}
+
+// ==================== Outward Key Billing Snapshot ====================
+
+export interface KeyBillingSnapshotSettings {
+  enabled: boolean;
+  max_stale_hours: number;
+}
+
+export async function getKeyBillingSnapshotSettings(): Promise<KeyBillingSnapshotSettings> {
+  const { data } = await apiClient.get<KeyBillingSnapshotSettings>(
+    "/admin/settings/key-billing-snapshot",
+  );
+  return data;
+}
+
+export async function updateKeyBillingSnapshotSettings(
+  settings: KeyBillingSnapshotSettings,
+): Promise<KeyBillingSnapshotSettings> {
+  const { data } = await apiClient.put<KeyBillingSnapshotSettings>(
+    "/admin/settings/key-billing-snapshot",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Panel Rate Limit Settings ====================
 
 /**
@@ -1598,6 +1645,10 @@ export const settingsAPI = {
   updateOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
+  getRateLimit429AccountLimit,
+  updateRateLimit429AccountLimit,
+  getKeyBillingSnapshotSettings,
+  updateKeyBillingSnapshotSettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,

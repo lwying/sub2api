@@ -169,6 +169,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	var requestAuditAttempts []service.RequestAuditAttempt
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	failed429Accounts := h.request429AccountLimit(c)
 
 	// 分组利润控制：chat completions 文本入口请求级装门并固定 pricingAt。
 	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
@@ -416,6 +417,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
+					if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					if switchCount >= maxAccountSwitches {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return

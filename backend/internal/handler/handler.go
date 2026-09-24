@@ -74,4 +74,7 @@ type Handlers struct {
 type BuildInfo struct {
 	Version   string
 	BuildType string // "source" for manual builds, "release" for CI builds
+	// DeploymentType is "docker" when a container image owns the running
+	// executable, otherwise "native".
+	DeploymentType string
 }

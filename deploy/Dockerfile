@@ -69,12 +69,15 @@ COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION
+# DeploymentType=docker tells the running binary that a container image owns it,
+# so the admin API refuses in-app binary update/rollback: replacing the file
+# inside the container would neither change the image nor survive a recreate.
 RUN VERSION_VALUE="${VERSION}" && \
     if [ -z "${VERSION_VALUE}" ]; then VERSION_VALUE="$(./scripts/resolve-version.sh)"; fi && \
     DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
     CGO_ENABLED=0 GOOS=linux go build \
     -tags embed \
-    -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
+    -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release -X main.DeploymentType=docker" \
     -o /app/sub2api \
     ./cmd/server
 
@@ -102,6 +105,12 @@ RUN addgroup -g 1000 sub2api && \
 
 # Set working directory
 WORKDIR /app
+
+# Same declaration as the build-stage ldflag, repeated as an image-level marker
+# on purpose: the Go linker silently ignores an -X flag whose symbol name no
+# longer matches, so a renamed variable must not be able to drop the guard by
+# accident. Either marker alone is enough; the build-time one wins when present.
+ENV SUB2API_DEPLOYMENT=docker
 
 # Copy binary and runtime fallback resources from builder
 COPY --from=backend-builder /app/sub2api /app/sub2api

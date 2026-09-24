@@ -1,0 +1,118 @@
+name: Upstream Sync
+
+# 每天 03:17 UTC 检查一次上游 Wei-Shaw/sub2api，并且最多维护一个待审 PR：
+# 上游有新提交时更新同一个同步分支与同一个 PR，没有新提交时什么都不做。
+#
+# 本工作流只做「读上游 + 写一个同步分支 + 建/改一个 PR」：
+#   - 不合并 PR、不打标签、不发布版本、不部署任何东西；
+#   - 不强推，也不推送默认分支；
+#   - 若上游改动与 fork 冲突、或同步分支上出现人工提交，则停下并报告，交给维护者处理。
+# 合并与发布始终是维护者的人工动作（见 .github/fork-sync/ 下的说明与保护清单）。
+#
+# CI 可见性（重要）：默认的 GITHUB_TOKEN 建/改 PR 之后 **不会**触发该 PR 的
+# push/pull_request workflow，因此 PR 上很可能没有任何检查在跑。本工作流因此
+# 从不声明 CI 通过：报告里只写实际观察到的检查状态，并注明「没有检查」不等于已批准。
+# 要让 PR 自动跑 CI，需要配置专用 token（secrets.FORK_SYNC_TOKEN，仓库/组织级 PAT），
+# 并在分支保护里要求维护者人工批准；这正是「人工验证后再合并」的边界。
+#
+# 本地执行环境：runner 的检出是一次性、可丢弃的（FORK_SYNC_DISPOSABLE_CHECKOUT=1），
+# 同步脚本会先校验工作树干净，然后才在其中切换分支与 merge。
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只判定并输出报告，不推送分支、不创建或更新 PR'
+        required: false
+        type: boolean
+        default: false
+
+# 同一时刻只允许一个同步任务：否则两个运行可能各自开一个 PR。
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+# 最小权限：推送同步分支 + 创建/更新 PR 就够了。
+# 不申请 packages / id-token / actions 等任何额外权限。
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FORK_REPO: lwying/sub2api
+  UPSTREAM_REPO: Wei-Shaw/sub2api
+  DEFAULT_BRANCH: main
+  SYNC_BRANCH: chore/upstream-sync
+  BOT_NAME: fork-sync bot
+  BOT_EMAIL: fork-sync-bot@users.noreply.github.com
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the fork default branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Maintain a single pending upstream sync pull request
+        # 事件载荷与输入只通过 env 进入脚本，绝不拼进 shell 正文。
+        env:
+          # 专用 token 优先；回退到 GITHUB_TOKEN 时不会触发 PR 上的 CI，
+          # 报告会如实说明这一点（见文件头部的「CI 可见性」）。
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN != '' && secrets.FORK_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          FORK_SYNC_TOKEN_KIND: ${{ secrets.FORK_SYNC_TOKEN != '' && 'dedicated' || 'github_token' }}
+          REPO_DIR: ${{ github.workspace }}
+          REPORT_PATH: ${{ runner.temp }}/fork-sync-report.md
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
+          FORK_REPO: ${{ env.FORK_REPO }}
+          UPSTREAM_REPO: ${{ env.UPSTREAM_REPO }}
+          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+          SYNC_BRANCH: ${{ env.SYNC_BRANCH }}
+          BOT_NAME: ${{ env.BOT_NAME }}
+          BOT_EMAIL: ${{ env.BOT_EMAIL }}
+          # 显式声明：runner 的检出是一次性、可丢弃的，工具可以在其中
+          # 切换分支并 merge/reset（它同时要求工作树干净）。
+          FORK_SYNC_DISPOSABLE_CHECKOUT: '1'
+        run: |
+          set -euo pipefail
+
+          # 凭据只经 GIT_ASKPASS 提供：token 不进 argv、不进 URL、不打日志。
+          askpass="${RUNNER_TEMP}/fork-sync-askpass.sh"
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *sername*) printf '%s\n' "x-access-token" ;;
+            *) printf '%s\n' "${GH_TOKEN:-}" ;;
+          esac
+          ASKPASS
+          chmod +x "$askpass"
+          export GIT_ASKPASS="$askpass"
+          export GIT_TERMINAL_PROMPT=0
+
+          plan_json="${RUNNER_TEMP}/fork-sync-plan.json"
+
+          # 阻塞（冲突/人工提交）是非零退出：让运行失败以便维护者收到通知，
+          # 但先把报告写进 job summary，失败原因在 UI 上直接可见。
+          set +e
+          bash .github/fork-sync/upstream-sync.sh | tee "$plan_json"
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ -f "$REPORT_PATH" ]; then
+            {
+              echo '## upstream sync report'
+              echo
+              cat "$REPORT_PATH"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$status" -eq 0 ]; then
+            echo "upstream sync completed (see the job summary and the pending pull request)"
+          else
+            echo "::error::upstream sync stopped with exit code ${status}; maintainer action required. The sync branch and PR were left untouched."
+          fi
+          exit "$status"

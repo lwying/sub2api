@@ -2,7 +2,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { getPublicSettings } from '@/api/auth'
+import { checkUpdates } from '@/api/admin/system'
 import type { PublicSettings } from '@/types'
+import type { VersionInfo } from '@/api/admin/system'
+
+function createVersionInfo(overrides: Partial<VersionInfo> = {}): VersionInfo {
+  return {
+    current_version: '0.2.6',
+    latest_version: '0.2.6',
+    has_update: false,
+    cached: false,
+    build_type: 'release',
+    ...overrides,
+  }
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -81,6 +94,7 @@ describe('useAppStore', () => {
     vi.useFakeTimers()
     localStorage.clear()
     vi.mocked(getPublicSettings).mockReset()
+    vi.mocked(checkUpdates).mockReset()
     // 清除 window.__APP_CONFIG__
     delete (window as any).__APP_CONFIG__
   })
@@ -321,6 +335,92 @@ describe('useAppStore', () => {
       expect(store.sidebarCollapsed).toBe(false)
       expect(store.loading).toBe(false)
       expect(store.toasts).toHaveLength(0)
+    })
+  })
+
+  // --- 版本检查 ---
+
+  describe('版本检查', () => {
+    it('保留后端 warning，供界面区分「无法判定」与「已是最新」', async () => {
+      vi.mocked(checkUpdates).mockResolvedValue(
+        createVersionInfo({
+          latest_version: '',
+          warning: 'no release asset for this platform',
+        })
+      )
+      const store = useAppStore()
+
+      await store.fetchVersion(true)
+
+      expect(store.versionWarning).toBe('no release asset for this platform')
+      expect(store.versionCheckFailed).toBe(false)
+    })
+
+    it('正常缓存命中（cached=true，无 warning）不算检查失败', async () => {
+      vi.mocked(checkUpdates).mockResolvedValue(createVersionInfo({ cached: true }))
+      const store = useAppStore()
+
+      await store.fetchVersion(true)
+
+      expect(store.versionWarning).toBe('')
+      expect(store.versionCheckFailed).toBe(false)
+    })
+
+    it('检查失败时标记失败，绝不把失败当成已是最新', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      vi.mocked(checkUpdates).mockRejectedValue(new Error('network unavailable'))
+      const store = useAppStore()
+
+      await expect(store.fetchVersion(true)).resolves.toBeNull()
+
+      expect(store.versionCheckFailed).toBe(true)
+      expect(store.hasUpdate).toBe(false)
+      consoleError.mockRestore()
+    })
+
+    it('缺省能力字段的旧后端不会被视为支持应用内替换', async () => {
+      vi.mocked(checkUpdates).mockResolvedValue(createVersionInfo())
+      const store = useAppStore()
+
+      await store.fetchVersion(true)
+
+      // 保守默认：无法确认时绝不提供就地替换程序的能力
+      expect(store.binaryUpdateSupported).toBe(false)
+      expect(store.deploymentType).toBe('')
+    })
+
+    it('按后端字段记录部署方式与应用内替换能力', async () => {
+      vi.mocked(checkUpdates).mockResolvedValue(
+        createVersionInfo({ binary_update_supported: true, deployment_type: 'native' })
+      )
+      const store = useAppStore()
+      await store.fetchVersion(true)
+
+      expect(store.binaryUpdateSupported).toBe(true)
+      expect(store.deploymentType).toBe('native')
+
+      vi.mocked(checkUpdates).mockResolvedValue(
+        createVersionInfo({ binary_update_supported: false, deployment_type: 'docker' })
+      )
+      await store.fetchVersion(true)
+
+      expect(store.binaryUpdateSupported).toBe(false)
+      expect(store.deploymentType).toBe('docker')
+    })
+
+    it('成功检查会清除上一次的失败标记', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      vi.mocked(checkUpdates).mockRejectedValueOnce(new Error('network unavailable'))
+      const store = useAppStore()
+      await store.fetchVersion(true)
+      expect(store.versionCheckFailed).toBe(true)
+
+      vi.mocked(checkUpdates).mockResolvedValueOnce(createVersionInfo())
+      await store.fetchVersion(true)
+
+      expect(store.versionCheckFailed).toBe(false)
+      expect(store.versionWarning).toBe('')
+      consoleError.mockRestore()
     })
   })
 

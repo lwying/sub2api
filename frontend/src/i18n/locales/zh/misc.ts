@@ -43,6 +43,15 @@ export default {
     rollbackSelectVersion: '选择要回退到的版本（近 3 个版本）',
     rollbackConfirm: '回退到 {version}',
     rollbackWarning: '回退将下载所选版本并替换当前程序，完成后需重启服务',
+    checkUnavailable: '无法确认最新版本',
+    checkUnavailableHint:
+      '版本检查没有返回可用的结论，因此不能判定为已是最新。请确认部署方式或重试。',
+    updateDockerHint:
+      '本服务以容器镜像方式运行，无法在容器内就地替换自身。请在自己维护的 compose 文件中固定镜像标签并重建容器来完成升级或回退。',
+    updateUnsupportedHint: '当前部署方式不支持应用内替换程序，请按运维方既有的升级流程处理。',
+    updateNothingToInstall: '未安装任何内容——后端返回服务已是最新版本。',
+    rollbackDockerHint:
+      '容器镜像的回退方式是在自己维护的 compose 文件中固定上一个镜像标签，本界面不会改动它。',
     rollingBack: '正在回退...',
     rollbackComplete: '回退完成',
     rollbackFailed: '回退失败',
@@ -55,7 +64,12 @@ export default {
     deployScript: '脚本部署',
     deployDocker: 'Docker',
     dockerEditCompose: '修改 docker-compose.yml 中的镜像版本',
-    dockerRecreate: '重新创建容器'
+    dockerImagePlaceholder: '<已发布的 fork 镜像>',
+    dockerOperatorManaged:
+      '本界面无法确认 fork 镜像是否已发布，请使用运维方实际发布的 {version} 镜像标签；替换运行中容器内的文件不算镜像升级。',
+    dockerRecreate: '重新创建容器',
+    rollbackWarningDocker:
+      'Docker 部署按镜像标签升级；内置回退只替换容器内程序，不会改变 docker-compose 文件里固定的镜像。'
   },
 
   // Recharge / Subscription Page
@@ -642,6 +656,46 @@ export default {
         expired: '已过期',
         revoked: '已撤销',
       },
+    },
+  },
+
+  // 普通用户的只读账号视图与管理员逐用户授权界面。
+  // 身份字段一律由服务端脱敏后返回，这里只负责以纯文本呈现。
+  assignedAccounts: {
+    description: '查看管理员分配给你的账号基础信息，上游身份已脱敏。',
+    readOnlyNotice: '此页面仅供查看，不能修改、导出账号或查看凭据。',
+    identityMaskedNotice: '上游邮箱、用户名与账号 ID 由服务端脱敏显示。',
+    loadFailed: '加载已分配账号失败',
+    empty: '暂无可用账号',
+    emptyHint: '管理员尚未为你分配账号，或已分配的账号当前不可用。',
+    viewDetail: '查看详情',
+    columns: {
+      platform: '平台',
+      accountType: '账号类型',
+      email: '上游邮箱',
+      username: '上游用户名',
+      upstreamAccountId: '上游账号 ID',
+      actions: '操作',
+    },
+    detail: {
+      title: '账号详情',
+      notVisible: '该账号不存在或你无权查看。',
+      loadFailed: '加载账号详情失败',
+    },
+    admin: {
+      title: '可见账号授权',
+      hint: '为 {email} 分配可只读查看的账号，默认不授权。',
+      enableLabel: '允许该用户查看已分配的账号',
+      assignedTitle: '已分配账号',
+      assignedCount: '已分配 {count} 个',
+      noAssigned: '尚未分配任何账号',
+      searchPlaceholder: '搜索账号名称以添加',
+      noCandidates: '没有可添加的账号',
+      add: '添加',
+      remove: '移除',
+      saveSuccess: '可见账号授权已更新',
+      loadFailed: '加载可见账号授权失败',
+      saveFailed: '保存可见账号授权失败',
     },
   },
 

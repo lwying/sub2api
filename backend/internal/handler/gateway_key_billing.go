@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -42,6 +47,17 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Billing information is not supported in simple mode")
 		return
 	}
+	if h.keyBillingSnapshot != nil && h.settingService != nil {
+		settings, err := h.settingService.GetKeyBillingSnapshotSettings(c.Request.Context())
+		if err != nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Billing information is temporarily unavailable")
+			return
+		}
+		if settings.Enabled {
+			h.respondWithKeyBillingSnapshot(c, apiKey, settings.Generation)
+			return
+		}
+	}
 	if apiKey.GroupID == nil {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", "API key is not assigned to a group")
 		return
@@ -50,7 +66,6 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Billing information is unavailable")
 		return
 	}
-
 	resolvedRate, ok := h.resolveKeyBillingRate(c, apiKey)
 	if !ok {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Billing information is unavailable")
@@ -59,6 +74,108 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now()))
+}
+
+func (h *GatewayHandler) respondWithKeyBillingSnapshot(c *gin.Context, apiKey *service.APIKey, generation string) {
+	credential := keyBillingPresentedCredential(c)
+	identity, err := h.keyBillingSnapshot.ReadAuthoritativeIdentity(c.Request.Context(), apiKey.ID, credential)
+	if errors.Is(err, service.ErrKeyBillingSnapshotUnboundKey) {
+		// The authoritative row binds this key to no group. Answer exactly like the
+		// live path does for the same condition; a stale cached apiKey.GroupID must
+		// never turn this into a server error.
+		h.errorResponse(c, http.StatusForbidden, "permission_error", "API key is not assigned to a group")
+		return
+	}
+	if err != nil {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Billing information is temporarily unavailable")
+		return
+	}
+	if len(identity.IPWhitelist) > 0 || len(identity.IPBlacklist) > 0 {
+		clientIP := ip.GetSecurityClientIP(c, h.cfg.TrustForwardedIPForAPIKeyACL())
+		allowed, _ := ip.CheckIPRestriction(clientIP, identity.IPWhitelist, identity.IPBlacklist)
+		if !allowed {
+			h.errorResponse(c, http.StatusForbidden, "permission_error", "Access denied")
+			return
+		}
+	}
+	payload, enabled, err := h.keyBillingSnapshot.GetOrCreate(c.Request.Context(), identity.Binding, func(ctx context.Context) ([]byte, error) {
+		resolved, _, resolveErr := h.keyBillingSnapshot.ResolveKeyBillingRate(ctx, identity.Binding.UserID, identity.Binding.GroupID, identity.GroupRate)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		groupID := identity.Binding.GroupID
+		current := &service.APIKey{
+			UserID:  identity.Binding.UserID,
+			GroupID: &groupID,
+			Group: &service.Group{
+				ID: groupID, Platform: identity.GroupPlatform,
+				SubscriptionType: identity.GroupSubscriptionType,
+				RateMultiplier:   identity.GroupRate,
+				PeakRateEnabled:  identity.PeakRateEnabled,
+				PeakStart:        identity.PeakStart, PeakEnd: identity.PeakEnd,
+				PeakRateMultiplier: identity.PeakRateMultiplier,
+			},
+		}
+		observedAt, clockErr := h.keyBillingSnapshot.ReadSharedTime(ctx)
+		if clockErr != nil {
+			return nil, clockErr
+		}
+		return json.Marshal(buildKeyBillingInfo(current, resolved, observedAt))
+	})
+	if err != nil || !enabled || len(payload) == 0 {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Billing information is temporarily unavailable")
+		return
+	}
+	latest, latestErr := h.keyBillingSnapshot.ReadAuthoritativeIdentity(c.Request.Context(), apiKey.ID, credential)
+	if errors.Is(latestErr, service.ErrKeyBillingSnapshotUnboundKey) {
+		h.errorResponse(c, http.StatusForbidden, "permission_error", "API key is not assigned to a group")
+		return
+	}
+	if latestErr != nil || latest.Binding != identity.Binding {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Billing information is temporarily unavailable")
+		return
+	}
+	if len(latest.IPWhitelist) > 0 || len(latest.IPBlacklist) > 0 {
+		clientIP := ip.GetSecurityClientIP(c, h.cfg.TrustForwardedIPForAPIKeyACL())
+		allowed, _ := ip.CheckIPRestriction(clientIP, latest.IPWhitelist, latest.IPBlacklist)
+		if !allowed {
+			h.errorResponse(c, http.StatusForbidden, "permission_error", "Access denied")
+			return
+		}
+	}
+	currentSettings, settingsErr := h.settingService.GetKeyBillingSnapshotSettings(c.Request.Context())
+	if settingsErr != nil || !currentSettings.Enabled || currentSettings.Generation != generation ||
+		currentSettings.MaxStaleHours < service.MinKeyBillingSnapshotMaxStaleHours ||
+		currentSettings.MaxStaleHours > service.MaxKeyBillingSnapshotMaxStaleHours {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Billing information is temporarily unavailable")
+		return
+	}
+	var declaration struct {
+		ObservedAt time.Time `json:"observed_at"`
+	}
+	decodeErr := json.Unmarshal(payload, &declaration)
+	sharedNow, clockErr := h.keyBillingSnapshot.ReadSharedTime(c.Request.Context())
+	age := sharedNow.Sub(declaration.ObservedAt)
+	if decodeErr != nil || clockErr != nil || declaration.ObservedAt.IsZero() ||
+		age < 0 || age > time.Duration(currentSettings.MaxStaleHours)*time.Hour {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Billing information is temporarily unavailable")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+}
+
+func keyBillingPresentedCredential(c *gin.Context) string {
+	authHeader := c.GetHeader("Authorization")
+	if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		if key := strings.TrimSpace(parts[1]); key != "" {
+			return key
+		}
+	}
+	if key := c.GetHeader("x-api-key"); key != "" {
+		return key
+	}
+	return c.GetHeader("x-goog-api-key")
 }
 
 func (h *GatewayHandler) resolveKeyBillingRate(c *gin.Context, apiKey *service.APIKey) (float64, bool) {

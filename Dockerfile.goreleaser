@@ -46,6 +46,14 @@ WORKDIR /app
 COPY sub2api /app/sub2api
 COPY --chown=sub2api:sub2api backend/resources /app/resources
 
+# This image packages a binary GoReleaser already built, so it cannot inject the
+# -X main.DeploymentType ldflag the compiling Dockerfiles use. It declares the
+# same fact for the running binary here instead: the image owns the executable,
+# so the admin API refuses in-app binary update/rollback (a file swap inside the
+# container neither changes the image nor survives a recreate). The build-time
+# marker, when present, always takes precedence over this one.
+ENV SUB2API_DEPLOYMENT=docker
+
 # Create data directory
 RUN mkdir -p /app/data && chown -R sub2api:sub2api /app
 

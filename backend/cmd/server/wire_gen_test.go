@@ -12,12 +12,15 @@ import (
 
 func TestProvideServiceBuildInfo(t *testing.T) {
 	in := handler.BuildInfo{
-		Version:   "v-test",
-		BuildType: "release",
+		Version:        "v-test",
+		BuildType:      "release",
+		DeploymentType: "docker",
 	}
 	out := provideServiceBuildInfo(in)
 	require.Equal(t, in.Version, out.Version)
 	require.Equal(t, in.BuildType, out.BuildType)
+	require.Equal(t, in.DeploymentType, out.DeploymentType,
+		"the container deployment marker must reach the update service")
 }
 
 func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {

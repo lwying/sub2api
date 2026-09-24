@@ -106,6 +106,41 @@ func TestGitHubReleaseClientRedirectAuthorization(t *testing.T) {
 	}
 }
 
+func TestNewGitHubReleaseClientRestrictsAssetRedirects(t *testing.T) {
+	client, ok := NewGitHubReleaseClient("", false).(*githubReleaseClient)
+	require.True(t, ok)
+	require.NotNil(t, client.downloadHTTPClient.CheckRedirect,
+		"the download client must bound where a release asset download may be redirected to")
+}
+
+func TestDownloadFileRefusesRedirectOffGitHubAssetHosts(t *testing.T) {
+	// The redirect target is served by this same test server, so a client without
+	// the redirect policy would follow it and succeed. That makes the refusal
+	// below decisive rather than "the host did not resolve".
+	srv := newLocalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/asset" {
+			http.Redirect(w, r, "http://127.0.0.1/redirected", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("payload"))
+	}))
+
+	// Keep the redirect policy the constructor installs and only swap the
+	// transport, so this exercises the wired client rather than a hand-built one.
+	client, ok := NewGitHubReleaseClient("", false).(*githubReleaseClient)
+	require.True(t, ok)
+	client.downloadHTTPClient.Transport = &testTransport{testServerURL: srv.URL}
+
+	dest := filepath.Join(t.TempDir(), "asset")
+
+	err := client.DownloadFile(context.Background(), srv.URL+"/asset", dest, 100)
+
+	require.Error(t, err, "a download redirected off GitHub's asset hosts must fail")
+	_, statErr := os.Stat(dest)
+	require.True(t, os.IsNotExist(statErr), "nothing may be written when the redirect is refused")
+}
+
 func TestGitHubReleaseClientDoesNotAuthorizeDownloads(t *testing.T) {
 	client := newTestGitHubReleaseClient()
 	client.updateGitHubToken = "update-secret"
@@ -125,7 +160,7 @@ func TestGitHubReleaseClientDoesNotAuthorizeDownloads(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "asset")
 	require.NoError(t, client.DownloadFile(context.Background(), "https://objects.githubusercontent.com/asset", dest, 100))
-	_, err := client.FetchChecksumFile(context.Background(), "https://github.com/test/repo/releases/download/v1/checksums.txt")
+	_, err := client.FetchChecksumFile(context.Background(), "https://github.com/test/repo/releases/download/v1/checksums.txt", testMaxChecksumSize)
 	require.NoError(t, err)
 	require.Len(t, headers, 2)
 	for _, header := range headers {
@@ -241,7 +276,7 @@ func (s *GitHubReleaseServiceSuite) TestFetchChecksumFile_Success() {
 
 	s.client = newTestGitHubReleaseClient()
 
-	body, err := s.client.FetchChecksumFile(context.Background(), s.srv.URL)
+	body, err := s.client.FetchChecksumFile(context.Background(), s.srv.URL, testMaxChecksumSize)
 	require.NoError(s.T(), err, "FetchChecksumFile")
 	require.Equal(s.T(), "sum", string(body), "checksum body mismatch")
 }
@@ -253,7 +288,7 @@ func (s *GitHubReleaseServiceSuite) TestFetchChecksumFile_Non200() {
 
 	s.client = newTestGitHubReleaseClient()
 
-	_, err := s.client.FetchChecksumFile(context.Background(), s.srv.URL)
+	_, err := s.client.FetchChecksumFile(context.Background(), s.srv.URL, testMaxChecksumSize)
 	require.Error(s.T(), err, "expected error for non-200")
 }
 
@@ -297,7 +332,7 @@ func (s *GitHubReleaseServiceSuite) TestDownloadFile_InvalidDestPath() {
 func (s *GitHubReleaseServiceSuite) TestFetchChecksumFile_InvalidURL() {
 	s.client = newTestGitHubReleaseClient()
 
-	_, err := s.client.FetchChecksumFile(context.Background(), "://invalid-url")
+	_, err := s.client.FetchChecksumFile(context.Background(), "://invalid-url", testMaxChecksumSize)
 	require.Error(s.T(), err, "expected error for invalid URL")
 }
 
@@ -473,8 +508,48 @@ func (s *GitHubReleaseServiceSuite) TestFetchChecksumFile_ContextCancel() {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := s.client.FetchChecksumFile(ctx, s.srv.URL)
+	_, err := s.client.FetchChecksumFile(ctx, s.srv.URL, testMaxChecksumSize)
 	require.Error(s.T(), err)
+}
+
+// testMaxChecksumSize is the bound the updater passes in production.
+const testMaxChecksumSize = 1 << 20
+
+func (s *GitHubReleaseServiceSuite) TestFetchChecksumFile_EnforcesMaxSize_ContentLength() {
+	s.srv = newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("a"), 4096))
+	}))
+
+	s.client = newTestGitHubReleaseClient()
+
+	_, err := s.client.FetchChecksumFile(context.Background(), s.srv.URL, 1024)
+
+	require.Error(s.T(), err, "an oversized checksums file must be refused")
+	require.Contains(s.T(), err.Error(), "too large")
+}
+
+func (s *GitHubReleaseServiceSuite) TestFetchChecksumFile_EnforcesMaxSize_Chunked() {
+	s.srv = newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		for i := 0; i < 10; i++ {
+			_, _ = w.Write(bytes.Repeat([]byte("b"), 100))
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+		}
+	}))
+
+	s.client = newTestGitHubReleaseClient()
+
+	_, err := s.client.FetchChecksumFile(context.Background(), s.srv.URL, 512)
+
+	require.Error(s.T(), err, "an oversized chunked checksums file must be refused even without Content-Length")
+	require.Contains(s.T(), err.Error(), "maximum size")
 }
 
 func TestGitHubReleaseServiceSuite(t *testing.T) {

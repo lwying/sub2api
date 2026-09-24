@@ -633,6 +633,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	failed429Accounts := h.request429AccountLimit(c)
 	requestAuditHeaders := cloneRequestAuditHeaders(c)
 	var requestAuditAttempts []service.RequestAuditAttempt
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
@@ -973,6 +974,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
+					if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					if switchCount >= maxAccountSwitches {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -1343,6 +1348,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	failed429Accounts := h.request429AccountLimit(c)
 	effectiveMappedModel := preferredMappedModel
 
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
@@ -1594,6 +1600,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
+					if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					if switchCount >= maxAccountSwitches {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -2669,6 +2679,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	failed429Accounts := h.request429AccountLimit(c)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
@@ -2713,6 +2724,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
+		if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
+			return false
+		}
 		if switchCount >= maxAccountSwitches {
 			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
 			return false

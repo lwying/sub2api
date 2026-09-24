@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v1.0.0)'
+        description: 'Tag to release (e.g., v1.2.3)'
         required: true
         type: string
       simple_release:
@@ -17,31 +17,172 @@ on:
         default: false
 
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
-# tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
+# tag push 触发时读取 vars.SIMPLE_RELEASE；workflow_dispatch 时以输入参数为准。
+# 两者不能用 `||` 合并：那样 dispatch 里显式的 simple_release=false 会被 repo variable
+# 的 true 覆盖，维护者无法选择完整二进制发布，而且这个开关同时决定 GoReleaser 的
+# --config 与门禁的 release_kind，被覆盖时会一起悄悄降级成 image-only。
 env:
-  SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
+  SIMPLE_RELEASE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.simple_release == 'true') || (github.event_name != 'workflow_dispatch' && vars.SIMPLE_RELEASE == 'true') }}
+  # fork 自有仓库；发布只允许来自这里（见 release-gate）
+  FORK_REPO: lwying/sub2api
+  UPSTREAM_REPO: Wei-Shaw/sub2api
+
+# 发布必须串行：两个入口并发运行时，GoReleaser 会向同一个可变的 :latest 镜像标签推送
+# （.goreleaser.yaml 的 ghcr/dockerhub manifests 与 .goreleaser.simple.yaml 都含 latest），
+# 后结束的旧版本会把 :latest 覆盖成更低版本；VERSION 写回也会变成「谁先推谁生效」。
+# cancel-in-progress 必须为 false：取消一次已经在建/在上传的发布只会留下半套资产。
+# group 不按版本区分——按 tag 分组恰好会放行「新版本 + 旧版本」这两次最危险的组合。
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  # Update VERSION file with tag version
+  # Fork 发布门禁：tag push 与手动 workflow_dispatch 两个入口都必须先经过这里。
+  # 版本是否合法、是否高于 fork 已发布版本、是否只是上游同步误带的版本，全部由
+  # backend/cmd/releasegate 判断；版本归一化也只在这里做一次，后续 job 不再从
+  # 事件载荷里重新推导 tag。
+  release-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      tag: ${{ steps.gate.outputs.tag }}
+      release_kind: ${{ steps.gate.outputs.release_kind }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+
+      # 收集门禁输入。dispatch 输入通过 env 传入，绝不拼进脚本正文。
+      - name: Collect release input
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          # 与 workflow 级 env 同一套优先级：dispatch 输入优先，repo variable 只作用于 tag push。
+          SIMPLE_RELEASE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.simple_release == 'true') || (github.event_name != 'workflow_dispatch' && vars.SIMPLE_RELEASE == 'true') }}
+          UPSTREAM_REPO: ${{ env.UPSTREAM_REPO }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            CANDIDATE_TAG="$DISPATCH_TAG"
+          else
+            CANDIDATE_TAG="${REF#refs/tags/}"
+          fi
+          echo "Candidate release tag: $CANDIDATE_TAG"
+          echo "Fork checkout reports repository: $REPOSITORY"
+
+          if [ "$SIMPLE_RELEASE" = "true" ]; then
+            RELEASE_KIND=image_only
+          else
+            RELEASE_KIND=binary
+          fi
+
+          CURRENT_VERSION_FILE=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
+
+          # fork 已发布版本只能来自 fork 自己的 Releases。本地 git tag 不是基线：
+          # 这个工作树同时带有从 upstream 拉取的 tag。
+          PUBLISHED_LIMIT=1000
+          PUBLISHED_JSON='[]'
+          BASELINE_UNKNOWN=false
+          BASELINE_TRUNCATED=false
+          if ! PUBLISHED_JSON=$(gh release list -R "$REPOSITORY" --limit "$PUBLISHED_LIMIT" --json tagName --jq '[.[].tagName]'); then
+            PUBLISHED_JSON='[]'
+            BASELINE_UNKNOWN=true
+            echo "::warning::could not list releases for $REPOSITORY; the gate will fail closed"
+          fi
+          # 分页上限必须显式暴露：被截断的列表可能恰好漏掉最高的已发布版本，
+          # 而那正是门禁要比较的数字。截断时门禁 fail-closed，而不是当作完整基线。
+          if [ "$BASELINE_UNKNOWN" = "false" ] && [ "$(printf '%s' "$PUBLISHED_JSON" | jq 'length')" -ge "$PUBLISHED_LIMIT" ]; then
+            BASELINE_TRUNCATED=true
+            echo "::warning::release listing reached the page cap ($PUBLISHED_LIMIT); the gate will fail closed"
+          fi
+
+          # upstream 版本列表是辅助信息：取不到时只降级为少一层检查，不让网络抖动
+          # 阻断发布（fork 基线检查始终生效），但降级本身必须被记录在判定里。
+          # 必须取全部分页：单次 per_page=100 只返回第一页，而 tag 按最新在前返回，
+          # 更早的 tag 会被静默丢掉——被截断的列表不能当成完整列表（与 fork 基线同样的
+          # fail-closed 原则），否则一个只存在于上游的旧版本会被判成「上游没有」而放行。
+          # --slurp 把各页包成一个外层数组，flatten 同时兼容单页形态；解析失败一样降级。
+          UPSTREAM_JSON='[]'
+          UPSTREAM_UNKNOWN=false
+          UPSTREAM_PAGES=''
+          if ! UPSTREAM_PAGES=$(gh api --paginate --slurp "repos/$UPSTREAM_REPO/tags?per_page=100" 2>/dev/null) \
+            || ! UPSTREAM_JSON=$(printf '%s' "$UPSTREAM_PAGES" | jq -c '[flatten[] | .name]'); then
+            UPSTREAM_JSON='[]'
+            UPSTREAM_UNKNOWN=true
+            echo "::warning::could not read every upstream tag of $UPSTREAM_REPO; the upstream-carried-version check is skipped for this run"
+          fi
+
+          jq -n \
+            --arg event "$EVENT_NAME" \
+            --arg tag "$CANDIDATE_TAG" \
+            --arg repo "$REPOSITORY" \
+            --arg version_file "$CURRENT_VERSION_FILE" \
+            --arg kind "$RELEASE_KIND" \
+            --argjson published "$PUBLISHED_JSON" \
+            --argjson upstream "$UPSTREAM_JSON" \
+            --argjson baseline_unknown "$BASELINE_UNKNOWN" \
+            --argjson baseline_truncated "$BASELINE_TRUNCATED" \
+            --argjson upstream_unknown "$UPSTREAM_UNKNOWN" \
+            '{
+              event: $event,
+              candidate_tag: $tag,
+              fork_repo: $repo,
+              fork_published_versions: $published,
+              upstream_versions: $upstream,
+              current_version_file: $version_file,
+              release_kind: $kind,
+              fork_baseline_unknown: $baseline_unknown,
+              fork_baseline_truncated: $baseline_truncated,
+              upstream_versions_unknown: $upstream_unknown
+            }' > "$RUNNER_TEMP/release-gate-input.json"
+
+          cat "$RUNNER_TEMP/release-gate-input.json"
+
+      # 被拒绝时该步骤以非零退出，后续 job 因 needs 全部不执行。
+      - name: Run fork release gate
+        id: gate
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go run ./cmd/releasegate gate \
+            -input "$RUNNER_TEMP/release-gate-input.json" \
+            -out "$RUNNER_TEMP/release-gate-result.json"
+          # 判定（含 baseline 与降级告警）必须进 job 日志，失败时也能看到原因
+          cat "$RUNNER_TEMP/release-gate-result.json"
+          echo "version=$(jq -r '.version' "$RUNNER_TEMP/release-gate-result.json")" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r '.tag' "$RUNNER_TEMP/release-gate-result.json")" >> "$GITHUB_OUTPUT"
+          echo "release_kind=$(jq -r '.release_kind' "$RUNNER_TEMP/release-gate-result.json")" >> "$GITHUB_OUTPUT"
+
+  # Update VERSION file with the gated, normalised version
   update-version:
+    needs: [release-gate]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # 只在本 job 的工作区写入构建用的 VERSION（随产物打包进二进制），
+      # 这里不是默认分支写回。
       - name: Update VERSION file
+        env:
+          VERSION: ${{ needs.release-gate.outputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            VERSION=${VERSION#v}
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
-          echo "$VERSION" > backend/cmd/server/VERSION
+          set -euo pipefail
+          printf '%s\n' "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
       - name: Upload VERSION artifact
@@ -52,10 +193,16 @@ jobs:
           retention-days: 1
 
   build-frontend:
+    needs: [release-gate]
     runs-on: ubuntu-latest
     steps:
+      # 前端产物会被 embed 进发布二进制，必须与 release job 用同一个受门禁归一化的 tag：
+      # 手动 dispatch 一个较旧 tag 时，触发 ref 是当时选中的分支（通常是默认分支），
+      # 不指定 ref 就会把另一个提交的前端打进这个版本。
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-gate.outputs.tag }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -85,14 +232,14 @@ jobs:
           retention-days: 1
 
   release:
-    needs: [update-version, build-frontend]
+    needs: [release-gate, update-version, build-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.release-gate.outputs.tag }}
 
       - name: Download VERSION artifact
         uses: actions/download-artifact@v8
@@ -147,12 +294,9 @@ jobs:
 
       - name: Get tag message
         id: tag_message
+        env:
+          TAG_NAME: ${{ needs.release-gate.outputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
           echo "Processing tag: $TAG_NAME"
 
           # 获取完整的 tag message（跳过第一行标题）
@@ -179,11 +323,70 @@ jobs:
           args: release --clean --skip=validate ${{ env.SIMPLE_RELEASE == 'true' && '--config=.goreleaser.simple.yaml' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 通过 env 传 tag message：tag 正文既可能含引号也可能多行
           TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
           GITHUB_REPO_OWNER: ${{ github.repository_owner }}
           GITHUB_REPO_OWNER_LOWER: ${{ steps.lowercase.outputs.owner }}
           GITHUB_REPO_NAME: ${{ github.event.repository.name }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
+
+      # 资产契约：完整二进制发布必须含各平台归档与 checksums.txt；只发布镜像时
+      # 必须被明确标为不可安装，而不是看起来可以一键更新。
+      - name: Verify release asset contract
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.release-gate.outputs.tag }}
+          RELEASE_KIND: ${{ needs.release-gate.outputs.release_kind }}
+        run: |
+          set -euo pipefail
+          # 「读不到资产」与「读到了但没有资产」是两件事：只有后者才能被说成 image-only
+          # 分类。读失败一律标为「验证未完成」，不得折叠成空列表后假装验证通过。
+          ASSETS_JSON='[]'
+          ASSETS_UNVERIFIED=false
+          if ! ASSETS_JSON=$(gh release view "$TAG" -R "$REPOSITORY" --json assets --jq '[.assets[].name]' 2>/dev/null); then
+            ASSETS_JSON='[]'
+            ASSETS_UNVERIFIED=true
+            echo "::warning::could not read the published assets for $TAG; asset verification was NOT completed"
+          fi
+          echo "Published assets for $TAG: $ASSETS_JSON"
+
+          jq -n \
+            --arg tag "$TAG" \
+            --arg kind "$RELEASE_KIND" \
+            --argjson assets "$ASSETS_JSON" \
+            --argjson unverified "$ASSETS_UNVERIFIED" \
+            '{candidate_tag: $tag, release_kind: $kind, assets: $assets, assets_unverified: $unverified}' \
+            > "$RUNNER_TEMP/release-assets-input.json"
+
+          # 这里「非零退出」是预期结果之一（例如 image_only 本身就不是可安装发布），
+          # 所以显式捕获状态而不是让 set -e 中止：set -e 对 || 左侧的命令不生效。
+          # 注意不能用 `if ! cmd; then status=$?`——`!` 取反后 $? 恒为 0。
+          status=0
+          ( cd backend && go run ./cmd/releasegate assets -input "$RUNNER_TEMP/release-assets-input.json" -out "$RUNNER_TEMP/release-assets-result.json" ) || status=$?
+          cat "$RUNNER_TEMP/release-assets-result.json"
+          reason=$(jq -r '.reason' "$RUNNER_TEMP/release-assets-result.json")
+
+          # 读失败：不宣称任何可安装性，直接失败。本校验是 fail-closed 的依据，不能
+          # 把「没读到」讲成「已确认没有二进制资产」。
+          if [ "$ASSETS_UNVERIFIED" = "true" ]; then
+            echo "::error::asset verification for $TAG was NOT completed (reason: $reason); this run makes no claim about installability"
+            exit 1
+          fi
+
+          if [ "$RELEASE_KIND" = "binary" ]; then
+            if [ "$status" -ne 0 ]; then
+              echo "::error::published binary release does not satisfy the asset contract (reason: $reason); no platform binary update is installable from it"
+              exit 1
+            fi
+            echo "Binary release satisfies the asset contract on every required platform."
+          else
+            if [ "$reason" != "image_only" ]; then
+              echo "::error::release is declared image-only but was classified as $reason"
+              exit 1
+            fi
+            echo "::notice::image-only release: no platform binary asset is published, so it must not be offered as an in-app update"
+          fi
 
       # Update DockerHub description
       - name: Update DockerHub description
@@ -205,6 +408,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          TAG_NAME: ${{ needs.release-gate.outputs.tag }}
+          VERSION: ${{ needs.release-gate.outputs.version }}
+          TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
+          REPO: ${{ github.repository }}
         continue-on-error: true
         run: |
           # 检查必要的环境变量
@@ -213,22 +420,14 @@ jobs:
             exit 0
           fi
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
-          VERSION=${TAG_NAME#v}
-          REPO="${{ github.repository }}"
           GHCR_IMAGE="ghcr.io/${REPO,,}"  # ${,,} converts to lowercase
 
-          # 获取 tag message 内容并转义 Markdown 特殊字符
-          TAG_MESSAGE='${{ steps.tag_message.outputs.message }}'
-          TAG_MESSAGE=$(echo "$TAG_MESSAGE" | sed 's/\([_*`\[]\)/\\\1/g')
+          # 转义 Markdown 特殊字符
+          TAG_MESSAGE_ESCAPED=$(printf '%s' "$TAG_MESSAGE" | sed 's/\([_*`\[]\)/\\\1/g')
 
           # 限制消息长度（Telegram 消息限制 4096 字符，预留空间给头尾固定内容）
-          if [ ${#TAG_MESSAGE} -gt 3500 ]; then
-            TAG_MESSAGE="${TAG_MESSAGE:0:3500}..."
+          if [ ${#TAG_MESSAGE_ESCAPED} -gt 3500 ]; then
+            TAG_MESSAGE_ESCAPED="${TAG_MESSAGE_ESCAPED:0:3500}..."
           fi
 
           # 构建消息内容
@@ -236,8 +435,8 @@ jobs:
           MESSAGE+="📦 版本号: \`${VERSION}\`"$'\n'$'\n'
 
           # 添加更新内容
-          if [ -n "$TAG_MESSAGE" ]; then
-            MESSAGE+="${TAG_MESSAGE}"$'\n'$'\n'
+          if [ -n "$TAG_MESSAGE_ESCAPED" ]; then
+            MESSAGE+="${TAG_MESSAGE_ESCAPED}"$'\n'$'\n'
           fi
 
           MESSAGE+="🐳 *Docker 部署:*"$'\n'
@@ -272,8 +471,11 @@ jobs:
                 disable_web_page_preview: true
               }')"
 
+  # VERSION 写回。fork 自有文件只允许向前移动；默认分支可能受保护，因此推送必须
+  # 由维护者显式开启 FORK_ALLOW_DEFAULT_BRANCH_VERSION_PUSH，否则只记录并跳过，
+  # 走维护者控制的 PR 途径。发布失败时该 job 不运行，不会凭空造出新版本。
   sync-version-file:
-    needs: [release]
+    needs: [release, release-gate]
     if: ${{ needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -282,25 +484,52 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Sync VERSION file to released tag
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+
+      - name: Decide the VERSION writeback
+        id: sync
+        working-directory: backend
+        env:
+          CANDIDATE_TAG: ${{ needs.release-gate.outputs.tag }}
+          ALLOW_DEFAULT_BRANCH_PUSH: ${{ vars.FORK_ALLOW_DEFAULT_BRANCH_VERSION_PUSH == 'true' }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            VERSION=${VERSION#v}
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          set -euo pipefail
+          # working-directory 是 backend/，此处路径相对 backend/
+          CURRENT_VERSION_FILE=$(tr -d '\r\n' < cmd/server/VERSION || true)
 
-          CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
-          if [ "$CURRENT_VERSION" = "$VERSION" ]; then
-            echo "VERSION file already matches $VERSION"
-            exit 0
-          fi
+          jq -n \
+            --arg tag "$CANDIDATE_TAG" \
+            --arg current "$CURRENT_VERSION_FILE" \
+            --argjson allow "$ALLOW_DEFAULT_BRANCH_PUSH" \
+            '{candidate_tag: $tag, current_version_file: $current, allow_default_branch_push: $allow}' \
+            > "$RUNNER_TEMP/sync-version-input.json"
 
-          echo "$VERSION" > backend/cmd/server/VERSION
+          go run ./cmd/releasegate sync-version \
+            -input "$RUNNER_TEMP/sync-version-input.json" \
+            -out "$RUNNER_TEMP/sync-version-result.json"
+
+          echo "should_write=$(jq -r '.should_write' "$RUNNER_TEMP/sync-version-result.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Write VERSION file
+        if: ${{ steps.sync.outputs.should_write == 'true' }}
+        env:
+          VERSION: ${{ needs.release-gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$VERSION" > backend/cmd/server/VERSION
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/cmd/server/VERSION
           git commit -m "chore: sync VERSION to ${VERSION} [skip ci]"
+
+      - name: Push VERSION to the default branch
+        if: ${{ steps.sync.outputs.should_write == 'true' && vars.FORK_ALLOW_DEFAULT_BRANCH_VERSION_PUSH == 'true' }}
+        run: |
+          set -euo pipefail
           git push origin HEAD:${{ github.event.repository.default_branch }}

@@ -859,7 +859,9 @@ func TestAntigravityGatewayService_ForwardGemini_ClearsStickySessionOnGeminiRate
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	// 上游真实限流 429 必须透传 429（handler 的请求内 429 账号上限只统计 429），
+	// 不再折叠成 503。
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.Len(t, repo.modelRateLimitCalls, 2)
 	require.Equal(t, "gemini-3-flash", repo.modelRateLimitCalls[0].modelKey)
 	require.Equal(t, antigravityGeminiModelRateLimitKey, repo.modelRateLimitCalls[1].modelKey)

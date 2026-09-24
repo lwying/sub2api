@@ -61,6 +61,10 @@ func NewGitHubReleaseClient(proxyURL string, allowDirectOnProxyError bool) servi
 		downloadClient = &http.Client{Timeout: 10 * time.Minute}
 	}
 	downloadClient = cloneHTTPClient(downloadClient)
+	// SECURITY: release asset downloads redirect to GitHub's asset hosts. Bound
+	// those redirects to GitHub-controlled HTTPS origins so a redirect cannot
+	// move an update download onto a third-party origin.
+	downloadClient.CheckRedirect = service.ForkAssetCheckRedirect(downloadClient.CheckRedirect)
 
 	return &githubReleaseClient{
 		httpClient:         apiClient,
@@ -116,7 +120,7 @@ func (c *githubReleaseClientError) DownloadFile(ctx context.Context, url, dest s
 	return c.err
 }
 
-func (c *githubReleaseClientError) FetchChecksumFile(ctx context.Context, url string) ([]byte, error) {
+func (c *githubReleaseClientError) FetchChecksumFile(ctx context.Context, url string, maxSize int64) ([]byte, error) {
 	return nil, c.err
 }
 
@@ -226,13 +230,16 @@ func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string
 	return nil
 }
 
-func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string) ([]byte, error) {
+func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string, maxSize int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	// checksums.txt is a release asset, and its content decides whether the
+	// archive is accepted, so it is fetched through the same restricted client as
+	// the archive itself rather than the API client.
+	resp, err := c.downloadHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -242,5 +249,18 @@ func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string)
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	// SECURITY: checksums.txt is a small text file. Bound it on the declared size
+	// and again on the bytes actually read, so a misbehaving or hostile asset
+	// cannot exhaust memory while the updater is only trying to check a version.
+	if resp.ContentLength > maxSize {
+		return nil, fmt.Errorf("checksums file too large: %d bytes (max %d)", resp.ContentLength, maxSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("checksums file exceeded maximum size of %d bytes", maxSize)
+	}
+	return data, nil
 }

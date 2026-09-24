@@ -8,7 +8,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const updateCacheKey = "update:latest"
+// updateCacheKey holds the update-check result of one release source.
+//
+// The key is namespaced by repository on purpose: the updater used to read
+// lwying/sub2api's releases while caching under a repository-agnostic key, so a
+// pre-switch upstream entry stayed readable after the source moved. A separate
+// key per source means the upstream-era entry ("update:latest") can never be
+// served as a fork result, not even when the fork lookup fails.
+const updateCacheKey = "update:latest:lwying/sub2api"
 
 type updateCache struct {
 	rdb *redis.Client

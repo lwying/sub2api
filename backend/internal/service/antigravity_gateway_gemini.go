@@ -41,6 +41,23 @@ func WithForwardGeminiSession(groupID int64, sessionHash string) ForwardGeminiOp
 	}
 }
 
+// antigravitySwitchFailoverStatusCode 把账号切换信号映射为换号失败状态码。
+//
+// 服务层把「上游限流 → 换号」统一折叠成 AntigravityAccountSwitchError，默认按
+// 503（可换号的服务不可用）处理。但上游真实返回的 429 需要原样透传：handler 侧的
+// 「请求内 429 账号上限」只统计 StatusCode == 429 的失败
+// （handler/request_429_account_limit.go），折叠成 503 会让该上限永不触顶，
+// A、B 各自 429 后仍会继续尝试 C。
+//
+// 只有上游确实返回 429 时才透传 429；其余切换原因（503 容量耗尽、调度前的模型
+// 限流预检查、策略触发的临时不可调度）保持既有 503 语义与切换策略不变。
+func antigravitySwitchFailoverStatusCode(switchErr *AntigravityAccountSwitchError) int {
+	if switchErr != nil && switchErr.UpstreamStatusCode == http.StatusTooManyRequests {
+		return http.StatusTooManyRequests
+	}
+	return http.StatusServiceUnavailable
+}
+
 func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool, options ...ForwardGeminiOption) (*ForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	startTime := time.Now()
@@ -169,7 +186,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
 		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
 			return nil, &UpstreamFailoverError{
-				StatusCode:        http.StatusServiceUnavailable,
+				StatusCode:        antigravitySwitchFailoverStatusCode(switchErr),
 				ForceCacheBilling: switchErr.IsStickySession,
 			}
 		}
@@ -300,18 +317,19 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 					}
 				} else {
 					if switchErr, ok := IsAntigravityAccountSwitchError(retryErr); ok {
+						switchStatus := antigravitySwitchFailoverStatusCode(switchErr)
 						appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 							ProxyID:            opsUpstreamProxyID(account),
 							ProxyName:          opsUpstreamProxyName(account),
 							Platform:           account.Platform,
 							AccountID:          account.ID,
 							AccountName:        account.Name,
-							UpstreamStatusCode: http.StatusServiceUnavailable,
+							UpstreamStatusCode: switchStatus,
 							Kind:               "failover",
 							Message:            sanitizeUpstreamErrorMessage(retryErr.Error()),
 						})
 						return nil, &UpstreamFailoverError{
-							StatusCode:        http.StatusServiceUnavailable,
+							StatusCode:        switchStatus,
 							ForceCacheBilling: switchErr.IsStickySession,
 						}
 					}

@@ -113,6 +113,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	maxAccountSwitches := h.maxAccountSwitches
+	failed429Accounts := h.request429AccountLimit(c)
 	if maxAccountSwitches <= 0 {
 		maxAccountSwitches = 3
 	}
@@ -227,6 +228,10 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
+				if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
 				if switchCount >= maxAccountSwitches {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return

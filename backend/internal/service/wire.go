@@ -30,6 +30,10 @@ func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthCli
 type BuildInfo struct {
 	Version   string
 	BuildType string
+	// DeploymentType marks who owns the running executable: "docker" when a
+	// container image does, empty or "native" for a native install. It is an
+	// explicit build-time (or image-level) declaration, never inferred.
+	DeploymentType string
 }
 
 // ProvidePricingService creates and initializes PricingService
@@ -44,7 +48,7 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient)
 
 // ProvideUpdateService creates UpdateService with BuildInfo
 func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo) *UpdateService {
-	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
+	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType, buildInfo.DeploymentType)
 }
 
 // ProvideEmailQueueService creates EmailQueueService with default worker count
@@ -881,6 +885,7 @@ var ProviderSet = wire.NewSet(
 	ProvideUpstreamBillingProbeService,
 	ProvideOllamaCloudUsageService,
 	ProvideSettingService,
+	ProvideKeyBillingSnapshotService,
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,

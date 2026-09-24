@@ -92,6 +92,11 @@ type AntigravityAccountSwitchError struct {
 	OriginalAccountID int64
 	RateLimitedModel  string
 	IsStickySession   bool // 是否为粘性会话切换（决定是否缓存计费）
+	// UpstreamStatusCode 是触发本次切换的上游 HTTP 状态码。
+	// 0 表示本次切换不是由上游响应直接触发（例如调度前的模型限流预检查）。
+	// 上游入口用它区分真实的上游 429（需要透传给请求内 429 账号上限计数）
+	// 与其他切换原因（仍按既有 503 语义处理）。
+	UpstreamStatusCode int
 }
 
 func (e *AntigravityAccountSwitchError) Error() string {

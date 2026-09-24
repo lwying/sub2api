@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +27,7 @@ type systemHandlerUpdateServiceStub struct {
 	performCtxErr         error
 	performHasDeadline    bool
 	rollbackCall          int
+	rollbackErr           error
 	rollbackToCall        int
 	rollbackToCtxErr      error
 	rollbackToHasDeadline bool
@@ -50,7 +52,7 @@ func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) erro
 
 func (s *systemHandlerUpdateServiceStub) Rollback() error {
 	s.rollbackCall++
-	return nil
+	return s.rollbackErr
 }
 
 func (s *systemHandlerUpdateServiceStub) ListRollbackVersions(context.Context) ([]service.RollbackVersion, error) {
@@ -101,6 +103,7 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 	router.POST("/api/v1/admin/system/update", handler.PerformUpdate)
 	router.POST("/api/v1/admin/system/rollback", handler.Rollback)
 	router.GET("/api/v1/admin/system/rollback-versions", handler.GetRollbackVersions)
+	router.GET("/api/v1/admin/system/check-updates", handler.CheckUpdates)
 	return router
 }
 
@@ -321,4 +324,89 @@ func TestSystemHandlerGetRollbackVersionsError(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// A container deployment must be refused at the API boundary, not merely hidden
+// in the UI: the service error carries its own status and reaches the caller
+// even when the endpoint is called directly.
+func TestSystemHandlerPerformUpdateRejectsContainerDeployment(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{performErr: service.ErrBinaryUpdateUnsupported}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	req.Header.Set("Idempotency-Key", "container-update")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Equal(t, 1, updateSvc.performCall)
+
+	var body systemUpdateErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, http.StatusConflict, body.Code)
+	require.Contains(t, body.Message, "container image",
+		"the administrator must be told to update the image instead")
+}
+
+// The same refusal applies to both rollback flavours: the local .backup restore
+// and the download-and-install of an older release.
+func TestSystemHandlerRollbackRejectsContainerDeployment(t *testing.T) {
+	for _, body := range []string{"", `{"version":"0.1.146"}`} {
+		updateSvc := &systemHandlerUpdateServiceStub{
+			rollbackToErr: service.ErrBinaryUpdateUnsupported,
+		}
+		updateSvc.rollbackErr = service.ErrBinaryUpdateUnsupported
+		repo := newMemoryIdempotencyRepoStub()
+		router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+		rec := httptest.NewRecorder()
+		var reader io.Reader
+		if body != "" {
+			reader = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/rollback", reader)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Idempotency-Key", "container-rollback-"+body)
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code, "body %q", body)
+	}
+}
+
+// The capability must be readable from the update check itself, so the caller
+// never has to infer it from a missing field.
+func TestSystemHandlerCheckUpdatesReportsDeploymentCapability(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		updateInfo: &service.UpdateInfo{
+			CurrentVersion:        "0.2.6",
+			LatestVersion:         "0.2.7",
+			HasUpdate:             true,
+			BuildType:             "release",
+			DeploymentType:        service.DeploymentTypeDocker,
+			BinaryUpdateSupported: false,
+		},
+	}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/check-updates", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Code int `json:"code"`
+		Data struct {
+			DeploymentType        string `json:"deployment_type"`
+			BinaryUpdateSupported bool   `json:"binary_update_supported"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 0, body.Code)
+	require.Equal(t, service.DeploymentTypeDocker, body.Data.DeploymentType)
+	require.False(t, body.Data.BinaryUpdateSupported)
 }

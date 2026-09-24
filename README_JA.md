@@ -236,8 +236,10 @@ GitHub Releases からビルド済みバイナリをダウンロードするワ�
 #### インストール手順
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.sh | sudo bash
 ```
+
+この fork のインストーラーは、`lwying/sub2api` が公開した本プラットフォーム用アーカイブと `checksums.txt` の両方がある Release だけを受け入れます。イメージのみ、または検証できない Release はインストールしません。既存の上流版から fork 版への初回切り替えは手動で行う必要があります。Docker イメージの更新は運用者が管理し、コンテナー内のバイナリ置換とは別です。
 
 スクリプトは以下を実行します:
 1. システムアーキテクチャの検出
@@ -286,7 +288,7 @@ sudo journalctl -u sub2api -f
 sudo systemctl restart sub2api
 
 # アンインストール
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
+curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---

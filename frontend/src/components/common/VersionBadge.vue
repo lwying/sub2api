@@ -10,7 +10,13 @@
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="
+          hasUpdate
+            ? t('version.updateAvailable')
+            : versionCheckUnknown
+              ? t('version.checkUnavailable')
+              : t('version.upToDate')
+        "
       >
         <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
         <span
@@ -32,7 +38,7 @@
           v-if="dropdownOpen"
           ref="dropdownRef"
           class="absolute left-0 z-50 mt-2 overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
-          :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
+          :class="rollbackPanelOpen && canBinaryUpdate ? 'w-80' : 'w-64'"
         >
           <!-- Header with refresh button -->
           <div
@@ -87,9 +93,9 @@
                     >v{{ currentVersion }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
-                  <!-- Show check mark when up to date -->
+                  <!-- Show check mark when up to date (not when unconfirmed) -->
                   <span
-                    v-if="!hasUpdate"
+                    v-if="!hasUpdate && !versionCheckUnknown"
                     class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                   >
                     <svg
@@ -109,7 +115,9 @@
                   {{
                     hasUpdate
                       ? t('version.latestVersion') + ': v' + latestVersion
-                      : t('version.upToDate')
+                      : versionCheckUnknown
+                        ? t('version.checkUnavailable')
+                        : t('version.upToDate')
                   }}
                 </p>
               </div>
@@ -231,8 +239,67 @@
                 </button>
               </div>
 
-              <!-- Priority 3: Update available for source build - show git pull hint -->
-              <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
+              <!-- Nothing was installed: the backend answered "already up to
+                   date". Not a completed update, and not an error either. -->
+              <div v-else-if="updateNoop" class="space-y-2">
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-700/40"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-200 dark:bg-dark-600"
+                  >
+                    <Icon
+                      name="exclamationTriangle"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-gray-500 dark:text-dark-300"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-gray-700 dark:text-dark-200">
+                      {{ t('version.updateNothingToInstall') }}
+                    </p>
+                    <p v-if="versionWarning" class="break-words text-xs text-gray-500 dark:text-dark-400">
+                      {{ versionWarning }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Unconfirmed: the check produced no usable answer (no
+                   installable asset, GitHub unreachable). Must not be shown as
+                   "already up to date". -->
+              <div v-else-if="versionCheckUnknown && !hasUpdate" class="space-y-2">
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
+                  >
+                    <Icon
+                      name="exclamationTriangle"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-amber-600 dark:text-amber-400"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                      {{ t('version.checkUnavailable') }}
+                    </p>
+                    <p v-if="versionWarning" class="break-words text-xs text-amber-600/70 dark:text-amber-400/70">
+                      {{ versionWarning }}
+                    </p>
+                    <p class="mt-1 text-xs text-amber-600/70 dark:text-amber-400/70">
+                      {{ t('version.checkUnavailableHint') }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Priority 3: Update available, but this deployment cannot
+                   replace the binary in place. Operator-managed hint only. -->
+              <div v-else-if="hasUpdate && !canBinaryUpdate" class="space-y-2">
                 <a
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
                   :href="releaseInfo.html_url"
@@ -268,7 +335,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                 </a>
-                <!-- Source build hint -->
+                <!-- Operator-managed hint (source build / image deployment) -->
                 <div
                   class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                 >
@@ -286,13 +353,14 @@
                     />
                   </svg>
                   <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t('version.sourceModeHint') }}
+                    {{ updatePathHint }}
                   </p>
                 </div>
               </div>
 
-              <!-- Priority 4: Update available for release build - show update button -->
-              <div v-else-if="hasUpdate && isReleaseBuild" class="space-y-2">
+              <!-- Priority 4: Update available and this deployment can replace
+                   the running binary in place -->
+              <div v-else-if="hasUpdate && canBinaryUpdate" class="space-y-2">
                 <!-- Update info card -->
                 <div
                   class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
@@ -355,10 +423,15 @@
                 </a>
               </div>
 
-              <!-- Priority 5: Up to date - GitHub link + version rollback -->
-              <div v-else class="space-y-2">
+              <!-- Priority 5: Rollback entry. Independently guarded (not the
+                   chain's v-else) so it stays reachable while an update is
+                   offered; only the two terminal states hide it. -->
+              <div
+                v-if="!updateError && !(updateSuccess && needRestart)"
+                class="space-y-2"
+              >
                 <a
-                  v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
+                  v-if="!hasUpdate && releaseInfo?.html_url && releaseInfo.html_url !== '#'"
                   :href="releaseInfo.html_url"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -395,9 +468,10 @@
 
                   <transition name="rollback">
                     <div v-if="rollbackPanelOpen" class="mt-2 space-y-2">
-                      <!-- Source build: online rollback unavailable, use git instead -->
+                      <!-- Online rollback unavailable for this deployment:
+                           source builds use git, image deployments pin a tag -->
                       <div
-                        v-if="!isReleaseBuild"
+                        v-if="!canBinaryUpdate"
                         class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                       >
                         <svg
@@ -414,7 +488,7 @@
                           />
                         </svg>
                         <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
-                          {{ t('version.rollbackSourceHint') }}
+                          {{ rollbackPathHint }}
                         </p>
                       </div>
 
@@ -573,7 +647,11 @@
                                 :stroke-width="2"
                                 class="mt-px flex-shrink-0"
                               />
-                              {{ t('version.rollbackWarning') }}
+                              {{
+                                manualTab === 'docker'
+                                  ? t('version.rollbackWarningDocker')
+                                  : t('version.rollbackWarning')
+                              }}
                             </p>
 
                             <p
@@ -651,9 +729,9 @@ import {
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
 
-const GITHUB_REPO = 'Wei-Shaw/sub2api'
-// Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
-const DOCKER_IMAGE = 'weishaw/sub2api'
+// Release source for the in-app update/rollback and for the manual install
+// command. Must stay the same repository the backend queries.
+const GITHUB_REPO = 'lwying/sub2api'
 
 const { t } = useI18n()
 
@@ -676,6 +754,33 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
+// Distinguishes a CI-built binary from a source build. It does NOT distinguish
+// binary from image deployments: both report "release".
+const isReleaseBuild = computed(() => buildType.value === 'release')
+// A failed check and a backend `warning` (no installable asset, GitHub
+// unreachable, ...) both mean "no update" was NOT a confirmation of being
+// current. Never render either as "up to date".
+const versionWarning = computed(() => appStore.versionWarning)
+const versionCheckUnknown = computed(
+  () => appStore.versionCheckFailed || !!appStore.versionWarning
+)
+// build_type is "release" for image builds too, so it cannot decide whether an
+// in-place binary swap is safe. Only an explicit capability flag can, and a
+// response without it (older backend) is treated as unsupported.
+const canBinaryUpdate = computed(() => appStore.binaryUpdateSupported === true)
+const isDockerDeployment = computed(() => appStore.deploymentType === 'docker')
+
+// Operator-managed wording: how this deployment is upgraded, without printing
+// an image reference this UI cannot verify.
+const updatePathHint = computed(() => {
+  if (isDockerDeployment.value) return t('version.updateDockerHint')
+  if (isReleaseBuild.value) return t('version.updateUnsupportedHint')
+  return t('version.sourceModeHint')
+})
+
+const rollbackPathHint = computed(() =>
+  isDockerDeployment.value ? t('version.rollbackDockerHint') : t('version.rollbackSourceHint')
+)
 
 // Update process states (local to this component)
 const updating = ref(false)
@@ -683,6 +788,8 @@ const restarting = ref(false)
 const needRestart = ref(false)
 const updateError = ref('')
 const updateSuccess = ref(false)
+// The backend can answer 200 with nothing installed ("already up to date").
+const updateNoop = ref(false)
 const restartCountdown = ref(0)
 // Distinguishes the success + restart panel between update and rollback flows
 const successKind = ref<'update' | 'rollback'>('update')
@@ -698,8 +805,10 @@ const rollbackError = ref('')
 
 const { copied, copyToClipboard } = useClipboard()
 
-// Manual rollback methods differ by deployment: script installs use install.sh,
-// docker deployments pin the image tag instead
+// Manual rollback methods differ by deployment: binary/systemd installs use
+// install.sh, docker deployments pin the image tag instead. The docker tab is
+// operator-managed on purpose: this build cannot verify that a fork image was
+// actually published, so it never prints an image reference it cannot back up.
 const manualTab = ref<'script' | 'docker'>('script')
 
 const manualTabs = computed(() => [
@@ -715,21 +824,23 @@ const scriptRollbackCommand = computed(() => {
 
 const dockerRollbackCommand = computed(() => {
   if (!selectedRollbackVersion.value) return ''
+  // GoReleaser builds image tags from {{ .Version }}, which drops the "v"
+  // prefix, so the image tag is 0.2.6 while the git/release tag stays v0.2.6.
+  const imageTag = selectedRollbackVersion.value
   return [
     `# ${t('version.dockerEditCompose')}`,
-    `image: ${DOCKER_IMAGE}:${selectedRollbackVersion.value}`,
+    `image: ${t('version.dockerImagePlaceholder')}:${imageTag}`,
     '',
     `# ${t('version.dockerRecreate')}`,
-    'docker compose up -d'
+    'docker compose up -d',
+    '',
+    `# ${t('version.dockerOperatorManaged', { version: imageTag })}`
   ].join('\n')
 })
 
 const activeManualCommand = computed(() =>
   manualTab.value === 'docker' ? dockerRollbackCommand.value : scriptRollbackCommand.value
 )
-
-// Only show update check for release builds (binary/docker deployment)
-const isReleaseBuild = computed(() => buildType.value === 'release')
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
@@ -745,6 +856,7 @@ async function refreshVersion(force = true) {
   // Reset update states when refreshing
   updateError.value = ''
   updateSuccess.value = false
+  updateNoop.value = false
   needRestart.value = false
   resetRollbackState()
 
@@ -757,9 +869,21 @@ async function handleUpdate() {
   updating.value = true
   updateError.value = ''
   updateSuccess.value = false
+  updateNoop.value = false
 
   try {
     const result = await performUpdate()
+
+    // HTTP 200 without an install: the backend reports "already up to date"
+    // when it has nothing to install, which also happens when the release
+    // check itself failed. Not a completed update, so do not claim one and do
+    // not drop the cached check result that explains why.
+    if (result.already_up_to_date) {
+      updateNoop.value = true
+      await appStore.fetchVersion(true)
+      return
+    }
+
     successKind.value = 'update'
     updateSuccess.value = true
     needRestart.value = result.need_restart
@@ -785,10 +909,11 @@ function resetRollbackState() {
 async function toggleRollbackPanel() {
   if (!isAdmin.value) return
   rollbackPanelOpen.value = !rollbackPanelOpen.value
-  // Source builds only show a hint, no version list to fetch
+  // Deployments that cannot replace the binary in place only show a hint;
+  // there is no in-app version list to fetch for them.
   if (
     rollbackPanelOpen.value &&
-    isReleaseBuild.value &&
+    canBinaryUpdate.value &&
     rollbackVersions.value.length === 0 &&
     !rollbackVersionsLoading.value
   ) {

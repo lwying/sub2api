@@ -57,6 +57,7 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	keyBillingSnapshot        *service.KeyBillingSnapshotService
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -343,12 +344,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
+	failed429Accounts := request429AccountLimit(c, h.settingService)
 	if platform == service.PlatformGemini {
 		if requestAuditIsForced(c) {
 			writeRequestAuditUnavailable(c, true)
 			return
 		}
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
+		fs.SetRequest429AccountLimit(failed429Accounts)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 		// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -676,6 +679,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	for {
 		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+		fs.SetRequest429AccountLimit(failed429Accounts)
 		retryWithFallback := false
 
 		for {

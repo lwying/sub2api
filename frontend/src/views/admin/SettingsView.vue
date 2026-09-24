@@ -411,6 +411,101 @@
             </div>
           </div>
 
+          <!-- Request-scoped 429 account limit -->
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.rateLimit429AccountLimit.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.rateLimit429AccountLimit.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div v-if="rateLimit429AccountLimitLoading" class="text-gray-500">
+                {{ t("common.loading") }}
+              </div>
+              <template v-else>
+                <label class="block font-medium text-gray-900 dark:text-white" for="rate-limit-429-account-limit">
+                  {{ t("admin.settings.rateLimit429AccountLimit.maxAccounts") }}
+                </label>
+                <input
+                  id="rate-limit-429-account-limit"
+                  v-model.number="rateLimit429AccountLimitForm.max_accounts"
+                  data-testid="rate-limit-429-account-limit"
+                  type="number"
+                  min="1"
+                  max="100"
+                  class="input w-32"
+                />
+                <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <button
+                    type="button"
+                    data-testid="save-rate-limit-429-account-limit"
+                    class="btn btn-primary btn-sm"
+                    :disabled="rateLimit429AccountLimitSaving"
+                    @click="saveRateLimit429AccountLimit"
+                  >
+                    {{ rateLimit429AccountLimitSaving ? t("common.saving") : t("common.save") }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Outward key billing snapshot -->
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.keyBillingSnapshot.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.keyBillingSnapshot.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div v-if="keyBillingSnapshotLoading" class="text-gray-500">
+                {{ t("common.loading") }}
+              </div>
+              <template v-else>
+                <div class="flex items-center justify-between">
+                  <label class="font-medium text-gray-900 dark:text-white" for="key-billing-snapshot-enabled">
+                    {{ t("admin.settings.keyBillingSnapshot.enabled") }}
+                  </label>
+                  <input
+                    id="key-billing-snapshot-enabled"
+                    v-model="keyBillingSnapshotForm.enabled"
+                    data-testid="key-billing-snapshot-enabled"
+                    type="checkbox"
+                  />
+                </div>
+                <label class="block font-medium text-gray-900 dark:text-white" for="key-billing-snapshot-max-stale-hours">
+                  {{ t("admin.settings.keyBillingSnapshot.maxStaleHours") }}
+                </label>
+                <input
+                  id="key-billing-snapshot-max-stale-hours"
+                  v-model.number="keyBillingSnapshotForm.max_stale_hours"
+                  data-testid="key-billing-snapshot-max-stale-hours"
+                  type="number"
+                  min="24"
+                  max="720"
+                  class="input w-32"
+                />
+                <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <button
+                    type="button"
+                    data-testid="save-key-billing-snapshot-settings"
+                    class="btn btn-primary btn-sm"
+                    :disabled="keyBillingSnapshotSaving"
+                    @click="saveKeyBillingSnapshotSettings"
+                  >
+                    {{ keyBillingSnapshotSaving ? t("common.saving") : t("common.save") }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Stream Timeout Settings -->
           <div class="card">
             <div
@@ -9128,6 +9223,14 @@ const rateLimit429CooldownForm = reactive({
   cooldown_seconds: 5,
 });
 
+const rateLimit429AccountLimitLoading = ref(true);
+const rateLimit429AccountLimitSaving = ref(false);
+const rateLimit429AccountLimitForm = reactive({ max_accounts: 2 });
+
+const keyBillingSnapshotLoading = ref(true);
+const keyBillingSnapshotSaving = ref(false);
+const keyBillingSnapshotForm = reactive({ enabled: false, max_stale_hours: 72 });
+
 // Panel API Rate Limit 状态
 const panelRateLimitLoading = ref(true);
 const panelRateLimitSaving = ref(false);
@@ -12092,6 +12195,61 @@ async function saveRateLimit429CooldownSettings() {
   }
 }
 
+async function loadRateLimit429AccountLimit() {
+  rateLimit429AccountLimitLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getRateLimit429AccountLimit();
+    Object.assign(rateLimit429AccountLimitForm, settings);
+  } catch (error: unknown) {
+    appStore.showError(extractApiErrorMessage(error, t("admin.settings.rateLimit429AccountLimit.loadFailed")));
+  } finally {
+    rateLimit429AccountLimitLoading.value = false;
+  }
+}
+
+async function saveRateLimit429AccountLimit() {
+  rateLimit429AccountLimitSaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateRateLimit429AccountLimit({
+      max_accounts: rateLimit429AccountLimitForm.max_accounts,
+    });
+    Object.assign(rateLimit429AccountLimitForm, updated);
+    appStore.showSuccess(t("admin.settings.rateLimit429AccountLimit.saved"));
+  } catch (error: unknown) {
+    appStore.showError(extractApiErrorMessage(error, t("admin.settings.rateLimit429AccountLimit.saveFailed")));
+  } finally {
+    rateLimit429AccountLimitSaving.value = false;
+  }
+}
+
+async function loadKeyBillingSnapshotSettings() {
+  keyBillingSnapshotLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getKeyBillingSnapshotSettings();
+    Object.assign(keyBillingSnapshotForm, settings);
+  } catch (error: unknown) {
+    appStore.showError(extractApiErrorMessage(error, t("admin.settings.keyBillingSnapshot.loadFailed")));
+  } finally {
+    keyBillingSnapshotLoading.value = false;
+  }
+}
+
+async function saveKeyBillingSnapshotSettings() {
+  keyBillingSnapshotSaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateKeyBillingSnapshotSettings({
+      enabled: keyBillingSnapshotForm.enabled,
+      max_stale_hours: keyBillingSnapshotForm.max_stale_hours,
+    });
+    Object.assign(keyBillingSnapshotForm, updated);
+    appStore.showSuccess(t("admin.settings.keyBillingSnapshot.saved"));
+  } catch (error: unknown) {
+    appStore.showError(extractApiErrorMessage(error, t("admin.settings.keyBillingSnapshot.saveFailed")));
+  } finally {
+    keyBillingSnapshotSaving.value = false;
+  }
+}
+
 // Stream Timeout 方法
 async function loadStreamTimeoutSettings() {
   streamTimeoutLoading.value = true;
@@ -12739,6 +12897,8 @@ onMounted(() => {
   loadOllamaCloudUsageSettings();
   loadOverloadCooldownSettings();
   loadRateLimit429CooldownSettings();
+  loadRateLimit429AccountLimit();
+  loadKeyBillingSnapshotSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();

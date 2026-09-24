@@ -261,8 +261,10 @@ fast_mode = true
 #### 安装步骤
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.sh | sudo bash
 ```
+
+Fork 安装脚本只接受 `lwying/sub2api` 已发布且含本平台归档与 `checksums.txt` 的 Release；仅镜像或无法校验的版本会拒装。旧上游构建首次切换到 fork 构建须人工安装一次；Docker 镜像由运营者自行维护，容器内替换二进制不等于镜像升级。
 
 脚本会自动：
 1. 检测系统架构
@@ -311,7 +313,7 @@ sudo journalctl -u sub2api -f
 sudo systemctl restart sub2api
 
 # 卸载
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
+curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---

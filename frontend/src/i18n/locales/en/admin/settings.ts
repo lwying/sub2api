@@ -1044,6 +1044,23 @@ export default {
         saved: '429 default cooldown settings saved',
         saveFailed: 'Failed to save 429 default cooldown settings'
       },
+      rateLimit429AccountLimit: {
+        title: 'Per-Request 429 Account Limit',
+        description: 'Maximum distinct upstream accounts ending in 429 within one request; does not cool down the shared API key.',
+        maxAccounts: 'Maximum 429 accounts (1–100)',
+        saved: 'Per-request 429 account limit saved',
+        loadFailed: 'Failed to load the 429 account limit',
+        saveFailed: 'Failed to save the 429 account limit'
+      },
+      keyBillingSnapshot: {
+        title: 'Outward Billing Snapshot',
+        description: 'Live by default. When enabled, each key reuses one declaration for 24 hours while actual billing remains live; failures may return a bounded stale snapshot.',
+        enabled: 'Enable outward billing snapshots',
+        maxStaleHours: 'Maximum stale age (hours, 24–720)',
+        saved: 'Outward billing snapshot settings saved',
+        loadFailed: 'Failed to load outward billing snapshot settings',
+        saveFailed: 'Failed to save outward billing snapshot settings'
+      },
       streamTimeout: {
         title: 'Stream Timeout Handling',
         description: 'Configure account handling strategy when upstream response times out',
