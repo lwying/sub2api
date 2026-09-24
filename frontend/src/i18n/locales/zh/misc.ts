@@ -659,44 +659,4 @@ export default {
     },
   },
 
-  // 普通用户的只读账号视图与管理员逐用户授权界面。
-  // 身份字段一律由服务端脱敏后返回，这里只负责以纯文本呈现。
-  assignedAccounts: {
-    description: '查看管理员分配给你的账号基础信息，上游身份已脱敏。',
-    readOnlyNotice: '此页面仅供查看，不能修改、导出账号或查看凭据。',
-    identityMaskedNotice: '上游邮箱、用户名与账号 ID 由服务端脱敏显示。',
-    loadFailed: '加载已分配账号失败',
-    empty: '暂无可用账号',
-    emptyHint: '管理员尚未为你分配账号，或已分配的账号当前不可用。',
-    viewDetail: '查看详情',
-    columns: {
-      platform: '平台',
-      accountType: '账号类型',
-      email: '上游邮箱',
-      username: '上游用户名',
-      upstreamAccountId: '上游账号 ID',
-      actions: '操作',
-    },
-    detail: {
-      title: '账号详情',
-      notVisible: '该账号不存在或你无权查看。',
-      loadFailed: '加载账号详情失败',
-    },
-    admin: {
-      title: '可见账号授权',
-      hint: '为 {email} 分配可只读查看的账号，默认不授权。',
-      enableLabel: '允许该用户查看已分配的账号',
-      assignedTitle: '已分配账号',
-      assignedCount: '已分配 {count} 个',
-      noAssigned: '尚未分配任何账号',
-      searchPlaceholder: '搜索账号名称以添加',
-      noCandidates: '没有可添加的账号',
-      add: '添加',
-      remove: '移除',
-      saveSuccess: '可见账号授权已更新',
-      loadFailed: '加载可见账号授权失败',
-      saveFailed: '保存可见账号授权失败',
-    },
-  },
-
 }
