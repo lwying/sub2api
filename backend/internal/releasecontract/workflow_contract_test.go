@@ -216,6 +216,23 @@ func TestSimpleReleaseInputIsAuthoritativeForDispatch(t *testing.T) {
 	}
 }
 
+// Docker Hub repository descriptions are optional metadata: a token with image
+// push permission can still get HTTP 403 for the description PATCH. The binary
+// release and its asset check must not be marked failed after publishing.
+func TestDockerHubDescriptionCannotFailPublishedRelease(t *testing.T) {
+	workflow := readRepoFile(t, releaseWorkflowRelPath)
+	release := jobBlock(t, workflow, "release")
+	for _, step := range steps(release) {
+		if !strings.Contains(step, "name: Update DockerHub description") {
+			continue
+		}
+		mustContain(t, "Docker Hub description step", step, "continue-on-error: true")
+		mustContain(t, "Docker Hub description step", step, "peter-evans/dockerhub-description@v5")
+		return
+	}
+	t.Fatal("release job has no Docker Hub description step")
+}
+
 // shellScriptLines returns non-empty lines that belong to a `run:` script body.
 func shellScriptLines(workflow string) []string {
 	var out []string
