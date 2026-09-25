@@ -38,7 +38,7 @@
           v-if="dropdownOpen"
           ref="dropdownRef"
           class="absolute left-0 z-50 mt-2 overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
-          :class="rollbackPanelOpen && canBinaryUpdate ? 'w-80' : 'w-64'"
+          :class="rollbackPanelOpen && canBinaryRollback ? 'w-80' : 'w-64'"
         >
           <!-- Header with refresh button -->
           <div
@@ -385,6 +385,24 @@
                   </div>
                 </div>
 
+                <!-- Container caveat: the swap only touches the container's
+                     writable layer and leaves the image tag untouched, so it is
+                     not a durable upgrade and recreation reverts it. -->
+                <div
+                  v-if="isDockerDeployment"
+                  class="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 dark:border-amber-800/50 dark:bg-amber-900/20"
+                >
+                  <Icon
+                    name="exclamationTriangle"
+                    size="xs"
+                    :stroke-width="2"
+                    class="mt-px flex-shrink-0 text-amber-600 dark:text-amber-400"
+                  />
+                  <p class="min-w-0 flex-1 text-xs leading-4 text-amber-700 dark:text-amber-300">
+                    {{ t('version.updateDockerCaveat') }}
+                  </p>
+                </div>
+
                 <!-- Update button -->
                 <button
                   @click="handleUpdate"
@@ -469,9 +487,10 @@
                   <transition name="rollback">
                     <div v-if="rollbackPanelOpen" class="mt-2 space-y-2">
                       <!-- Online rollback unavailable for this deployment:
-                           source builds use git, image deployments pin a tag -->
+                           source builds use git, and a container deployment pins
+                           an image tag instead (the backend answers 409) -->
                       <div
-                        v-if="!canBinaryUpdate"
+                        v-if="!canBinaryRollback"
                         class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                       >
                         <svg
@@ -769,6 +788,11 @@ const versionCheckUnknown = computed(
 // response without it (older backend) is treated as unsupported.
 const canBinaryUpdate = computed(() => appStore.binaryUpdateSupported === true)
 const isDockerDeployment = computed(() => appStore.deploymentType === 'docker')
+// A container deployment may install the update in place (writable layer) but
+// still owns its version through the image tag: the backend refuses an in-app
+// rollback there, so the rollback UI (candidates, manual command, confirm) must
+// stay off even when canBinaryUpdate is true.
+const canBinaryRollback = computed(() => canBinaryUpdate.value && !isDockerDeployment.value)
 
 // Operator-managed wording: how this deployment is upgraded, without printing
 // an image reference this UI cannot verify.
@@ -909,11 +933,11 @@ function resetRollbackState() {
 async function toggleRollbackPanel() {
   if (!isAdmin.value) return
   rollbackPanelOpen.value = !rollbackPanelOpen.value
-  // Deployments that cannot replace the binary in place only show a hint;
-  // there is no in-app version list to fetch for them.
+  // Deployments that cannot roll back in place only show a hint; there is no
+  // in-app version list to fetch for them (the backend would refuse the call).
   if (
     rollbackPanelOpen.value &&
-    canBinaryUpdate.value &&
+    canBinaryRollback.value &&
     rollbackVersions.value.length === 0 &&
     !rollbackVersionsLoading.value
   ) {

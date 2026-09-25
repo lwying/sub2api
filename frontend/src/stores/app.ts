@@ -50,8 +50,8 @@ export const useAppStore = defineStore('app', () => {
   // "up to date". A normal `cached: true` hit is not a failure.
   const versionWarning = ref<string>('')
   const versionCheckFailed = ref<boolean>(false)
-  // Whether the backend can replace the running binary in place. Docker/image
-  // deployments report false, and so does a backend too old to answer.
+  // Whether the backend offers a verified in-place binary update. Docker may
+  // support a temporary writable-layer swap; an old backend with no flag does not.
   const binaryUpdateSupported = ref<boolean>(false)
   const deploymentType = ref<'' | 'native' | 'docker'>('')
 

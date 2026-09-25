@@ -326,11 +326,10 @@ func TestSystemHandlerGetRollbackVersionsError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-// A container deployment must be refused at the API boundary, not merely hidden
-// in the UI: the service error carries its own status and reaches the caller
-// even when the endpoint is called directly.
-func TestSystemHandlerPerformUpdateRejectsContainerDeployment(t *testing.T) {
-	updateSvc := &systemHandlerUpdateServiceStub{performErr: service.ErrBinaryUpdateUnsupported}
+// A container update reaches the same handler as a native release: the service
+// verifies the fork archive before replacing the current container's binary.
+func TestSystemHandlerPerformUpdateAllowsContainerDeployment(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newMemoryIdempotencyRepoStub()
 	router := newSystemHandlerTestRouter(t, updateSvc, repo)
 
@@ -339,14 +338,8 @@ func TestSystemHandlerPerformUpdateRejectsContainerDeployment(t *testing.T) {
 	req.Header.Set("Idempotency-Key", "container-update")
 	router.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, 1, updateSvc.performCall)
-
-	var body systemUpdateErrorEnvelope
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, http.StatusConflict, body.Code)
-	require.Contains(t, body.Message, "container image",
-		"the administrator must be told to update the image instead")
 }
 
 // The same refusal applies to both rollback flavours: the local .backup restore
@@ -386,7 +379,7 @@ func TestSystemHandlerCheckUpdatesReportsDeploymentCapability(t *testing.T) {
 			HasUpdate:             true,
 			BuildType:             "release",
 			DeploymentType:        service.DeploymentTypeDocker,
-			BinaryUpdateSupported: false,
+			BinaryUpdateSupported: true,
 		},
 	}
 	repo := newMemoryIdempotencyRepoStub()
@@ -408,5 +401,5 @@ func TestSystemHandlerCheckUpdatesReportsDeploymentCapability(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, 0, body.Code)
 	require.Equal(t, service.DeploymentTypeDocker, body.Data.DeploymentType)
-	require.False(t, body.Data.BinaryUpdateSupported)
+	require.True(t, body.Data.BinaryUpdateSupported)
 }

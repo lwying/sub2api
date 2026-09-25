@@ -48,7 +48,12 @@ export default {
     checkUnavailableHint:
       'The update check did not return a usable answer, so "up to date" cannot be claimed. Check the deployment method or retry.',
     updateDockerHint:
-      'This service runs from a container image, so it cannot replace itself in place. Upgrade or roll back by pinning the image tag you published in your own compose file.',
+      'This container cannot replace its running binary in place. Upgrade or roll back by pinning a published image tag in your compose file.',
+    // Shown next to the in-app update button on a container deployment. A
+    // restart keeps the swapped binary (same container); recreating the
+    // container starts again from the image, which the tag still pins.
+    updateDockerCaveat:
+      'In-place update only swaps the binary inside this container\'s writable layer; the image tag stays unchanged. A normal container restart keeps the swapped binary, but recreating the container reverts it to the image. Pin a new image tag to make the update permanent.',
     updateUnsupportedHint:
       'This deployment cannot replace its own binary. Use your usual operator-managed upgrade path.',
     updateNothingToInstall: 'Nothing was installed - the service reported it is already up to date.',
