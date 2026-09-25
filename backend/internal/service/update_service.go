@@ -23,14 +23,12 @@ var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 
-	// ErrBinaryUpdateUnsupported is returned by every path that would replace the
-	// running binary in a deployment whose executable belongs to a container
-	// image. The image, not the file inside the container, is the unit of update:
-	// swapping /app/sub2api neither updates the image nor survives the next
-	// container start, so the attempt is refused before anything is downloaded.
+	// ErrBinaryUpdateUnsupported keeps the historical 409 code for in-app
+	// rollback in a container. Forward updates may swap the writable-layer
+	// binary, but rolling back still requires pinning an older image.
 	ErrBinaryUpdateUnsupported = infraerrors.Conflict(
 		"BINARY_UPDATE_UNSUPPORTED",
-		"this instance runs from a container image, so in-app binary update and rollback are not available; update the container image and recreate the container instead",
+		"in-app rollback is unavailable for a container deployment; pin an older image tag and recreate the container instead",
 	)
 )
 
@@ -94,8 +92,8 @@ type UpdateService struct {
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
-	// deploymentType is "native" when the deployment owns its executable and
-	// "docker" when a container image does. It gates every in-place binary swap.
+	// deploymentType distinguishes native from image-owned executables. Docker
+	// may opt into an ephemeral writable-layer update but not in-app rollback.
 	deploymentType string
 }
 
@@ -110,20 +108,14 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 	}
 }
 
-// binaryUpdateUnsupported reports whether this deployment must refuse to replace
-// its own executable. It is checked at the start of every path that would write
-// to the executable, before any download or rename.
-func (s *UpdateService) binaryUpdateUnsupported() error {
+// binaryRollbackUnsupported keeps the in-app rollback guard for Docker images.
+// The forward updater may replace the binary in the current container's writable
+// layer, but a durable rollback must select an older image tag and recreate.
+func (s *UpdateService) binaryRollbackUnsupported() error {
 	if s.deploymentType == DeploymentTypeDocker {
 		return ErrBinaryUpdateUnsupported
 	}
 	return nil
-}
-
-// binaryUpdateSupported reports whether this deployment may install a downloaded
-// binary in place.
-func (s *UpdateService) binaryUpdateSupported() bool {
-	return s.binaryUpdateUnsupported() == nil
 }
 
 // UpdateInfo contains update information
@@ -138,10 +130,9 @@ type UpdateInfo struct {
 	// DeploymentType is "native" or "docker" and describes who owns the running
 	// executable, independently of how it was built.
 	DeploymentType string `json:"deployment_type"`
-	// BinaryUpdateSupported is false when this deployment cannot install a
-	// downloaded binary in place: the image is updated, not the file. It is
-	// present on every response, including the ones that carry no release or a
-	// failed check, so the caller never has to infer it from a missing field.
+	// BinaryUpdateSupported reports whether a verified binary can be swapped in
+	// place; Docker reports true for its current writable layer, not for an image
+	// upgrade. It is present even when no usable release was found.
 	BinaryUpdateSupported bool `json:"binary_update_supported"`
 }
 
@@ -230,7 +221,7 @@ func (s *UpdateService) noUpdateInfo(warning string) *UpdateInfo {
 		Warning:               warning,
 		BuildType:             s.buildType,
 		DeploymentType:        s.deploymentType,
-		BinaryUpdateSupported: s.binaryUpdateSupported(),
+		BinaryUpdateSupported: true,
 	}
 }
 
@@ -256,7 +247,7 @@ func (s *UpdateService) updateInfoForRelease(tag string, releaseInfo *ReleaseInf
 		Cached:                cached,
 		BuildType:             s.buildType,
 		DeploymentType:        s.deploymentType,
-		BinaryUpdateSupported: s.binaryUpdateSupported(),
+		BinaryUpdateSupported: true,
 	}
 	if !assessment.Installable {
 		info.Warning = assessment.Message
@@ -264,15 +255,10 @@ func (s *UpdateService) updateInfoForRelease(tag string, releaseInfo *ReleaseInf
 	return info
 }
 
-// PerformUpdate downloads and applies the update
-// Uses atomic file replacement pattern for safe in-place updates
+// PerformUpdate downloads and applies a verified fork release archive. In a
+// Docker deployment this swaps the binary in the current container's writable
+// layer, not the image; recreating the container restores the image version.
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
-	// Checked before the release lookup: a container deployment is refused even
-	// when the network is unavailable and nothing could be downloaded anyway.
-	if err := s.binaryUpdateUnsupported(); err != nil {
-		return err
-	}
-
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err
@@ -429,11 +415,10 @@ func replaceUpdateBinary(exePath, newBinaryPath string, move func(string, string
 
 // Rollback restores the local .backup binary left by the last in-place update.
 //
-// Like PerformUpdate and RollbackToVersion it writes to the running executable,
-// so a deployment that does not own its binary must refuse it: restoring the
-// backup inside a container would be undone by the next container start.
+// Unlike forward updates, Docker rollback must use an older image tag: a
+// writable-layer .backup cannot restore the version promised by the image.
 func (s *UpdateService) Rollback() error {
-	if err := s.binaryUpdateUnsupported(); err != nil {
+	if err := s.binaryRollbackUnsupported(); err != nil {
 		return err
 	}
 
@@ -523,7 +508,7 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
-	if err := s.binaryUpdateUnsupported(); err != nil {
+	if err := s.binaryRollbackUnsupported(); err != nil {
 		return err
 	}
 

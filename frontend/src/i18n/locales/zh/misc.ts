@@ -47,7 +47,9 @@ export default {
     checkUnavailableHint:
       '版本检查没有返回可用的结论，因此不能判定为已是最新。请确认部署方式或重试。',
     updateDockerHint:
-      '本服务以容器镜像方式运行，无法在容器内就地替换自身。请在自己维护的 compose 文件中固定镜像标签并重建容器来完成升级或回退。',
+      '当前容器无法就地替换运行中的程序。请在自己维护的 compose 文件中固定已发布的镜像标签并重建容器来完成升级或回退。',
+    updateDockerCaveat:
+      '应用内更新只替换当前容器可写层中的程序，镜像标签保持不变。普通重启会保留替换后的程序，但重新创建容器会回退到镜像内容。如需长期生效，请固定新的镜像标签。',
     updateUnsupportedHint: '当前部署方式不支持应用内替换程序，请按运维方既有的升级流程处理。',
     updateNothingToInstall: '未安装任何内容——后端返回服务已是最新版本。',
     rollbackDockerHint:

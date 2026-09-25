@@ -35,9 +35,9 @@ var (
 	Commit    = "unknown"
 	Date      = "unknown"
 	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
-	// DeploymentType marks a binary owned by a container image ("docker"), which
-	// must not update itself in place. It is declared at build time by the
-	// compiling Dockerfiles; an empty value means a native install.
+	// DeploymentType marks a binary owned by a container image ("docker").
+	// Forward updates may swap this container's writable-layer binary, while
+	// rollback still requires an image change. Empty means a native install.
 	DeploymentType = ""
 )
 

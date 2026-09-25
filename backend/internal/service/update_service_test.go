@@ -949,9 +949,8 @@ func TestUpdateServicePerformUpdateVerifiesChecksumBeforeReplacingBinary(t *test
 	require.NoError(t, exeErr, "the running executable must be left in place")
 }
 
-// newDockerUpdateService builds an updater whose binary is owned by a container
-// image: the running executable is replaced by pulling a new image, so no
-// in-app binary swap may be offered.
+// newDockerUpdateService builds an updater whose executable starts in an image.
+// In-app updates affect this container's writable layer, not that image.
 func newDockerUpdateService(
 	t *testing.T,
 	current string,
@@ -993,21 +992,6 @@ func (r *moveRecorder) indexOf(src, dst string) int {
 	return -1
 }
 
-func TestUpdateServiceDockerDeploymentRefusesPerformUpdate(t *testing.T) {
-	updateTestRequireSupportedPlatform(t)
-	client := &updateServiceGitHubClientStub{
-		release:      installableDockerCheckupRelease(t),
-		downloadBody: []byte("archive"),
-	}
-	svc := newDockerUpdateService(t, "0.2.6", &updateServiceCacheStub{}, client)
-
-	err := svc.PerformUpdate(context.Background())
-
-	require.ErrorIs(t, err, ErrBinaryUpdateUnsupported)
-	require.Empty(t, client.downloadedURLs(),
-		"a container-owned binary must not even start an in-place download")
-}
-
 func TestUpdateServiceDockerDeploymentRefusesRollbackToVersion(t *testing.T) {
 	updateTestRequireSupportedPlatform(t)
 	client := &updateServiceGitHubClientStub{
@@ -1038,7 +1022,7 @@ func TestUpdateServiceDockerDeploymentRefusesBackupRollback(t *testing.T) {
 		"a container-owned binary must not be swapped for a local .backup")
 }
 
-func TestUpdateServiceDockerDeploymentStillReportsUpdateButFlagsItUnsupported(t *testing.T) {
+func TestUpdateServiceDockerDeploymentReportsWritableLayerUpdateCapability(t *testing.T) {
 	updateTestRequireSupportedPlatform(t)
 	client := &updateServiceGitHubClientStub{release: installableDockerCheckupRelease(t)}
 	svc := newDockerUpdateService(t, "0.2.6", &updateServiceCacheStub{}, client)
@@ -1049,11 +1033,11 @@ func TestUpdateServiceDockerDeploymentStillReportsUpdateButFlagsItUnsupported(t 
 	require.True(t, info.HasUpdate, "a newer fork release is still news worth showing the administrator")
 	require.Equal(t, "0.2.7", info.LatestVersion)
 	require.Equal(t, DeploymentTypeDocker, info.DeploymentType)
-	require.False(t, info.BinaryUpdateSupported)
+	require.True(t, info.BinaryUpdateSupported, "the current container permits a temporary writable-layer update")
 	require.Equal(t, "release", info.BuildType, "build_type keeps describing how the binary was built")
 }
 
-func TestUpdateServiceDockerDeploymentFlagsUnsupportedWithoutARelease(t *testing.T) {
+func TestUpdateServiceDockerDeploymentReportsCapabilityWithoutARelease(t *testing.T) {
 	client := &updateServiceGitHubClientStub{latestErr: errors.New("fork API unavailable")}
 	svc := newDockerUpdateService(t, "0.2.6", &updateServiceCacheStub{}, client)
 
@@ -1062,7 +1046,7 @@ func TestUpdateServiceDockerDeploymentFlagsUnsupportedWithoutARelease(t *testing
 	require.NoError(t, err)
 	require.False(t, info.HasUpdate)
 	require.Equal(t, DeploymentTypeDocker, info.DeploymentType)
-	require.False(t, info.BinaryUpdateSupported)
+	require.True(t, info.BinaryUpdateSupported, "capability is distinct from availability of a release")
 }
 
 // The candidate list stays readable in a container deployment: the frontend uses
@@ -1091,7 +1075,7 @@ func TestNewUpdateServiceTreatsOnlyDockerMarkerAsContainerDeployment(t *testing.
 		info, err := svc.CheckUpdate(context.Background(), false)
 		require.NoError(t, err)
 		require.Equal(t, DeploymentTypeDocker, info.DeploymentType, "marker %q", marker)
-		require.False(t, info.BinaryUpdateSupported, "marker %q", marker)
+		require.True(t, info.BinaryUpdateSupported, "marker %q", marker)
 	}
 
 	// Anything else — including the empty marker every native and GoReleaser

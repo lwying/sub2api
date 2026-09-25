@@ -86,6 +86,17 @@ function findVersionCandidate(wrapper: VueWrapper, version: string) {
   return button
 }
 
+// vitest 在 frontend/ 下运行；兼容从仓库根目录启动的情况。
+function readLocale(locale: 'en' | 'zh') {
+  const candidates = [
+    resolve(process.cwd(), `src/i18n/locales/${locale}/misc.ts`),
+    resolve(process.cwd(), `frontend/src/i18n/locales/${locale}/misc.ts`)
+  ]
+  const localePath = candidates.find((candidate) => existsSync(candidate))
+  if (!localePath) throw new Error(`${locale} misc.ts not found in: ${candidates.join(', ')}`)
+  return readFileSync(localePath, 'utf8')
+}
+
 async function openRollbackPanel(versions: Array<Record<string, string>> = []) {
   h.getRollbackVersions.mockResolvedValue({
     versions: versions.map((item) => ({
@@ -341,6 +352,159 @@ describe('VersionBadge in-app binary update capability', () => {
       h.fetchVersion.mockClear()
       h.clearVersionCache.mockClear()
     }
+  })
+})
+
+// Container deployments report the in-app capability too (binary_update_supported
+// true), so 「立即更新」 exists as on native installs. What differs is ownership of
+// the executable: the swap only touches the container's writable layer and the
+// rollback path stays operator-managed (the backend answers 409).
+describe('VersionBadge docker in-app update with disabled rollback', () => {
+  async function openBadge() {
+    const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
+    await findButton(wrapper, 'v0.2.6').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  function dropdown(wrapper: VueWrapper) {
+    const element = wrapper.find('.z-50')
+    if (!element.exists()) throw new Error('dropdown not rendered')
+    return element
+  }
+
+  it('offers the in-app update and states the writable-layer caveat', async () => {
+    h.state.hasUpdate = true
+    h.state.binaryUpdateSupported = true
+    h.state.deploymentType = 'docker'
+    try {
+      const wrapper = await openBadge()
+
+      expect(wrapper.text()).toContain('version.updateNow')
+      // 明确提示：只替换容器可写层内的程序，且镜像标签不变
+      expect(wrapper.text()).toContain('version.updateDockerCaveat')
+      // 有应用内更新时不再显示「无法就地替换」的运维提示
+      expect(wrapper.text()).not.toContain('version.updateDockerHint')
+      expect(wrapper.text()).not.toContain('version.updateUnsupportedHint')
+      expect(wrapper.text()).not.toContain('version.sourceModeHint')
+    } finally {
+      h.state.hasUpdate = false
+      h.state.deploymentType = 'native'
+    }
+  })
+
+  it('runs the update flow from the docker update button', async () => {
+    h.state.hasUpdate = true
+    h.state.binaryUpdateSupported = true
+    h.state.deploymentType = 'docker'
+    vi.mocked(performUpdate).mockResolvedValue({
+      message: 'Update completed',
+      need_restart: true
+    })
+    try {
+      const wrapper = await openBadge()
+      await findButton(wrapper, 'version.updateNow').trigger('click')
+      await flushPromises()
+
+      expect(vi.mocked(performUpdate)).toHaveBeenCalled()
+      expect(wrapper.text()).toContain('version.updateComplete')
+      expect(wrapper.text()).toContain('version.restartRequired')
+    } finally {
+      h.state.hasUpdate = false
+      h.state.deploymentType = 'native'
+      vi.mocked(performUpdate).mockReset()
+    }
+  })
+
+  it('keeps in-app rollback off and fetches no candidates on docker', async () => {
+    h.state.binaryUpdateSupported = true
+    h.state.deploymentType = 'docker'
+    h.getRollbackVersions.mockClear()
+    try {
+      const wrapper = await openBadge()
+      await findButton(wrapper, 'version.rollback').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('version.rollbackDockerHint')
+      expect(wrapper.text()).not.toContain('version.rollbackSourceHint')
+      // 回退接口对容器部署返回 409，界面不得提供候选版本或确认按钮
+      expect(h.getRollbackVersions).not.toHaveBeenCalled()
+      expect(wrapper.text()).not.toContain('version.rollbackSelectVersion')
+      expect(wrapper.text()).not.toContain('version.manualRollbackCommand')
+      expect(wrapper.text()).not.toContain('version.rollbackConfirm')
+    } finally {
+      h.state.deploymentType = 'native'
+    }
+  })
+
+  it('keeps the dropdown narrow for docker and wide for native', async () => {
+    h.state.hasUpdate = true
+    h.state.binaryUpdateSupported = true
+    h.getRollbackVersions.mockResolvedValue({ versions: [] })
+    try {
+      h.state.deploymentType = 'docker'
+      const dockerWrapper = await openBadge()
+      await findButton(dockerWrapper, 'version.rollback').trigger('click')
+      await flushPromises()
+
+      // 没有候选版本列表/命令块，宽面板不适用
+      expect(dropdown(dockerWrapper).classes()).toContain('w-64')
+      expect(dropdown(dockerWrapper).classes()).not.toContain('w-80')
+
+      h.state.deploymentType = 'native'
+      const nativeWrapper = await openBadge()
+      await findButton(nativeWrapper, 'version.rollback').trigger('click')
+      await flushPromises()
+
+      expect(dropdown(nativeWrapper).classes()).toContain('w-80')
+    } finally {
+      h.state.hasUpdate = false
+      h.state.deploymentType = 'native'
+    }
+  })
+
+  it('keeps the in-app update and rollback on a native deployment', async () => {
+    h.state.hasUpdate = true
+    h.state.binaryUpdateSupported = true
+    h.state.deploymentType = 'native'
+    h.getRollbackVersions.mockClear()
+    h.getRollbackVersions.mockResolvedValue({
+      versions: [
+        { version: '0.2.5', published_at: '2026-08-01T00:00:00Z', html_url: '#' }
+      ]
+    })
+    try {
+      const wrapper = await openBadge()
+
+      expect(wrapper.text()).toContain('version.updateNow')
+      expect(wrapper.text()).not.toContain('version.updateDockerCaveat')
+
+      await findButton(wrapper, 'version.rollback').trigger('click')
+      await flushPromises()
+
+      expect(h.getRollbackVersions).toHaveBeenCalled()
+      expect(wrapper.text()).toContain('version.rollbackSelectVersion')
+      expect(wrapper.text()).not.toContain('version.rollbackDockerHint')
+    } finally {
+      h.state.hasUpdate = false
+    }
+  })
+
+  it('states the docker caveat explicitly in both locales', () => {
+    const en = readLocale('en')
+    const zh = readLocale('zh')
+
+    expect(en).toContain('updateDockerCaveat')
+    expect(zh).toContain('updateDockerCaveat')
+    // 可写层替换、镜像标签不变、重启保留但重建回退
+    expect(en).toMatch(/writable layer/i)
+    expect(en).toMatch(/image tag/i)
+    expect(en).toMatch(/restart/i)
+    expect(en).toMatch(/recreat/i)
+    expect(zh).toContain('可写层')
+    expect(zh).toContain('镜像标签')
+    expect(zh).toContain('重启')
+    expect(zh).toMatch(/重新创建/)
   })
 })
 

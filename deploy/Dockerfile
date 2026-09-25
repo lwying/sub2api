@@ -69,9 +69,9 @@ COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION
-# DeploymentType=docker tells the running binary that a container image owns it,
-# so the admin API refuses in-app binary update/rollback: replacing the file
-# inside the container would neither change the image nor survive a recreate.
+# DeploymentType=docker identifies image-owned binaries. In-app forward updates
+# may replace the current container's writable-layer binary, but do not change
+# the image and will be lost when the container is recreated; rollback stays image-managed.
 RUN VERSION_VALUE="${VERSION}" && \
     if [ -z "${VERSION_VALUE}" ]; then VERSION_VALUE="$(./scripts/resolve-version.sh)"; fi && \
     DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \

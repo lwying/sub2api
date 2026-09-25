@@ -238,7 +238,7 @@ One-click installation script that downloads pre-built binaries from GitHub Rele
 curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.sh | sudo bash
 ```
 
-The fork installer requires a published `lwying/sub2api` release with a Linux archive for this host and `checksums.txt`; an image-only or unverifiable release is refused. Existing upstream-built installations must switch to a fork-built binary manually once before their in-app updater can point to the fork. Docker images are operator-managed and are not upgraded by replacing a binary inside a container.
+The fork installer requires a published `lwying/sub2api` release with a Linux archive for this host and `checksums.txt`; an image-only or unverifiable release is refused. Existing upstream-built installations must switch to a fork-built binary manually once before their in-app updater can point to the fork. Docker images are operator-managed: replacing a binary inside a container is a writable-layer change, not an image upgrade, so pin the image tag in your own compose file (see `deploy/DOCKER.md`).
 
 The script will:
 1. Detect your system architecture

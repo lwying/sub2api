@@ -85,9 +85,9 @@ COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION
-# DeploymentType=docker tells the running binary that a container image owns it,
-# so the admin API refuses in-app binary update/rollback: replacing the file
-# inside the container would neither change the image nor survive a recreate.
+# DeploymentType=docker identifies image-owned binaries. In-app forward updates
+# may replace the current container's writable-layer binary, but do not change
+# the image and will be lost when the container is recreated; rollback stays image-managed.
 RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
     --mount=type=cache,id=sub2api-gobuild,target=/root/.cache/go-build \
     VERSION_VALUE="${VERSION}" && \
@@ -141,18 +141,19 @@ RUN addgroup -g 1000 sub2api && \
 # Set working directory
 WORKDIR /app
 
-# Same declaration as the build-stage ldflag, repeated as an image-level marker
-# on purpose: the Go linker silently ignores an -X flag whose symbol name no
-# longer matches, so a renamed variable must not be able to drop the guard by
-# accident. Either marker alone is enough; the build-time one wins when present.
+# Same declaration as the build-stage ldflag, repeated as an image-level marker:
+# the Go linker silently ignores an -X flag whose symbol name no longer matches.
+# Either marker alone identifies the deployment; the build-time one wins.
 ENV SUB2API_DEPLOYMENT=docker
 
 # Copy binary/resources with ownership to avoid extra full-layer chown copy
 COPY --from=backend-builder --chown=sub2api:sub2api /app/sub2api /app/sub2api
 COPY --from=backend-builder --chown=sub2api:sub2api /app/backend/resources /app/resources
 
-# Create data directory
-RUN mkdir -p /app/data && chown sub2api:sub2api /app/data
+# The updater creates a temporary archive beside /app/sub2api and renames the
+# executable in that directory. Give the runtime user directory write access;
+# file ownership alone is insufficient for the atomic swap.
+RUN mkdir -p /app/data && chown sub2api:sub2api /app /app/data
 
 # Copy entrypoint script (fixes volume permissions then drops to sub2api)
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
