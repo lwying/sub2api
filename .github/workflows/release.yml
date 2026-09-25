@@ -388,9 +388,12 @@ jobs:
             echo "::notice::image-only release: no platform binary asset is published, so it must not be offered as an in-app update"
           fi
 
-      # Update DockerHub description
+      # Docker Hub repository-description permission is independent from image
+      # push permission. A 403 here must not mark already published images and
+      # verified binary assets as a failed release; keep the warning visible.
       - name: Update DockerHub description
         if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v5
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
