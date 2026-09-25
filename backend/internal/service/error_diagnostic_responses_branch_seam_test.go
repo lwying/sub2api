@@ -100,6 +100,8 @@ type seamDiagnosticRepo struct {
 	mu      sync.Mutex
 	records map[string]service.ErrorDiagnosticRecord
 	bodies  map[string][]byte
+	// headerValues 与 bodies 分开：头值与正文是两条独立留存路径，替身不得把它们混成一份。
+	headerValues map[string][]byte
 }
 
 func newSeamDiagnosticRepo() *seamDiagnosticRepo {
@@ -131,8 +133,46 @@ func (r *seamDiagnosticRepo) CreateErrorDiagnostic(_ context.Context, write serv
 		record.BodyBytes = len(write.Attempt.Body)
 		r.bodies[write.ID] = write.BodyCiphertext
 	}
+	record.HeaderState = write.HeaderState
+	record.HeaderReason = write.HeaderReason
+	record.HeaderEntryCount = write.HeaderEntryCount
+	if len(write.HeaderCiphertext) > 0 {
+		record.HeaderStored = true
+		record.HeaderExpiresAt = now.Add(service.ErrorDiagnosticHeaderRetention)
+		record.HeaderBytes = write.HeaderPayloadBytes
+		if r.headerValues == nil {
+			r.headerValues = map[string][]byte{}
+		}
+		r.headerValues[write.ID] = write.HeaderCiphertext
+	}
 	r.records[write.ID] = record
 	return record, nil
+}
+
+func (r *seamDiagnosticRepo) ReadErrorDiagnosticHeaderValues(_ context.Context, id string, now time.Time) (service.ErrorDiagnosticHeaderValues, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.records[id]
+	if !ok || !record.HeaderValuesReadableAt(now) {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	ciphertext, ok := r.headerValues[id]
+	if !ok {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	plaintext, err := seamBodyCipher{}.Decrypt(ciphertext)
+	if err != nil {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	values, err := service.DecodeErrorDiagnosticHeaderValues(plaintext)
+	if err != nil {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	return values, nil
+}
+
+func (r *seamDiagnosticRepo) ClearExpiredErrorDiagnosticHeaderValues(context.Context, time.Time, int) (int64, error) {
+	return 0, nil
 }
 
 func (r *seamDiagnosticRepo) GetErrorDiagnostic(_ context.Context, id string) (service.ErrorDiagnosticRecord, error) {

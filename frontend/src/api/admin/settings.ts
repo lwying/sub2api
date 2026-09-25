@@ -1635,6 +1635,266 @@ export async function resetWebSearchUsage(payload: {
   );
 }
 
+// ==================== Claude request-audit value details (operator gate) ====================
+
+/**
+ * Operator gate for the Claude /v1/messages request-audit value details (ADR 0006).
+ *
+ * The capability is a default-off, encrypted, 7-day bypass, so the gate is not a
+ * boolean the panel may flip on its own:
+ *
+ *   - `enabled` / `risk_acknowledged` are the **stored** flags, while
+ *     `capture_allowed` is the server's **verified** conclusion (stored on and an
+ *     acknowledgement that covers the current statement). Both are carried verbatim
+ *     and neither is derived from the other here: a stored flag without a current
+ *     acknowledgement is a state the server reports deliberately.
+ *   - Enabling requires the operator to type the statement for the chosen language
+ *     verbatim, and the server re-verifies it on **every** update. The statement is
+ *     only ever held in component state; it is never persisted.
+ *   - Disabling is expressed with `enabled: false` and needs no statement.
+ *
+ * Both verbs are marked no-store: a cached "on" would tell an operator that values
+ * are being retained when they are not, and a cached "off" would invite a pointless
+ * re-acknowledgement.
+ */
+const REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_PATH =
+  "/admin/usage/request-audit-value-detail-settings";
+
+const REQUEST_AUDIT_VALUE_DETAIL_NO_STORE_HEADERS = {
+  "Cache-Control": "no-store",
+  Pragma: "no-cache",
+} as const;
+
+/**
+ * Languages the written risk acknowledgement can be given in.
+ *
+ * The server normalises `zh*` to zh and everything else to en, so the UI only
+ * offers these two and always displays the server's own statement text.
+ */
+export const REQUEST_AUDIT_VALUE_DETAIL_ACK_LANGUAGES = ["en", "zh"] as const;
+export type RequestAuditValueDetailAckLanguage =
+  (typeof REQUEST_AUDIT_VALUE_DETAIL_ACK_LANGUAGES)[number];
+
+/** The recorded acknowledgement, allowlisted to the four fields that may be shown. */
+export interface RequestAuditValueDetailRiskAcknowledgementView {
+  version: string;
+  phrase: string;
+  admin_user_id: number;
+  accepted_at: string;
+}
+
+/** Operator state of the value-detail gate, exactly as the server reports it. */
+export interface RequestAuditValueDetailOperatorStatus {
+  enabled: boolean;
+  risk_acknowledged: boolean;
+  capture_allowed: boolean;
+  encryption_key_available: boolean;
+  risk_version: string;
+  risk_phrase_en: string;
+  risk_phrase_zh: string;
+  risk_acknowledgement?: RequestAuditValueDetailRiskAcknowledgementView;
+  /** False both when no record exists and when the record covers an older statement. */
+  risk_acknowledgement_current: boolean;
+}
+
+/** One whole-state update. The server treats an omitted field as off. */
+export interface RequestAuditValueDetailOperatorUpdateInput {
+  enabled: boolean;
+  language: RequestAuditValueDetailAckLanguage;
+  phrase: string;
+}
+
+/** Raised when a payload does not match the agreed value-detail gate contract. */
+export class RequestAuditValueDetailOperatorPayloadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RequestAuditValueDetailOperatorPayloadError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isTimestamp(value: unknown): value is string {
+  return isNonEmptyString(value) && !Number.isNaN(Date.parse(value));
+}
+
+/** Every gate flag must be a real boolean; a missing one must not be read as false. */
+const REQUEST_AUDIT_VALUE_DETAIL_GATE_FLAGS = [
+  "enabled",
+  "risk_acknowledged",
+  "capture_allowed",
+  "encryption_key_available",
+] as const;
+
+function normalizeRiskAcknowledgement(
+  raw: unknown,
+): RequestAuditValueDetailRiskAcknowledgementView | undefined {
+  if (!isRecord(raw)) return undefined;
+  // A record missing its version, operator or acceptance time is not evidence, so it
+  // is reported as "no acknowledgement" rather than shown in a half-read state.
+  if (!isNonEmptyString(raw.version) || !isNonEmptyString(raw.phrase)) return undefined;
+  if (
+    typeof raw.admin_user_id !== "number" ||
+    !Number.isSafeInteger(raw.admin_user_id) ||
+    raw.admin_user_id <= 0
+  ) {
+    return undefined;
+  }
+  if (!isTimestamp(raw.accepted_at)) return undefined;
+
+  return {
+    version: raw.version,
+    phrase: raw.phrase,
+    admin_user_id: raw.admin_user_id,
+    accepted_at: raw.accepted_at,
+  };
+}
+
+/**
+ * Normalizes the operator gate payload.
+ *
+ * `ip_address`, `user_agent`, keys and values are deliberately not part of the
+ * result: the operator's own source identity stays in the audit record server-side
+ * and never travels to this surface.
+ */
+export function normalizeRequestAuditValueDetailOperatorStatus(
+  raw: unknown,
+): RequestAuditValueDetailOperatorStatus {
+  if (!isRecord(raw)) {
+    throw new RequestAuditValueDetailOperatorPayloadError(
+      "value detail operator status payload is not an object",
+    );
+  }
+
+  for (const flag of REQUEST_AUDIT_VALUE_DETAIL_GATE_FLAGS) {
+    if (typeof raw[flag] !== "boolean") {
+      // "Could not be read" must not be rendered as "off": fail instead of defaulting.
+      throw new RequestAuditValueDetailOperatorPayloadError(
+        `value detail operator status ${flag} is not a boolean`,
+      );
+    }
+  }
+  if (!isNonEmptyString(raw.risk_version)) {
+    throw new RequestAuditValueDetailOperatorPayloadError(
+      "value detail operator status risk_version is missing",
+    );
+  }
+  if (!isNonEmptyString(raw.risk_phrase_en) || !isNonEmptyString(raw.risk_phrase_zh)) {
+    throw new RequestAuditValueDetailOperatorPayloadError(
+      "value detail operator status risk statement is missing",
+    );
+  }
+
+  const status: RequestAuditValueDetailOperatorStatus = {
+    enabled: raw.enabled as boolean,
+    risk_acknowledged: raw.risk_acknowledged as boolean,
+    capture_allowed: raw.capture_allowed as boolean,
+    encryption_key_available: raw.encryption_key_available as boolean,
+    risk_version: raw.risk_version as string,
+    risk_phrase_en: raw.risk_phrase_en as string,
+    risk_phrase_zh: raw.risk_phrase_zh as string,
+    risk_acknowledgement_current: raw.risk_acknowledgement_current === true,
+  };
+
+  const acknowledgement = normalizeRiskAcknowledgement(raw.risk_acknowledgement);
+  if (acknowledgement) {
+    status.risk_acknowledgement = acknowledgement;
+  }
+
+  return status;
+}
+
+/** The statement the operator has to type for a language; always the server's text. */
+export function requestAuditValueDetailRequiredPhrase(
+  status: RequestAuditValueDetailOperatorStatus,
+  language: RequestAuditValueDetailAckLanguage,
+): string {
+  return language === "zh" ? status.risk_phrase_zh : status.risk_phrase_en;
+}
+
+/**
+ * The server compares the submitted statement with the expected one after trimming
+ * whitespace only — no case folding, no punctuation repair. The client must not be
+ * more permissive than that, or the operator would be told a statement matches that
+ * the server will refuse.
+ */
+export function requestAuditValueDetailPhraseMatches(
+  typed: string,
+  required: string,
+): boolean {
+  return required !== "" && typed.trim() === required;
+}
+
+/**
+ * Stable reason code -> i18n key suffix for the safe, closed feedback copy.
+ *
+ * An unknown or missing reason (a rejected body, a forbidden session, an outage)
+ * falls back to the HTTP status and finally to a generic rejection; the raw server
+ * message is never rendered.
+ */
+const REQUEST_AUDIT_VALUE_DETAIL_ERROR_KEYS: Record<string, string> = {
+  REQUEST_AUDIT_VALUE_DETAIL_RISK_ACK_REQUIRED: "phraseRequired",
+  REQUEST_AUDIT_VALUE_DETAIL_RISK_ACK_INVALID: "phraseInvalid",
+  REQUEST_AUDIT_VALUE_DETAIL_KEY_UNAVAILABLE: "keyUnavailable",
+  REQUEST_AUDIT_VALUE_DETAIL_OPERATOR_SESSION_REQUIRED: "sessionRequired",
+  REQUEST_AUDIT_VALUE_DETAIL_ADMIN_API_KEY_FORBIDDEN: "adminApiKeyForbidden",
+  REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_UNAVAILABLE: "unavailable",
+};
+
+export function requestAuditValueDetailErrorKey(error: unknown): string {
+  const reason =
+    typeof (error as { reason?: unknown } | null)?.reason === "string"
+      ? ((error as { reason: string }).reason)
+      : undefined;
+  const mapped = reason ? REQUEST_AUDIT_VALUE_DETAIL_ERROR_KEYS[reason] : undefined;
+  if (mapped) return mapped;
+
+  const status = (error as { status?: unknown } | null)?.status;
+  if (status === 403) return "forbidden";
+  if (status === 503) return "unavailable";
+  return "rejected";
+}
+
+/** Reads the capture gate. Never cached; a stale answer would misstate the truth. */
+export async function getRequestAuditValueDetailOperatorSettings(options?: {
+  signal?: AbortSignal;
+}): Promise<RequestAuditValueDetailOperatorStatus> {
+  const { data } = await apiClient.get<unknown>(REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_PATH, {
+    headers: REQUEST_AUDIT_VALUE_DETAIL_NO_STORE_HEADERS,
+    signal: options?.signal,
+  });
+  return normalizeRequestAuditValueDetailOperatorStatus(data);
+}
+
+/**
+ * Applies one whole-state update to the gate.
+ *
+ * The payload is built explicitly from the three agreed fields: enabling is bound to
+ * the statement the operator just typed, so no extra field (an identity, a source
+ * address, a key) may be attached here. Disabling is expressed the same way with
+ * `phrase: ""` — the server requires no statement for it.
+ */
+export async function updateRequestAuditValueDetailOperatorSettings(
+  input: RequestAuditValueDetailOperatorUpdateInput,
+): Promise<RequestAuditValueDetailOperatorStatus> {
+  const { data } = await apiClient.put<unknown>(
+    REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_PATH,
+    {
+      enabled: input.enabled,
+      language: input.language,
+      phrase: input.phrase,
+    },
+    { headers: REQUEST_AUDIT_VALUE_DETAIL_NO_STORE_HEADERS },
+  );
+  return normalizeRequestAuditValueDetailOperatorStatus(data);
+}
+
 export const settingsAPI = {
   getSettings,
   updateSettings,
@@ -1656,6 +1916,8 @@ export const settingsAPI = {
   updateRateLimit429AccountLimit,
   getKeyBillingSnapshotSettings,
   updateKeyBillingSnapshotSettings,
+  getRequestAuditValueDetailOperatorSettings,
+  updateRequestAuditValueDetailOperatorSettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,

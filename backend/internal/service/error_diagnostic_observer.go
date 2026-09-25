@@ -13,6 +13,9 @@ package service
 //     不采集，也不会被伪造成上游 HTTP 失败。
 //   - 协议：调用方必须显式给出被覆盖分支的协议（messages／chat_completions／responses），
 //     且协议按**入站路由**推导，不跟随上游 wire 协议或请求审计的协议值；未知协议一律不绑定。
+//     入站路由不是范围的全部：Bedrock 这类入站同样是 /v1/messages、真实上游却不是 Claude
+//     Messages 的路径额外声明头值这一层出界（见 bindBedrockMessagesErrorDiagnosticObserver），
+//     使该行按未采集记录，而不是套用 Claude Messages 的头值契约。
 //   - 采集边界：观察者只在传输层真的收到 4xx/5xx 时被调用一次；连接故障、客户端取消与本地
 //     拒绝都不会产生观察结果。
 //   - 写入：回调内只做有界快照（正文 ≤1 MiB 且必须读完整，由传输层保证），随后交给诊断服务
@@ -115,6 +118,22 @@ func (s *OpenAIGatewayService) SetErrorDiagnosticRecorder(recorder ErrorDiagnost
 	s.errorDiagnostics = newErrorDiagnosticObserver(recorder, s.settingService)
 }
 
+// errorDiagnosticBinding 是一次诊断绑定的固定结论：按入站路由推导的协议，正文与头值各自的
+// 封闭抑制结论，以及头值这一层是否按**上游形态**出界。
+//
+// 它是值类型：绑定当时算好、随观察者闭包携带，观察时不再重新读取设置，因此同一次发送的
+// 元数据与头值结论不会因为配置在两次读取之间翻转而自相矛盾。
+type errorDiagnosticBinding struct {
+	protocol string
+	// bodySuppressedVerdict：门控要求过正文留存而稳定密钥缺席（没有要求时为 ""）。
+	bodySuppressedVerdict string
+	// headerSuppressedVerdict：同一结论在头值这一层的形式（只有 Messages 绑定会带出）。
+	headerSuppressedVerdict string
+	// headerOutOfScope：本次真实上游的形态不在头值能力范围内（例如 Bedrock）。
+	// 它只影响头值：元数据与正文诊断照旧，且该行的头值结论是**未采集**而不是跳过。
+	headerOutOfScope bool
+}
+
 // bindErrorDiagnosticObserver 为一次真实发往上游的请求显式绑定诊断观察者。
 //
 // protocol 必须是本包白名单里的协议枚举（messages／chat_completions／responses），
@@ -127,7 +146,7 @@ func (s *GatewayService) bindErrorDiagnosticObserver(req *http.Request, c *gin.C
 	if s == nil {
 		return req
 	}
-	return s.errorDiagnostics.bindRequest(req, c, protocol)
+	return s.errorDiagnostics.bindRequest(req, c, errorDiagnosticBinding{protocol: protocol})
 }
 
 // bindErrorDiagnosticObserver 为一次真实发往上游的请求显式绑定诊断观察者（协议同上）。
@@ -135,7 +154,7 @@ func (s *OpenAIGatewayService) bindErrorDiagnosticObserver(req *http.Request, c 
 	if s == nil {
 		return req
 	}
-	return s.errorDiagnostics.bindRequest(req, c, protocol)
+	return s.errorDiagnostics.bindRequest(req, c, errorDiagnosticBinding{protocol: protocol})
 }
 
 // bindMessagesErrorDiagnosticObserver 是 Messages 分支的协议收口点。
@@ -148,12 +167,28 @@ func (s *OpenAIGatewayService) bindMessagesErrorDiagnosticObserver(req *http.Req
 	return s.bindErrorDiagnosticObserver(req, c, ErrorDiagnosticProtocolMessages)
 }
 
+// bindBedrockMessagesErrorDiagnosticObserver 是 Bedrock 上游分支的协议收口点。
+//
+// 元数据与正文诊断按入站 /v1/messages 记为 messages（与通用 Messages 分支一致），
+// 但 429 头值这一层**按上游形态出界**：Bedrock 真实上游是 AWS，请求头是 SigV4 形态、
+// 响应头是 x-amzn-* 形态，不是 Claude Messages 的限流事实。把 AWS 头按 Messages 的头值
+// 契约采集（并因此留下「采集失败」的原因码）等于给管理员一个错误的协议标签。
+func (s *GatewayService) bindBedrockMessagesErrorDiagnosticObserver(req *http.Request, c *gin.Context) *http.Request {
+	if s == nil {
+		return req
+	}
+	return s.errorDiagnostics.bindRequest(req, c, errorDiagnosticBinding{
+		protocol:         ErrorDiagnosticProtocolMessages,
+		headerOutOfScope: true,
+	})
+}
+
 // bindResponsesErrorDiagnosticBranch 在入站分支的上下文上绑定 Responses 诊断观察者。
 func (s *GatewayService) bindResponsesErrorDiagnosticBranch(ctx context.Context, c *gin.Context) context.Context {
 	if s == nil {
 		return ctx
 	}
-	return s.errorDiagnostics.bindContext(ctx, c, ErrorDiagnosticProtocolResponses)
+	return s.errorDiagnostics.bindContext(ctx, c, errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolResponses})
 }
 
 // bindResponsesErrorDiagnosticBranch 在入站分支的上下文上绑定 Responses 诊断观察者。
@@ -161,15 +196,15 @@ func (s *OpenAIGatewayService) bindResponsesErrorDiagnosticBranch(ctx context.Co
 	if s == nil {
 		return ctx
 	}
-	return s.errorDiagnostics.bindContext(ctx, c, ErrorDiagnosticProtocolResponses)
+	return s.errorDiagnostics.bindContext(ctx, c, errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolResponses})
 }
 
 // bindRequest 在协议白名单与门控都允许时，把一个显式观察者绑到本次出站请求上。
-func (o *errorDiagnosticObserver) bindRequest(req *http.Request, c *gin.Context, protocol string) *http.Request {
+func (o *errorDiagnosticObserver) bindRequest(req *http.Request, c *gin.Context, binding errorDiagnosticBinding) *http.Request {
 	if o == nil || req == nil || c == nil {
 		return req
 	}
-	observer, ok := o.observerFor(req.Context(), c, protocol)
+	observer, ok := o.observerFor(req.Context(), c, &binding)
 	if !ok {
 		return req
 	}
@@ -177,22 +212,27 @@ func (o *errorDiagnosticObserver) bindRequest(req *http.Request, c *gin.Context,
 }
 
 // bindContext 在协议白名单与门控都允许时，把一个显式观察者绑到分支上下文上。
-func (o *errorDiagnosticObserver) bindContext(ctx context.Context, c *gin.Context, protocol string) context.Context {
+func (o *errorDiagnosticObserver) bindContext(ctx context.Context, c *gin.Context, binding errorDiagnosticBinding) context.Context {
 	if o == nil || c == nil {
 		return ctx
 	}
-	observer, ok := o.observerFor(ctx, c, protocol)
+	observer, ok := o.observerFor(ctx, c, &binding)
 	if !ok {
 		return ctx
 	}
 	return httpattempt.WithDiagnosticObserver(ctx, observer)
 }
 
-// observerFor 按协议与门控构造本次绑定的观察者；不满足条件时返回 ok=false（不绑定）。
+// observerFor 按协议与门控构造本次绑定的观察者，并把封闭抑制结论写回 binding；
+// 不满足条件时返回 ok=false（不绑定）。
 //
 // 协议由调用方在绑定时给出并随观察者闭包携带，因此同一份注入状态可以服务多个协议分支，
 // 不存在把 Responses 记成 Messages 的共享硬编码。
-func (o *errorDiagnosticObserver) observerFor(ctx context.Context, c *gin.Context, protocol string) (*httpattempt.DiagnosticObserver, bool) {
+func (o *errorDiagnosticObserver) observerFor(ctx context.Context, c *gin.Context, binding *errorDiagnosticBinding) (*httpattempt.DiagnosticObserver, bool) {
+	if binding == nil {
+		return nil, false
+	}
+	protocol := binding.protocol
 	ordinalKey := errorDiagnosticOrdinalContextKey(protocol)
 	if ordinalKey == "" {
 		return nil, false
@@ -212,17 +252,29 @@ func (o *errorDiagnosticObserver) observerFor(ctx context.Context, c *gin.Contex
 	// 否则传输层只能报 not_requested，这一行会落成 not_observed，
 	// 把配置故障显示成「未观察到正文」，并与运维界面的 key-unavailable 状态自相矛盾
 	// （票据 02 要求缺密钥留下安全元数据与稳定原因码）。
-	suppressedVerdict := ""
 	if settings.BodyRetentionSuppressedByMissingKey(keyAvailable) {
-		suppressedVerdict = ErrorDiagnosticBodyVerdictSuppressedEncryptionUnavailable
+		binding.bodySuppressedVerdict = ErrorDiagnosticBodyVerdictSuppressedEncryptionUnavailable
 	}
+	// 头值是独立能力：只有 Messages 协议、且由它自己的开关要求时才观察 429 头值，
+	// 与正文开关互不影响。同样必须有稳定密钥才去读：没有密钥时这些值注定被判为
+	// skipped_encryption_unavailable，不该先把它们复制进内存。
+	// 上游形态出界的绑定（Bedrock）连读都不读：没有密钥的问题对它不成立，
+	// 否则这一行会被写成「要求过、做不到」，而事实是「不在范围内」。
+	headerValuesRequested := !binding.headerOutOfScope &&
+		protocol == ErrorDiagnosticProtocolMessages && settings.HeaderValuesCaptureAllowed()
+	if headerValuesRequested && !keyAvailable {
+		binding.headerSuppressedVerdict = ErrorDiagnosticHeaderVerdictSuppressedEncryptionUnavailable
+	}
+	captured := *binding
 	return &httpattempt.DiagnosticObserver{
 		// 正文留存是票 02 的分阶段 opt-in：未开启时只采集净化元数据。
 		// 而且必须真有稳定密钥才 tee：只有布尔值而密钥缺席时，这些字节注定被判为
 		// skipped_encryption_unavailable，传输层不该为它们读走并复制最多 1 MiB 明文。
 		CaptureRequestBody: settings.BodyCaptureAllowed() && keyAvailable,
+		// 429 头值同理，但走自己的开关：正文关着时头值照样采，头值关着时正文一字不改。
+		CaptureErrorHeaders: headerValuesRequested && keyAvailable,
 		OnUpstreamError: func(observation httpattempt.DiagnosticObservation) {
-			o.record(ctx, protocol, observation, c, ordinalKey, suppressedVerdict)
+			o.record(ctx, captured, observation, c, ordinalKey)
 		},
 	}, true
 }
@@ -282,16 +334,19 @@ func (o *errorDiagnosticObserver) settingsSnapshot(ctx context.Context) ErrorDia
 // 绑定时推进：一次发送可能被绑两次（分支级 + 请求级，内层生效），绑定即推进会让序号漂移，
 // 而绑定却可能根本没有真实发送（插件/WS 分支），因此只有真的观察到失败才占一个序号。
 //
-// suppressedVerdict 是本协议绑定当时算好的封闭抑制结论（没有时为 ""）：它只描述「门控要求过
-// 留存而稳定密钥缺席」这一次绑定的事实，因此随闭包传入，不在观察时重新读取设置。
+// suppressedVerdict／suppressedHeaderVerdict 是本协议绑定当时算好的封闭抑制结论（没有时为 ""）：
+// 它们只描述「门控要求过留存而稳定密钥缺席」这一次绑定的事实，因此随闭包传入，不在观察时重新
+// 读取设置。binding.headerOutOfScope 是同一层的第三条事实：本次真实上游的形态不在头值范围内，
+// 于是这一行的头值结论必须是**未采集**，而不是「要求过、做不到」或「采集失败」。
 func (o *errorDiagnosticObserver) record(
 	baseCtx context.Context,
-	protocol string,
+	binding errorDiagnosticBinding,
 	observation httpattempt.DiagnosticObservation,
 	c *gin.Context,
 	ordinalKey string,
-	suppressedVerdict string,
 ) {
+	suppressedVerdict := binding.bodySuppressedVerdict
+	suppressedHeaderVerdict := binding.headerSuppressedVerdict
 	// 必须先占写入槽、再复制正文：槽位已满时这次观察注定被丢弃，绝不能为它分配一份
 	// 1 MiB 级别的副本（4xx 风暴下会变成按次放大的分配）。复制只发生在已持有槽位之后，
 	// 因此同一时刻在内存里的待加密明文上限就是槽位数 × 单次上限。
@@ -323,7 +378,7 @@ func (o *errorDiagnosticObserver) record(
 		verdict = suppressedVerdict
 	}
 	attempt := ErrorDiagnosticAttempt{
-		Protocol:           protocol,
+		Protocol:           binding.protocol,
 		AttemptIndex:       ordinal,
 		Stage:              ErrorDiagnosticStageWire,
 		UpstreamStatusCode: observation.StatusCode,
@@ -333,6 +388,27 @@ func (o *errorDiagnosticObserver) record(
 	}
 	if body := observation.RequestBody; len(body) > 0 && len(body) <= ErrorDiagnosticMaxBodyBytes {
 		attempt.Body = append([]byte(nil), body...)
+	}
+	// 429 头值：只读净化器的输出，且只在它真的给了值时带走。传输层报 not_requested 而绑定
+	// 当时要求过头值时改报封闭抑制结论，理由与正文一致（配置故障不能显示成未采集）。
+	attempt.HeaderVerdict = errorDiagnosticHeaderVerdict(observation.HeaderVerdict)
+	if binding.headerOutOfScope {
+		// 上游形态出界：结论固定为未采集，优先于封闭抑制改写（出界与密钥无关），
+		// 且传输层根本不会带回取值。
+		attempt.HeaderVerdict = ErrorDiagnosticHeaderVerdictOutOfScope
+	} else if attempt.HeaderVerdict == ErrorDiagnosticHeaderVerdictNotRequested && suppressedHeaderVerdict != "" {
+		attempt.HeaderVerdict = suppressedHeaderVerdict
+	}
+	if observation.HeaderVerdict == httpattempt.DiagnosticHeaderCaptured {
+		values, ok := ErrorDiagnosticHeaderValuesFromSanitized(observation.RequestHeaderValues, observation.ResponseHeaderValues)
+		if !ok {
+			// 净化结果的形状不在契约内：丢掉整份值并留下稳定原因码，绝不部分写入，
+			// 也不把无法解释的形状当作「没有值」。
+			attempt.HeaderValues = ErrorDiagnosticHeaderValues{}
+			attempt.HeaderVerdict = ErrorDiagnosticHeaderVerdictInvalidValues
+		} else {
+			attempt.HeaderValues = values
+		}
 	}
 	go func() {
 		defer func() { <-o.writeSlots }()
@@ -366,6 +442,30 @@ func errorDiagnosticBodyVerdict(verdict httpattempt.DiagnosticBodyVerdict) strin
 		return ErrorDiagnosticBodyVerdictTooLarge
 	case httpattempt.DiagnosticBodyIncomplete:
 		return ErrorDiagnosticBodyVerdictIncomplete
+	default:
+		return ""
+	}
+}
+
+// errorDiagnosticHeaderVerdict 把传输层对 429 头值的观察结论原样映射到诊断服务的稳定枚举。
+//
+// 未知结论返回空串：服务对空 verdict 的语义是「调用方只给值，由服务自行判定」，
+// 因此将来新增结论只会退化成按值判定，而不会被误报成已采集。
+func errorDiagnosticHeaderVerdict(verdict httpattempt.DiagnosticHeaderVerdict) string {
+	switch verdict {
+	case httpattempt.DiagnosticHeaderNotRequested:
+		return ErrorDiagnosticHeaderVerdictNotRequested
+	case httpattempt.DiagnosticHeaderNotApplicable:
+		return ErrorDiagnosticHeaderVerdictNotApplicable
+	case httpattempt.DiagnosticHeaderCaptured:
+		return ErrorDiagnosticHeaderVerdictCaptured
+	case httpattempt.DiagnosticHeaderEmpty:
+		return ErrorDiagnosticHeaderVerdictEmpty
+	case httpattempt.DiagnosticHeaderOmitted:
+		// 净化器丢掉过被观察到的头名或取值，因此它交出来的取值只是半份快照。
+		// 传输层已经一个取值都不交出来；这里把它映射成「无法为这批值背书」的既有结论，
+		// 服务侧随之留下稳定原因码 skipped_invalid_values（ADR 0005：整份或全无）。
+		return ErrorDiagnosticHeaderVerdictInvalidValues
 	default:
 		return ""
 	}

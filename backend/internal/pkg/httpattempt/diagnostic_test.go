@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -135,6 +136,151 @@ func TestObservationWithoutLogicalRequestCounterIsUntracked(t *testing.T) {
 	require.Zero(t, observed[0].AttemptOrdinal, "an untracked attempt has no ordinal to report")
 	require.Equal(t, 500, observed[0].StatusCode)
 	require.Zero(t, observed[0].RequestBytes)
+}
+
+// 白名单内、有资格进快照的头一旦有取值没被收下（取值没过取值族校验），整份快照就不作数：
+// 剩下的取值会被管理员读成「上游只发了这几个头」，比没有记录更危险。
+func TestObservationDropsTheWholeHeaderSnapshotWhenAnEligibleValueWasRejected(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		request http.Header
+		header  http.Header
+	}{
+		{
+			name:    "rejected request header value",
+			request: http.Header{"User-Agent": {"Bearer sk-sensitive"}, "Anthropic-Version": {"2023-06-01"}},
+			header:  http.Header{"Retry-After": {"30"}},
+		},
+		{
+			name:    "rejected response header value",
+			request: http.Header{"User-Agent": {"claude-cli/2.1.78 (external, cli)"}},
+			header:  http.Header{"Retry-After": {"30"}, "Cache-Control": {"no-store,max-age=0"}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var observed []DiagnosticObservation
+			observer := &DiagnosticObserver{CaptureErrorHeaders: true, OnUpstreamError: func(o DiagnosticObservation) {
+				observed = append(observed, o)
+			}}
+			req := newDiagnosticRequest(t, WithDiagnosticObserver(context.Background(), observer), nil)
+			req.Header = tt.request
+
+			ObserveUpstreamError(req, nil, &http.Response{StatusCode: http.StatusTooManyRequests, Header: tt.header}, nil)
+
+			require.Len(t, observed, 1)
+			require.Equal(t, DiagnosticHeaderOmitted, observed[0].HeaderVerdict,
+				"有资格的取值被拒时整份快照必须判为不可交出，而不是把剩下的取值当完整快照")
+			require.Nil(t, observed[0].RequestHeaderValues)
+			require.Nil(t, observed[0].ResponseHeaderValues)
+		})
+	}
+}
+
+// 闭集之外的头名是名单本身的信任边界（设计内不采），不是「本该留住却丢了」：
+// 真实 429 响应几乎总带 Date／Content-Length 这类头，若把它们算成省略，
+// 头值能力就永远拿不到快照。它们既不落库、不记名，也不能让整份快照作废。
+func TestObservationKeepsTheAllowlistedSnapshotWhenOnlyUnlistedNamesWereObserved(t *testing.T) {
+	var observed []DiagnosticObservation
+	observer := &DiagnosticObserver{CaptureErrorHeaders: true, OnUpstreamError: func(o DiagnosticObservation) {
+		observed = append(observed, o)
+	}}
+	req := newDiagnosticRequest(t, WithDiagnosticObserver(context.Background(), observer), nil)
+	req.Header = http.Header{
+		"User-Agent":      {"claude-cli/2.1.78 (external, cli)"},
+		"X-Unknown":       {"private-unlisted-value"},
+		"Accept-Encoding": {"gzip, deflate, br, zstd"},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header: http.Header{
+			"Date":                                   {"Fri, 25 Sep 2026 00:05:49 GMT"},
+			"Content-Length":                         {"37"},
+			"Server":                                 {"envoy"},
+			"X-Unknown":                              {"private-unlisted-response-value"},
+			"Retry-After":                            {"42"},
+			"Anthropic-Ratelimit-Requests-Remaining": {"0"},
+		},
+	}
+
+	ObserveUpstreamError(req, nil, resp, nil)
+
+	require.Len(t, observed, 1)
+	require.Equal(t, DiagnosticHeaderCaptured, observed[0].HeaderVerdict,
+		"闭集外的头名是有意排除，不得让整份快照作废")
+	require.Equal(t, "42", observed[0].ResponseHeaderValues["Retry-After"])
+	require.Equal(t, "0", observed[0].ResponseHeaderValues["Anthropic-Ratelimit-Requests-Remaining"])
+	require.Equal(t, "claude-cli/2.1.78 (external, cli)", observed[0].RequestHeaderValues["User-Agent"])
+	// 闭集外的名字与取值一个都不进快照（也不记名字）。
+	for _, record := range []map[string]any{observed[0].RequestHeaderValues, observed[0].ResponseHeaderValues} {
+		for _, name := range []string{"Date", "Content-Length", "Server", "X-Unknown", "X-Custom-Prompt"} {
+			require.NotContains(t, record, name)
+		}
+	}
+	rendered := fmt.Sprint(observed[0].RequestHeaderValues, observed[0].ResponseHeaderValues)
+	for _, leaked := range []string{"private-unlisted-value", "private-unlisted-response-value", "envoy"} {
+		require.NotContains(t, rendered, leaked, "闭集外的取值不得出现在快照里")
+	}
+}
+
+// 凭据类头得到的存在性标记是设计内的排除，不是能力不足：正常请求每个都带 Authorization／Cookie，
+// 若把它算成省略，头值能力就永远交不出快照。
+func TestObservationKeepsTheHeaderSnapshotWhenOnlyIntentionallyExcludedCredentialsArePresent(t *testing.T) {
+	var observed []DiagnosticObservation
+	observer := &DiagnosticObserver{CaptureErrorHeaders: true, OnUpstreamError: func(o DiagnosticObservation) {
+		observed = append(observed, o)
+	}}
+	req := newDiagnosticRequest(t, WithDiagnosticObserver(context.Background(), observer), nil)
+	req.Header = http.Header{
+		"User-Agent":    {"claude-cli/2.1.78 (external, cli)"},
+		"Authorization": {"Bearer top-secret"},
+		"Cookie":        {"session=secret"},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header: http.Header{
+			"Retry-After":      {"42"},
+			"Set-Cookie":       {"session=secret"},
+			"WWW-Authenticate": {"Bearer realm=secret"},
+		},
+	}
+
+	ObserveUpstreamError(req, nil, resp, nil)
+
+	require.Len(t, observed, 1)
+	require.Equal(t, DiagnosticHeaderCaptured, observed[0].HeaderVerdict,
+		"设计内的凭据排除不算「有东西没被收下」")
+	require.Equal(t, "42", observed[0].ResponseHeaderValues["Retry-After"])
+	require.Equal(t, "claude-cli/2.1.78 (external, cli)", observed[0].RequestHeaderValues["User-Agent"])
+	// 凭据头只以存在性标记出现（值本身由净化器扣住），且标记永远不会成为取值。
+	for _, name := range []string{"Authorization", "Cookie"} {
+		require.Equal(t, map[string]any{"present": true}, observed[0].RequestHeaderValues[name])
+	}
+	for _, name := range []string{"Set-Cookie", "Www-Authenticate"} {
+		require.Equal(t, map[string]any{"present": true}, observed[0].ResponseHeaderValues[name])
+	}
+	rendered := fmt.Sprint(observed[0].RequestHeaderValues, observed[0].ResponseHeaderValues)
+	require.NotContains(t, rendered, "top-secret")
+	require.NotContains(t, rendered, "session=secret")
+}
+
+// 净化器一条都没收下、也确实没有可省略的东西时，是「在范围内但为空」，由空结论表达。
+// 注意这与「被省略」是两回事：这里没有任何被观察到的取值没进快照。
+func TestObservationReportsEmptyHeaderSnapshotWhenNothingSurvivedSanitization(t *testing.T) {
+	var observed []DiagnosticObservation
+	observer := &DiagnosticObserver{CaptureErrorHeaders: true, OnUpstreamError: func(o DiagnosticObservation) {
+		observed = append(observed, o)
+	}}
+	req := newDiagnosticRequest(t, WithDiagnosticObserver(context.Background(), observer), nil)
+	// 声明了头名却没有取值行：这是「观察到但没有值」，既没有值可留，也没有值被丢弃。
+	req.Header = http.Header{"User-Agent": {}}
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+
+	ObserveUpstreamError(req, nil, resp, nil)
+
+	require.Len(t, observed, 1)
+	require.Equal(t, DiagnosticHeaderEmpty, observed[0].HeaderVerdict)
+	require.Nil(t, observed[0].RequestHeaderValues)
+	require.Nil(t, observed[0].ResponseHeaderValues)
 }
 
 func TestDiagnosticBodyCaptureRequiresExplicitPerRequestOptIn(t *testing.T) {

@@ -46,10 +46,60 @@ func (v DiagnosticBodyVerdict) String() string {
 	}
 }
 
+// DiagnosticHeaderVerdict reports what one observation can say about the upstream 429
+// header values of an attempt. Header values are a Messages-only, 429-only capability and
+// are captured only for a request that explicitly opted in.
+type DiagnosticHeaderVerdict uint8
+
+const (
+	// DiagnosticHeaderNotRequested: the request did not opt in to header-value capture
+	// (protocol out of scope, or header-value retention switched off).
+	DiagnosticHeaderNotRequested DiagnosticHeaderVerdict = iota
+	// DiagnosticHeaderNotApplicable: the request opted in, but this observation is not an
+	// upstream 429, so by contract no header is read or kept.
+	DiagnosticHeaderNotApplicable
+	// DiagnosticHeaderCaptured: this observation carries sanitized header values.
+	DiagnosticHeaderCaptured
+	// DiagnosticHeaderEmpty: in scope, but nothing survived sanitization, so there is no
+	// value to keep. It is not the same fact as "not requested".
+	DiagnosticHeaderEmpty
+	// DiagnosticHeaderOmitted: in scope, and the sanitizer dropped at least one observed
+	// entry that was eligible for the snapshot (an allowlisted name whose value failed its
+	// shape check, or an allowlisted entry over the size budget), so the values that did
+	// survive are a partial view of the eligible set. A partial snapshot read as a complete
+	// one is worse than no snapshot, so this observation carries no header values at all and
+	// the caller records the fact, not the fragment.
+	//
+	// Names outside the closed set never produce this verdict: the closed set is the trust
+	// boundary, so unlisted names are excluded by design (never read into the snapshot,
+	// never stored, never named) rather than treated as something that was lost.
+	DiagnosticHeaderOmitted
+)
+
+// String returns the stable reason code for this header verdict.
+func (v DiagnosticHeaderVerdict) String() string {
+	switch v {
+	case DiagnosticHeaderNotRequested:
+		return "not_requested"
+	case DiagnosticHeaderNotApplicable:
+		return "not_applicable"
+	case DiagnosticHeaderCaptured:
+		return "captured"
+	case DiagnosticHeaderEmpty:
+		return "empty"
+	case DiagnosticHeaderOmitted:
+		return "sanitizer_omitted"
+	default:
+		return "unknown"
+	}
+}
+
 // DiagnosticObservation is one real upstream HTTP 4xx/5xx attempt, observed after the
-// RoundTrip that received it. It deliberately carries no credentials, no headers, no
+// RoundTrip that received it. It deliberately carries no credentials, no raw headers, no
 // account identity and no model name: those stay with the caller that bound the
-// observer, which is also the only place that knows the covered branch.
+// observer, which is also the only place that knows the covered branch. The only header
+// material it can carry is the sanitizer's already-restricted value set (see
+// RequestHeaderValues), never an http.Header.
 type DiagnosticObservation struct {
 	ObservedAt time.Time
 	// AttemptOrdinal is the 1-based position of this send among the logical request's
@@ -65,6 +115,21 @@ type DiagnosticObservation struct {
 	// callback only: the seam zeroes the buffer as soon as the callback returns, so a
 	// caller that needs the bytes must copy them inside the callback.
 	RequestBody []byte
+
+	// HeaderVerdict reports whether this observation carries sanitized 429 header values.
+	// DiagnosticHeaderOmitted means it deliberately carries none, because the sanitizer had
+	// to drop at least one eligible (allowlisted) entry: a partial snapshot must never be
+	// read as the complete eligible set.
+	HeaderVerdict DiagnosticHeaderVerdict
+	// RequestHeaderValues and ResponseHeaderValues hold the sanitizer output for an
+	// upstream 429 on an opted-in Messages attempt: allowlisted names with bounded values,
+	// and presence markers (never values) for known credential headers. They are the
+	// sanitizer's own copies, so they stay valid after the callback returns, and they are
+	// all-or-nothing over the eligible set: nil unless HeaderVerdict is
+	// DiagnosticHeaderCaptured. They are the allowlisted subset of the wire headers, never
+	// a claim that the upstream sent nothing else — unlisted names are excluded by design.
+	RequestHeaderValues  map[string]any
+	ResponseHeaderValues map[string]any
 }
 
 // DiagnosticObserver is an explicit, per-request opt-in to upstream error
@@ -73,6 +138,18 @@ type DiagnosticObserver struct {
 	// CaptureRequestBody opts in to a bounded copy of the outbound request body. It is
 	// false for metadata-only diagnostics, in which case no request bytes are retained.
 	CaptureRequestBody bool
+	// CaptureErrorHeaders opts in to sanitized 429 header VALUES (the Messages-only,
+	// 429-only diagnostic capability). It is deliberately independent of
+	// CaptureRequestBody: header values are sanitized on an upstream 429 even when body
+	// capture is off, and no body is read just because headers were requested.
+	//
+	// Only the sanitizer's restricted value set is read: allowlisted names with bounded
+	// values, and presence markers instead of values for known credential headers. The
+	// snapshot is all-or-nothing over that eligible set: if the sanitizer dropped any
+	// allowlisted entry (a rejected value, a size-budget overflow), no value is handed over
+	// at all, so a caller never persists a fragment as a complete snapshot. Unlisted header
+	// names are excluded by design and neither fail the snapshot nor appear in it.
+	CaptureErrorHeaders bool
 	// OnUpstreamError is invoked synchronously once for every real RoundTrip that
 	// received an HTTP 4xx/5xx. It must stay cheap and must not block the request path,
 	// and it must copy RequestBody if it needs it beyond the call.
@@ -218,5 +295,52 @@ func ObserveUpstreamError(req *http.Request, attempt *Attempt, resp *http.Respon
 			observation.RequestBody = body
 		}
 	}
+	observeUpstreamErrorHeaderValues(&observation, observer, req, resp)
 	observer.OnUpstreamError(observation)
+}
+
+// observeUpstreamErrorHeaderValues fills the sanitized 429 header values of one observation.
+//
+// It runs only when the request explicitly opted in, and it only ever reads an upstream
+// 429: other statuses produce the stable not_applicable verdict so a caller can tell
+// "out of scope" from "opted out". Nothing here re-reads the outbound body, and the
+// sanitizer is the single place that decides which header names and value shapes may
+// survive, so no raw http.Header ever reaches the observer.
+//
+// All or nothing over the eligible set: the sanitizer's *eligible* omission summary reports
+// how many allowlisted entries it had to drop (a value that failed its shape check, an entry
+// over the size budget). Any such omission makes the surviving values a partial view of the
+// eligible set, so this observation carries none of them and reports the fact instead
+// (DiagnosticHeaderOmitted).
+//
+// Two kinds of observed headers never trigger that verdict, because both are exclusions the
+// capability chose rather than entries it lost:
+//   - names outside the closed set: the closed set is the trust boundary, so they are never
+//     read into the snapshot, never stored and never named (see the eligible omission scope);
+//   - credential headers (Authorization/Cookie/…): presence markers by design.
+//
+// An ordinary 429 from a real upstream therefore still yields a snapshot (it may carry
+// Date/Server/Content-Length and other unlisted headers), while a rejected value on an
+// allowlisted header still invalidates the whole snapshot.
+func observeUpstreamErrorHeaderValues(observation *DiagnosticObservation, observer *DiagnosticObserver, req *http.Request, resp *http.Response) {
+	if observation == nil || observer == nil || !observer.CaptureErrorHeaders || req == nil || resp == nil {
+		return
+	}
+	if resp.StatusCode != http.StatusTooManyRequests {
+		observation.HeaderVerdict = DiagnosticHeaderNotApplicable
+		return
+	}
+	requestValues, requestOmission := SanitizeClaudeRequestHeaderValuesWithEligibleOmission(req.Header)
+	responseValues, responseOmission := SanitizeClaudeResponseHeaderValuesWithEligibleOmission(resp.Header)
+	if requestOmission.Merge(responseOmission).Any() {
+		observation.HeaderVerdict = DiagnosticHeaderOmitted
+		return
+	}
+	if len(requestValues) == 0 && len(responseValues) == 0 {
+		observation.HeaderVerdict = DiagnosticHeaderEmpty
+		return
+	}
+	observation.HeaderVerdict = DiagnosticHeaderCaptured
+	observation.RequestHeaderValues = requestValues
+	observation.ResponseHeaderValues = responseValues
 }

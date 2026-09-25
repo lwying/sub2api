@@ -156,18 +156,24 @@ func TestErrorDiagnosticDropAlertsAreBodyFreeAndRateLimited(t *testing.T) {
 	require.Zero(t, svc.Counters().WriteFailures)
 }
 
-// errorDiagnosticStageRecordingRepo 记录两段清理各自的调用次数，并可按需注入失败，
+// errorDiagnosticStageRecordingRepo 记录三段清理各自的调用次数，并可按需注入失败，
 // 用来证明失败不会让另一段被跳过。错误文本带 sentinel，证明原始错误不进日志。
+//
+// 它必须显式实现头值清除：内嵌接口在未被赋值时调用会 panic，而 RunOnce 现在一定会走到
+// 头值这一段——那会让「某一段失败」的测试变成崩溃而不是断言。
 type errorDiagnosticStageRecordingRepo struct {
 	ErrorDiagnosticRepository
 
-	bodyClearResult    int64
-	bodyClearErr       error
-	recordDeleteResult int64
-	recordDeleteErr    error
+	bodyClearResult      int64
+	bodyClearErr         error
+	headerValuesResult   int64
+	headerValuesClearErr error
+	recordDeleteResult   int64
+	recordDeleteErr      error
 
-	bodyClearCalls    int
-	recordDeleteCalls int
+	bodyClearCalls         int
+	headerValuesClearCalls int
+	recordDeleteCalls      int
 }
 
 func (r *errorDiagnosticStageRecordingRepo) ClearExpiredErrorDiagnosticBodies(context.Context, time.Time, int) (int64, error) {
@@ -175,34 +181,42 @@ func (r *errorDiagnosticStageRecordingRepo) ClearExpiredErrorDiagnosticBodies(co
 	return r.bodyClearResult, r.bodyClearErr
 }
 
+func (r *errorDiagnosticStageRecordingRepo) ClearExpiredErrorDiagnosticHeaderValues(context.Context, time.Time, int) (int64, error) {
+	r.headerValuesClearCalls++
+	return r.headerValuesResult, r.headerValuesClearErr
+}
+
 func (r *errorDiagnosticStageRecordingRepo) DeleteExpiredErrorDiagnostics(context.Context, time.Time, int) (int64, error) {
 	r.recordDeleteCalls++
 	return r.recordDeleteResult, r.recordDeleteErr
 }
 
-// TestErrorDiagnosticCleanupStagesAreDecoupled 覆盖两段清理互不阻塞：
-// 正文清除失败时，第 30 天的整行删除仍必须被真正尝试——
-// 否则一条清理不掉的正文会让元数据无限期留在在线主库上，直接违反 30 天上限。
+// TestErrorDiagnosticCleanupStagesAreDecoupled 覆盖三段清理互不阻塞：
+// 正文清除失败时，头值清除与第 30 天的整行删除仍必须被真正尝试——
+// 否则一条清理不掉的密文会让元数据无限期留在在线主库上，直接违反 30 天上限。
 func TestErrorDiagnosticCleanupStagesAreDecoupled(t *testing.T) {
 	sink, release := captureStructuredLog(t)
 	defer release()
 
 	repo := &errorDiagnosticStageRecordingRepo{
-		bodyClearErr:    errors.New(alertTestErrorSentinel),
-		recordDeleteErr: errors.New(alertTestErrorSentinel),
+		bodyClearErr:         errors.New(alertTestErrorSentinel),
+		headerValuesClearErr: errors.New(alertTestErrorSentinel),
+		recordDeleteErr:      errors.New(alertTestErrorSentinel),
 	}
 	cleanup := NewErrorDiagnosticCleanupService(repo, NewErrorDiagnosticMetrics())
 
-	_, _, err := cleanup.RunOnce(context.Background())
+	_, err := cleanup.RunOnce(context.Background())
 	require.Error(t, err, "清理失败必须冒泡")
 
 	require.Equal(t, 1, repo.bodyClearCalls, "正文清除必须被调用")
+	require.Equal(t, 1, repo.headerValuesClearCalls, "正文清除失败后，头值清除仍必须被尝试")
 	require.Equal(t, 1, repo.recordDeleteCalls, "正文清除失败后，整行删除仍必须被尝试")
-	require.EqualValues(t, 2, cleanup.Counters().CleanupFailures, "两段失败各自计数")
+	require.EqualValues(t, 3, cleanup.Counters().CleanupFailures, "三段失败各自计数")
 
-	// 两段各自的稳定原因码都要出现，运维才能区分是哪一段坏了。
+	// 三段各自的稳定原因码都要出现，运维才能区分是哪一段坏了。
 	require.True(t, sink.ContainsMessageAtLevel(ErrorDiagnosticAlertCleanupFailed, "warn"))
 	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeBodyClearFailed))
+	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeHeaderValueClearFailed))
 	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeRecordDeleteFailed))
 	requireNoSensitiveDiagnosticLogContent(t, sink)
 }
@@ -216,10 +230,10 @@ func TestErrorDiagnosticCleanupDeleteFailureStillReportsClearedBodies(t *testing
 	repo := &errorDiagnosticStageRecordingRepo{bodyClearResult: 3, recordDeleteErr: errors.New(alertTestErrorSentinel)}
 	cleanup := NewErrorDiagnosticCleanupService(repo, NewErrorDiagnosticMetrics())
 
-	cleared, deleted, err := cleanup.RunOnce(context.Background())
+	result, err := cleanup.RunOnce(context.Background())
 	require.Error(t, err)
-	require.EqualValues(t, 3, cleared, "已经物理清除的正文数量必须如实返回")
-	require.Zero(t, deleted)
+	require.EqualValues(t, 3, result.BodiesCleared, "已经物理清除的正文数量必须如实返回")
+	require.Zero(t, result.RecordsDeleted)
 	require.EqualValues(t, 1, cleanup.Counters().CleanupFailures)
 	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeRecordDeleteFailed))
 	requireNoSensitiveDiagnosticLogContent(t, sink)
@@ -268,10 +282,10 @@ func TestErrorDiagnosticCleanupReportsBacklog(t *testing.T) {
 	cleanup := NewErrorDiagnosticCleanupService(repo, NewErrorDiagnosticMetrics())
 	cleanup.now = func() time.Time { return now }
 
-	bodiesCleared, recordsDeleted, err := cleanup.RunOnce(context.Background())
+	result, err := cleanup.RunOnce(context.Background())
 	require.NoError(t, err)
-	require.Zero(t, bodiesCleared)
-	require.Zero(t, recordsDeleted)
+	require.Zero(t, result.BodiesCleared)
+	require.Zero(t, result.RecordsDeleted)
 
 	require.True(t, sink.ContainsMessageAtLevel(ErrorDiagnosticAlertCleanupBacklog, "warn"))
 	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeBacklog))
@@ -298,7 +312,7 @@ func TestErrorDiagnosticCleanupBacklogProbeFailureIsReported(t *testing.T) {
 	repo.backlogErr = errors.New("probe failed: " + alertTestErrorSentinel)
 	cleanup := NewErrorDiagnosticCleanupService(repo, NewErrorDiagnosticMetrics())
 
-	_, _, err := cleanup.RunOnce(context.Background())
+	_, err := cleanup.RunOnce(context.Background())
 	require.NoError(t, err, "探针失败不得改变清理结果")
 	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeBacklogProbeFailed))
 	requireNoSensitiveDiagnosticLogContent(t, sink)
@@ -317,10 +331,10 @@ func TestErrorDiagnosticCleanupWithoutBacklogReaderStillRuns(t *testing.T) {
 	repo := &errorDiagnosticStageRecordingRepo{bodyClearResult: 3, recordDeleteResult: 4}
 	cleanup := NewErrorDiagnosticCleanupService(repo, NewErrorDiagnosticMetrics())
 
-	cleared, deleted, err := cleanup.RunOnce(context.Background())
+	result, err := cleanup.RunOnce(context.Background())
 	require.NoError(t, err, "缺少积压观测不得让清理失败")
-	require.EqualValues(t, 3, cleared)
-	require.EqualValues(t, 4, deleted)
+	require.EqualValues(t, 3, result.BodiesCleared)
+	require.EqualValues(t, 4, result.RecordsDeleted)
 	require.Empty(t, sink.events, "缺少观测能力不是故障，不得产生告警")
 
 	_, err = cleanup.Backlog(context.Background())

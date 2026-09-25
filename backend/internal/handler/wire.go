@@ -121,6 +121,7 @@ func ProvideGatewayHandler(
 	keyBillingSnapshot *service.KeyBillingSnapshotService,
 	errorDiagnosticService *service.ErrorDiagnosticService,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
+	requestAuditValueDetailCapture *service.RequestAuditValueDetailCapture,
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
@@ -129,6 +130,9 @@ func ProvideGatewayHandler(
 	h.SetKeyBillingSnapshotService(keyBillingSnapshot)
 	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
+	// 值明细采集接缝（默认关闭）：绑定阶段用它决定是否复制值快照，
+	// 审计行落库后由它写入。未注入时一个字节的值都不会被采集。
+	gatewayService.SetRequestAuditValueDetailCapture(requestAuditValueDetailCapture)
 	return h
 }
 
@@ -250,6 +254,23 @@ func ProvideRequestErrorDiagnosticHandler(diagnostics *service.ErrorDiagnosticSe
 	return admin.NewRequestErrorDiagnosticHandler(diagnostics)
 }
 
+// ProvideAdminUsageHandler 构造使用记录处理器，并用显式 setter 注入值明细接缝。
+//
+// 走 setter 而不是给 admin.NewUsageHandler 加参数：既有装配调用点保持不变，
+// 依赖仍然显式（nil 时入口按不可用处理，不会 panic）。
+func ProvideAdminUsageHandler(
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	adminService service.AdminService,
+	cleanupService *service.UsageCleanupService,
+	requestAuditRepo service.RequestAuditRepository,
+	requestAuditValueDetail *service.RequestAuditValueDetailService,
+) *admin.UsageHandler {
+	h := admin.NewUsageHandler(usageService, apiKeyService, adminService, cleanupService, requestAuditRepo)
+	h.SetRequestAuditValueDetailService(requestAuditValueDetail)
+	return h
+}
+
 // ProviderSet is the Wire provider set for all handlers
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
@@ -296,7 +317,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewOpsHandler,
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,
-	admin.NewUsageHandler,
+	ProvideAdminUsageHandler, // 使用记录处理器 + 值明细接缝（setter 注入）
 	ProvideRequestErrorDiagnosticHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,

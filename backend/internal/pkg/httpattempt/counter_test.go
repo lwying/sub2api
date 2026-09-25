@@ -555,3 +555,65 @@ func TestResponseBodyReadToEOFMarksReadComplete(t *testing.T) {
 
 	require.True(t, *counter.Metadata()[0].ResponseReadComplete)
 }
+
+// 值快照的省略摘要必须由传输层在**采集那一刻**记在尝试元数据上：服务层看到的
+// 已经是净化器筛过的取值，未知头名与没通过校验的取值在那里根本不存在，
+// 因此「有条目没被收下」这个事实只能在入口处记下来才能传到载荷里的 truncated。
+func TestClaudeValueSnapshotOmissionIsCarriedByAttemptMetadata(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithClaudeHeaderValueCapture(WithCounter(context.Background(), counter), true)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	require.NoError(t, err)
+	req.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+	req.Header.Set("X-Unknown-Private", "private-unknown-value")
+	req.Header.Set("Authorization", "Bearer top-secret")
+	attempt := StartRequestAttempt(req)
+	require.NotNil(t, attempt)
+	attempt.SetResponse(429, http.Header{
+		"Retry-After":        {"42"},
+		"X-Upstream-Private": {"private-response-value"},
+		"WWW-Authenticate":   {"Bearer realm=secret"},
+	}, false)
+
+	metadata := counter.Metadata()
+	require.Len(t, metadata, 1)
+	require.Equal(t, 1, metadata[0].RequestHeaderValueOmission.OmittedNames, "闭集外的入站头名算省略")
+	require.Equal(t, 1, metadata[0].ResponseHeaderValueOmission.OmittedNames, "闭集外的响应头名算省略")
+	require.True(t, metadata[0].RequestHeaderValueOmission.Any())
+	require.True(t, metadata[0].ResponseHeaderValueOmission.Any())
+	require.Equal(t, map[string]any{"present": true}, metadata[0].RequestHeaderValues["Authorization"])
+	require.Equal(t, map[string]any{"present": true}, metadata[0].ResponseHeaderValues["Www-Authenticate"])
+
+	// 摘要跨上下文派生与元数据快照原样保留。
+	roundTrip, ok := MetadataFromContext(WithMetadata(context.Background(), metadata[0]))
+	require.True(t, ok)
+	require.Equal(t, metadata[0].RequestHeaderValueOmission, roundTrip.RequestHeaderValueOmission)
+	require.Equal(t, metadata[0].ResponseHeaderValueOmission, roundTrip.ResponseHeaderValueOmission)
+
+	// 名字与取值都不进元数据：摘要只有计数。
+	encoded, err := json.Marshal(metadata[0].RequestHeaderValueOmission)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "private")
+	require.NotContains(t, string(encoded), "Unknown")
+}
+
+// 未打开值快照标记时一切保持零值：关闭的部署在热路径上既不复制取值，
+// 也不会声称「有条目没被收下」。
+func TestClaudeValueSnapshotOmissionStaysZeroWhenCaptureIsOff(t *testing.T) {
+	counter := NewCounter()
+	ctx := WithCounter(context.Background(), counter)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	require.NoError(t, err)
+	req.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+	req.Header.Set("X-Unknown-Private", "private-unknown-value")
+	attempt := StartRequestAttempt(req)
+	require.NotNil(t, attempt)
+	attempt.SetResponse(200, http.Header{"X-Upstream-Private": {"private-response-value"}}, false)
+
+	metadata := counter.Metadata()
+	require.Len(t, metadata, 1)
+	require.False(t, metadata[0].RequestHeaderValueOmission.Any())
+	require.False(t, metadata[0].ResponseHeaderValueOmission.Any())
+	require.Empty(t, metadata[0].RequestHeaderValues)
+	require.Empty(t, metadata[0].ResponseHeaderValues)
+}

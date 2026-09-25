@@ -6089,6 +6089,324 @@
             </div>
           </div>
 
+          <!--
+            Claude request-audit value details (ADR 0006).
+
+            The stored switch and the verified `capture_allowed` verdict are two
+            different facts and are shown as such: a stored switch that is not backed
+            by a current acknowledgement is a state the server reports deliberately
+            ("stored on, nothing runs"), not an inconsistency to be smoothed over.
+            Enabling is an explicit verbatim acknowledgement given every time;
+            disabling needs no statement and can never be blocked.
+          -->
+          <div class="card" data-testid="request-audit-value-detail-settings">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.requestAuditValueDetail.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.requestAuditValueDetail.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.requestAuditValueDetail.hint") }}
+              </p>
+
+              <div
+                v-if="requestAuditValueDetailLoading"
+                class="text-gray-500"
+                data-testid="request-audit-value-detail-loading"
+              >
+                {{ t("common.loading") }}
+              </div>
+
+              <!--
+                An unreadable status is stated as such. It is never rendered as "off":
+                the server refuses to guess, and the UI must not guess on its behalf.
+              -->
+              <div
+                v-else-if="!requestAuditValueDetailStatus"
+                data-testid="request-audit-value-detail-unavailable"
+                role="alert"
+                class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+              >
+                {{ t("admin.settings.requestAuditValueDetail.unavailable") }}
+              </div>
+
+              <template v-else>
+                <dl
+                  class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm"
+                  data-testid="request-audit-value-detail-state"
+                >
+                  <dt class="text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.requestAuditValueDetail.state.storedLabel") }}
+                  </dt>
+                  <dd
+                    data-testid="request-audit-value-detail-stored"
+                    :data-state="requestAuditValueDetailStatus.enabled ? 'on' : 'off'"
+                    class="font-medium text-gray-900 dark:text-white"
+                  >
+                    {{
+                      requestAuditValueDetailStatus.enabled
+                        ? t("admin.settings.requestAuditValueDetail.state.on")
+                        : t("admin.settings.requestAuditValueDetail.state.off")
+                    }}
+                  </dd>
+
+                  <dt class="text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.requestAuditValueDetail.state.captureLabel") }}
+                  </dt>
+                  <dd
+                    data-testid="request-audit-value-detail-capture"
+                    :data-state="requestAuditValueDetailStatus.capture_allowed ? 'on' : 'off'"
+                    class="font-medium text-gray-900 dark:text-white"
+                  >
+                    {{
+                      requestAuditValueDetailStatus.capture_allowed
+                        ? t("admin.settings.requestAuditValueDetail.state.captureOn")
+                        : t("admin.settings.requestAuditValueDetail.state.captureOff")
+                    }}
+                  </dd>
+
+                  <dt class="text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.requestAuditValueDetail.state.keyLabel") }}
+                  </dt>
+                  <dd
+                    data-testid="request-audit-value-detail-key"
+                    :data-state="requestAuditValueDetailStatus.encryption_key_available ? 'on' : 'off'"
+                    class="text-gray-900 dark:text-white"
+                  >
+                    {{
+                      requestAuditValueDetailStatus.encryption_key_available
+                        ? t("admin.settings.requestAuditValueDetail.state.keyAvailable")
+                        : t("admin.settings.requestAuditValueDetail.state.keyUnavailable")
+                    }}
+                  </dd>
+                </dl>
+
+                <!-- Stored on but nothing running: which prerequisite is missing. -->
+                <p
+                  v-if="requestAuditValueDetailMismatchKey"
+                  data-testid="request-audit-value-detail-mismatch"
+                  class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+                >
+                  {{ t(requestAuditValueDetailMismatchKey) }}
+                </p>
+
+                <section class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                  <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.requestAuditValueDetail.ack.version") }}
+                    <span class="font-mono">{{ requestAuditValueDetailStatus.risk_version }}</span>
+                  </h3>
+
+                  <div
+                    v-if="requestAuditValueDetailStatus.risk_acknowledgement"
+                    data-testid="request-audit-value-detail-ack"
+                    class="mt-2 space-y-1 text-xs"
+                  >
+                    <div
+                      data-testid="request-audit-value-detail-ack-version"
+                      class="text-gray-600 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.requestAuditValueDetail.ack.version") }}:
+                      <span class="font-mono">{{
+                        requestAuditValueDetailStatus.risk_acknowledgement.version
+                      }}</span>
+                    </div>
+                    <div
+                      data-testid="request-audit-value-detail-ack-operator"
+                      class="text-gray-600 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.requestAuditValueDetail.ack.operator") }}:
+                      <span class="font-mono"
+                        >#{{ requestAuditValueDetailStatus.risk_acknowledgement.admin_user_id }}</span
+                      >
+                    </div>
+                    <div
+                      data-testid="request-audit-value-detail-ack-accepted-at"
+                      class="text-gray-600 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.requestAuditValueDetail.ack.acceptedAt") }}:
+                      <span class="font-mono">{{
+                        requestAuditValueDetailStatus.risk_acknowledgement.accepted_at
+                      }}</span>
+                    </div>
+                    <!-- The recorded statement is shown as plain text; it is not a secret. -->
+                    <div class="text-gray-600 dark:text-gray-300">
+                      {{ t("admin.settings.requestAuditValueDetail.ack.phrase") }}:
+                      <span class="text-gray-800 dark:text-gray-200">{{
+                        requestAuditValueDetailStatus.risk_acknowledgement.phrase
+                      }}</span>
+                    </div>
+                  </div>
+                  <p
+                    v-else
+                    data-testid="request-audit-value-detail-ack-none"
+                    class="mt-2 text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.requestAuditValueDetail.ack.none") }}
+                  </p>
+
+                  <!--
+                    A record that does not cover the current statement has to be given
+                    again; with no record at all, the notice above already says so.
+                  -->
+                  <p
+                    v-if="
+                      requestAuditValueDetailStatus.risk_acknowledgement &&
+                      !requestAuditValueDetailStatus.risk_acknowledgement_current
+                    "
+                    data-testid="request-audit-value-detail-ack-stale"
+                    class="mt-2 text-xs text-amber-700 dark:text-amber-300"
+                  >
+                    {{ t("admin.settings.requestAuditValueDetail.ack.stale") }}
+                  </p>
+                </section>
+
+                <!--
+                  Deliberately not a <form>: the whole settings tab is already wrapped
+                  in one outer form, and a nested submit button would run the enable
+                  request twice (once for the click, once for the bubbled submit).
+                -->
+                <div class="space-y-3" data-testid="request-audit-value-detail-enable-form">
+                  <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.requestAuditValueDetail.enable.title") }}
+                  </h3>
+                  <p class="max-w-3xl text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.requestAuditValueDetail.enable.notice") }}
+                  </p>
+
+                  <fieldset>
+                    <legend class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                      {{ t("admin.settings.requestAuditValueDetail.enable.language") }}
+                    </legend>
+                    <div class="flex flex-wrap gap-4 text-sm">
+                      <label
+                        v-for="ackLanguage in REQUEST_AUDIT_VALUE_DETAIL_ACK_LANGUAGES"
+                        :key="ackLanguage"
+                        class="inline-flex items-center gap-2"
+                      >
+                        <input
+                          v-model="requestAuditValueDetailLanguage"
+                          type="radio"
+                          name="request-audit-value-detail-language"
+                          :value="ackLanguage"
+                          :data-testid="`request-audit-value-detail-language-${ackLanguage}`"
+                          class="h-4 w-4"
+                        />
+                        <span class="text-gray-700 dark:text-gray-300">
+                          {{ t(`admin.settings.requestAuditValueDetail.languages.${ackLanguage}`) }}
+                        </span>
+                      </label>
+                    </div>
+                  </fieldset>
+
+                  <div>
+                    <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                      {{ t("admin.settings.requestAuditValueDetail.enable.requiredPhrase") }}
+                    </span>
+                    <!-- Selectable plain text: the operator must be able to read what they type. -->
+                    <p
+                      data-testid="request-audit-value-detail-required-phrase"
+                      class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-100 px-3 py-2 font-mono text-xs text-gray-900 dark:bg-dark-900 dark:text-dark-100"
+                    >
+                      {{ requestAuditValueDetailStatement }}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      for="request-audit-value-detail-phrase"
+                      class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.requestAuditValueDetail.enable.phraseLabel") }}
+                    </label>
+                    <!--
+                      The typed statement is component state only: it is never persisted,
+                      never read back, and cleared as soon as the request is over.
+                    -->
+                    <textarea
+                      id="request-audit-value-detail-phrase"
+                      v-model="requestAuditValueDetailTypedPhrase"
+                      data-testid="request-audit-value-detail-phrase-input"
+                      rows="3"
+                      autocomplete="off"
+                      autocapitalize="off"
+                      autocorrect="off"
+                      spellcheck="false"
+                      :disabled="requestAuditValueDetailSaving"
+                      :placeholder="t('admin.settings.requestAuditValueDetail.enable.phrasePlaceholder')"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 focus:border-primary-500 focus:outline-none disabled:opacity-60 dark:border-dark-600 dark:bg-dark-900 dark:text-dark-100"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.requestAuditValueDetail.enable.disabledHint") }}
+                    </p>
+                  </div>
+
+                  <p
+                    v-if="!requestAuditValueDetailStatus.encryption_key_available"
+                    data-testid="request-audit-value-detail-key-required"
+                    class="text-xs text-amber-700 dark:text-amber-300"
+                  >
+                    {{ t("admin.settings.requestAuditValueDetail.state.keyRequired") }}
+                  </p>
+
+                  <!--
+                    An explicit click is the only trigger: nothing here enables capture
+                    as a side effect of typing, of loading the panel, or of the outer
+                    settings form being saved.
+                  -->
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    data-testid="request-audit-value-detail-enable"
+                    :disabled="!requestAuditValueDetailCanEnable"
+                    @click="enableRequestAuditValueDetail"
+                  >
+                    {{
+                      requestAuditValueDetailSaving
+                        ? t("admin.settings.requestAuditValueDetail.enable.confirming")
+                        : t("admin.settings.requestAuditValueDetail.enable.confirm")
+                    }}
+                  </button>
+                </div>
+
+                <p
+                  v-if="requestAuditValueDetailErrorMessage"
+                  data-testid="request-audit-value-detail-error"
+                  role="alert"
+                  class="text-sm text-red-600 dark:text-red-400"
+                >
+                  {{ requestAuditValueDetailErrorMessage }}
+                </p>
+
+                <!--
+                  Turning the gate off is the direction that must always work: no
+                  statement, no language and no prerequisite can block it.
+                -->
+                <div class="border-t border-gray-100 pt-3 dark:border-dark-700">
+                  <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.requestAuditValueDetail.disable.notice") }}
+                  </p>
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    data-testid="request-audit-value-detail-disable"
+                    :disabled="requestAuditValueDetailSaving"
+                    @click="disableRequestAuditValueDetail"
+                  >
+                    {{
+                      requestAuditValueDetailSaving
+                        ? t("admin.settings.requestAuditValueDetail.disable.disabling")
+                        : t("admin.settings.requestAuditValueDetail.disable.action")
+                    }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Web Search Emulation -->
           <div class="card">
             <div
@@ -9142,6 +9460,10 @@ import {
   deriveWeChatConnectStoredMode,
   normalizeDefaultSubscriptionSettings,
   resolveWeChatConnectModeCapabilities,
+  REQUEST_AUDIT_VALUE_DETAIL_ACK_LANGUAGES,
+  requestAuditValueDetailErrorKey,
+  requestAuditValueDetailPhraseMatches,
+  requestAuditValueDetailRequiredPhrase,
 } from "@/api/admin/settings";
 import type {
   AuthSourceDefaultsState,
@@ -9151,6 +9473,8 @@ import type {
   DefaultSubscriptionSetting,
   DefaultPlatformQuotasMap,
   OpenAIFastPolicyRule,
+  RequestAuditValueDetailAckLanguage,
+  RequestAuditValueDetailOperatorStatus,
   WeChatConnectMode,
   WebSearchEmulationConfig,
   WebSearchProviderConfig,
@@ -9375,6 +9699,58 @@ const rateLimit429AccountLimitForm = reactive({ max_accounts: 2 });
 const keyBillingSnapshotLoading = ref(true);
 const keyBillingSnapshotSaving = ref(false);
 const keyBillingSnapshotForm = reactive({ enabled: false, max_stale_hours: 72 });
+
+// Claude 请求审计值明细的运维门控（ADR 0006）
+const requestAuditValueDetailLoading = ref(true);
+const requestAuditValueDetailSaving = ref(false);
+/**
+ * The server's last answer. `null` means "no readable status" (a read failure, or a
+ * request still in flight) and is rendered as unknown — never as "off".
+ */
+const requestAuditValueDetailStatus = ref<RequestAuditValueDetailOperatorStatus | null>(null);
+const requestAuditValueDetailLanguage = ref<RequestAuditValueDetailAckLanguage>(
+  isZhLocale.value ? "zh" : "en",
+);
+/** Typed confirmation only: component state, cleared on submit and never persisted. */
+const requestAuditValueDetailTypedPhrase = ref("");
+const requestAuditValueDetailErrorMessage = ref("");
+
+/** The statement to type: always the server's own text for the selected language. */
+const requestAuditValueDetailStatement = computed(() => {
+  const status = requestAuditValueDetailStatus.value;
+  if (!status) return "";
+  return requestAuditValueDetailRequiredPhrase(status, requestAuditValueDetailLanguage.value);
+});
+
+/**
+ * Stored on but nothing is running: which prerequisite is missing. Distinguishing
+ * the two facts is the whole point of not collapsing them into one switch.
+ */
+const requestAuditValueDetailMismatchKey = computed(() => {
+  const status = requestAuditValueDetailStatus.value;
+  if (!status || !status.enabled || status.capture_allowed) return "";
+  if (!status.encryption_key_available) {
+    return "admin.settings.requestAuditValueDetail.state.captureMismatchKey";
+  }
+  return status.risk_acknowledged && !status.risk_acknowledgement_current
+    ? "admin.settings.requestAuditValueDetail.state.captureMismatchStaleAck"
+    : "admin.settings.requestAuditValueDetail.state.captureMismatchNoAck";
+});
+
+/**
+ * The confirmation is deliberate every time: the server refuses an enable without a
+ * freshly typed statement, so the button stays unavailable until the exact text is
+ * present — and never for a statement the operator has not typed themselves.
+ */
+const requestAuditValueDetailCanEnable = computed(
+  () =>
+    requestAuditValueDetailStatus.value !== null &&
+    !requestAuditValueDetailSaving.value &&
+    requestAuditValueDetailPhraseMatches(
+      requestAuditValueDetailTypedPhrase.value,
+      requestAuditValueDetailStatement.value,
+    ),
+);
 
 // Panel API Rate Limit 状态
 const panelRateLimitLoading = ref(true);
@@ -12459,6 +12835,82 @@ async function saveKeyBillingSnapshotSettings() {
   }
 }
 
+// Claude 请求审计值明细：加载 / 开启 / 关闭（ADR 0006）
+async function loadRequestAuditValueDetailSettings() {
+  requestAuditValueDetailLoading.value = true;
+  try {
+    requestAuditValueDetailStatus.value =
+      await adminAPI.settings.getRequestAuditValueDetailOperatorSettings();
+  } catch (error: unknown) {
+    // 读取失败不是「关闭」：显式显示不可读，不假装门控是关的。
+    requestAuditValueDetailStatus.value = null;
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.requestAuditValueDetail.loadFailed")),
+    );
+  } finally {
+    requestAuditValueDetailLoading.value = false;
+  }
+}
+
+/** 开启必须由本次操作逐字确认；服务端每次更新都会重新校验。 */
+async function enableRequestAuditValueDetail() {
+  if (!requestAuditValueDetailCanEnable.value || requestAuditValueDetailStatus.value === null) return;
+
+  requestAuditValueDetailSaving.value = true;
+  requestAuditValueDetailErrorMessage.value = "";
+  try {
+    const next = await adminAPI.settings.updateRequestAuditValueDetailOperatorSettings({
+      enabled: true,
+      language: requestAuditValueDetailLanguage.value,
+      phrase: requestAuditValueDetailTypedPhrase.value.trim(),
+    });
+    // 语句不保留：下一次开启必须重新逐字输入。
+    requestAuditValueDetailTypedPhrase.value = "";
+    // 服务端返回的才是状态，不按请求内容乐观推断。
+    requestAuditValueDetailStatus.value = next;
+    appStore.showSuccess(t("admin.settings.requestAuditValueDetail.saved"));
+  } catch (error: unknown) {
+    // 只显示闭集文案：不回显服务端原文，也绝不显示成开启。
+    requestAuditValueDetailErrorMessage.value = t(
+      `admin.settings.requestAuditValueDetail.errors.${requestAuditValueDetailErrorKey(error)}`,
+    );
+  } finally {
+    requestAuditValueDetailSaving.value = false;
+  }
+}
+
+/** 关闭永远允许：不需要语句、不需要确认记录，也不受密钥与前置校验阻挡。 */
+async function disableRequestAuditValueDetail() {
+  requestAuditValueDetailSaving.value = true;
+  requestAuditValueDetailErrorMessage.value = "";
+  try {
+    const next = await adminAPI.settings.updateRequestAuditValueDetailOperatorSettings({
+      enabled: false,
+      language: requestAuditValueDetailLanguage.value,
+      // 关闭不是确认动作，因此不携带任何语句。
+      phrase: "",
+    });
+    requestAuditValueDetailTypedPhrase.value = "";
+    requestAuditValueDetailStatus.value = next;
+    appStore.showSuccess(t("admin.settings.requestAuditValueDetail.saved"));
+  } catch (error: unknown) {
+    requestAuditValueDetailErrorMessage.value = t(
+      `admin.settings.requestAuditValueDetail.errors.${requestAuditValueDetailErrorKey(error)}`,
+    );
+  } finally {
+    requestAuditValueDetailSaving.value = false;
+  }
+}
+
+// 语句或状态变化后，已经输入的内容一律作废（换语言也要重新输入）。
+watch(requestAuditValueDetailStatement, () => {
+  requestAuditValueDetailTypedPhrase.value = "";
+});
+watch(requestAuditValueDetailStatus, () => {
+  requestAuditValueDetailTypedPhrase.value = "";
+  requestAuditValueDetailErrorMessage.value = "";
+});
+
 // Stream Timeout 方法
 async function loadStreamTimeoutSettings() {
   streamTimeoutLoading.value = true;
@@ -13109,6 +13561,7 @@ onMounted(() => {
   loadRateLimit429CooldownSettings();
   loadRateLimit429AccountLimit();
   loadKeyBillingSnapshotSettings();
+  loadRequestAuditValueDetailSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();

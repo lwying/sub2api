@@ -917,8 +917,11 @@ func (s *AntigravityGatewayService) clearStickySession(ctx context.Context, grou
 	if s == nil || s.cache == nil || strings.TrimSpace(sessionHash) == "" {
 		return
 	}
+	// 删除仍使用 sessionHash 原值（缓存键必须原样），日志只记存在性：
+	// sessionHash 是粘性路由键，可能直接来自客户端 metadata.user_id 的会话段，
+	// shortSessionHash 只是前 8 字符截断、不是摘要，两者都不得写进日志。
 	if err := s.cache.DeleteSessionAccountID(ctx, groupID, sessionHash); err != nil {
-		logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] sticky_session_clear_failed group_id=%d session=%s err=%v", groupID, shortSessionHash(sessionHash), err)
+		logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] sticky_session_clear_failed group_id=%d session=%s err=%v", groupID, sessionLogState(sessionHash), err)
 	}
 }
 

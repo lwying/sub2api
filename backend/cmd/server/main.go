@@ -184,6 +184,10 @@ func runMainServer() {
 	if app.ErrorDiagnosticCleanup != nil {
 		app.ErrorDiagnosticCleanup.Start()
 	}
+	// 值明细旁路的周期清理：只清除已到第 7 天的值密文，保留整行信封。
+	if app.RequestAuditValueDetailCleanup != nil {
+		app.RequestAuditValueDetailCleanup.Start()
+	}
 	if app.PluginManager != nil {
 		if err := app.PluginManager.Start(context.Background()); err != nil {
 			log.Printf("Plugin manager started in degraded state: %v", err)

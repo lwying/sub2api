@@ -260,7 +260,9 @@ func (s *IdentityService) GetOrCreateFingerprint(ctx context.Context, accountID 
 		logger.LegacyPrintf("service.identity", "Warning: failed to cache fingerprint for account %d: %v", accountID, err)
 	}
 
-	logger.LegacyPrintf("service.identity", "Created new fingerprint for account %d with client_id: %s", accountID, fp.ClientID)
+	// client_id 是账号指纹的 device_id 段，会被写进发往上游的 metadata.user_id，
+	// 不落日志原文；账号 ID 已足以定位是哪个账号新建了指纹。
+	logger.LegacyPrintf("service.identity", "Created new fingerprint for account %d", accountID)
 	return fp, nil
 }
 
@@ -458,10 +460,13 @@ func (s *IdentityService) RewriteUserIDWithMasking(ctx context.Context, body []b
 		return newBody, nil
 	}
 
-	if maskedSessionID == "" {
+	// reusedMaskedSessionID 只用于日志：伪装 session ID 会作为 metadata.user_id 的
+	// 会话段发往上游，属请求身份的一部分，不写日志原值。
+	reusedMaskedSessionID := maskedSessionID != ""
+	if !reusedMaskedSessionID {
 		// 首次或已过期，生成新的伪装 session ID
 		maskedSessionID = generateRandomUUID()
-		logger.LegacyPrintf("service.identity", "Generated new masked session ID for account %d: %s", account.ID, maskedSessionID)
+		logger.LegacyPrintf("service.identity", "Generated new masked session ID for account %d", account.ID)
 	}
 
 	// 刷新 TTL（每次请求都刷新，保持 15 分钟有效期）
@@ -473,10 +478,13 @@ func (s *IdentityService) RewriteUserIDWithMasking(ctx context.Context, body []b
 	version := ExtractCLIVersion(fingerprintUA)
 	newUserID := FormatMetadataUserID(uidParsed.DeviceID, uidParsed.AccountUUID, maskedSessionID, version)
 
+	// before/after 是完整 metadata.user_id：两者都含 device_id / account_uuid /
+	// session_id，属于发往上游的请求身份与会话标识，一律不写日志。只保留账号与
+	// 「伪装会话是否复用、user_id 是否真的被改」这类非敏感状态。
 	slog.Debug("session_id_masking_applied",
 		"account_id", account.ID,
-		"before", userID,
-		"after", newUserID,
+		"masked_session_reused", reusedMaskedSessionID,
+		"metadata_user_id_changed", newUserID != userID,
 	)
 
 	if newUserID == userID {

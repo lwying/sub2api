@@ -128,11 +128,13 @@ var ProviderSet = wire.NewSet(
 	NewChannelMonitorRequestTemplateRepository,
 	NewContentModerationRepository,
 	NewAffiliateRepository,
-	NewUserPlatformQuotaRepository,     // T14: user × platform quota
-	NewUserVisibleAccountRepository,    // 普通用户只读账号视图的分配关系
-	NewErrorDiagnosticRepository,       // 错误诊断记录的短期存储与清理（票 01／02）
-	ProvideErrorDiagnosticBodyCipher,   // 诊断正文加密器（缺密钥时返回 nil：正文不留存，绝不回退明文）
-	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
+	NewUserPlatformQuotaRepository,       // T14: user × platform quota
+	NewUserVisibleAccountRepository,      // 普通用户只读账号视图的分配关系
+	NewErrorDiagnosticRepository,         // 错误诊断记录的短期存储与清理（票 01／02）
+	ProvideErrorDiagnosticBodyCipher,     // 诊断正文加密器（缺密钥时返回 nil：正文不留存，绝不回退明文）
+	NewRequestAuditValueDetailRepository, // Claude /v1/messages 值明细旁路（默认关闭，ADR 0006）
+	ProvideRequestAuditValueDetailCipher, // 值明细加密器（专用 HKDF 子密钥；缺稳定密钥时返回 nil）
+	NewUserPlatformQuotaServiceAdapter,   // T14: adapter → service.UserPlatformQuotaRepository
 
 	// Cache implementations
 	NewGatewayCache,

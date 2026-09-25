@@ -104,6 +104,11 @@ var (
 	ErrErrorDiagnosticNotFound = errors.New("error diagnostic record not found")
 	// ErrErrorDiagnosticBodyGone 表示正文未留存、已物理清除或已按 7 天期限到期。
 	ErrErrorDiagnosticBodyGone = errors.New("error diagnostic body is not available")
+	// ErrErrorDiagnosticHeaderValuesGone 表示头值未留存、已物理清除或已按 7 天期限到期。
+	//
+	// 与正文分开成不同的哨兵：「这条尝试有没有留过头值」与「有没有留过正文」是两个事实，
+	// 共用一个错误会让接口无法区分，也会让读取结果变成互相推断的探针。
+	ErrErrorDiagnosticHeaderValuesGone = errors.New("error diagnostic header values are not available")
 	// ErrErrorDiagnosticUnavailable 表示存储或依赖不可用。
 	ErrErrorDiagnosticUnavailable = errors.New("error diagnostics are temporarily unavailable")
 	// ErrErrorDiagnosticBacklogUnsupported 表示存储层未提供清理积压观测能力。
@@ -123,6 +128,12 @@ type ErrorDiagnosticSettings struct {
 	Enabled              bool `json:"enabled"`
 	RiskAcknowledged     bool `json:"risk_acknowledged"`
 	BodyRetentionEnabled bool `json:"body_retention_enabled"`
+	// HeaderValueRetentionEnabled 是 429 头值留存（Claude Messages 专属）的独立 opt-in。
+	//
+	// 它与 BodyRetentionEnabled 是**两个开关**：正文关闭时头值照常采集，头值关闭时正文
+	// 行为一字不改。风险确认（Enabled + RiskAcknowledged）仍是两者共同的前置门槛，
+	// 头值本身不额外需要一份书面确认语句。
+	HeaderValueRetentionEnabled bool `json:"header_values_enabled"`
 	// BodyRetentionRequested 报告存量门控**是否要求过**留存正文，即并入「密钥是否可用」
 	// 之前的那份意图。
 	//
@@ -140,6 +151,13 @@ func (s ErrorDiagnosticSettings) CaptureAllowed() bool {
 // BodyCaptureAllowed 报告是否允许留存加密正文（票 02 的分阶段 opt-in）。
 func (s ErrorDiagnosticSettings) BodyCaptureAllowed() bool {
 	return s.CaptureAllowed() && s.BodyRetentionEnabled
+}
+
+// HeaderValuesCaptureAllowed 报告是否允许留存 429 头值（与正文留存互不影响）。
+//
+// 它只看头值自己的开关：正文开关关着不影响头值，头值开关关着也不影响正文。
+func (s ErrorDiagnosticSettings) HeaderValuesCaptureAllowed() bool {
+	return s.CaptureAllowed() && s.HeaderValueRetentionEnabled
 }
 
 // BodyRetentionSuppressedByMissingKey 报告本次是否处于「要求留存正文、但没有可用稳定密钥」
@@ -196,6 +214,17 @@ type ErrorDiagnosticAttempt struct {
 	// 但没有可用稳定密钥，因此从未读取也从未复制这份明文。它只会导致跳过，
 	// 永远不会导致留存，映射到既有的稳定原因码，不新增存储枚举。
 	BodyVerdict string
+
+	// HeaderValues 是本次尝试在 Messages + HTTP 429 时的头值快照（净化后的值，见
+	// ErrorDiagnosticHeaderValues）。非 429 或非 Messages 的尝试必须留空：
+	// 服务侧会按范围二次判定，越界的值一律不落库。
+	//
+	// 它与 Body 完全独立：正文开关关闭时头值仍可成立，反之亦然。
+	HeaderValues ErrorDiagnosticHeaderValues
+	// HeaderVerdict 是调用方对本次头值观察的结论，取值见 ErrorDiagnosticHeaderVerdict*。
+	//
+	// 空值表示调用方只给值、由服务自行判定；未知取值一律按不合格处理（fail closed）。
+	HeaderVerdict string
 }
 
 // transport 对出站正文的观察结论。
@@ -615,6 +644,16 @@ type ErrorDiagnosticRecord struct {
 	BodyKeyVersion     int
 	// BodyStored 报告密文当前是否仍物理存在于在线主库；body_state 由它加上到期时刻推导。
 	BodyStored bool
+
+	// HeaderState／HeaderReason 与正文同构，但独立计算：头值可以留存而正文没有，反之亦然。
+	HeaderState      string
+	HeaderReason     string
+	HeaderExpiresAt  time.Time
+	HeaderBytes      int
+	HeaderKeyVersion int
+	HeaderEntryCount int
+	// HeaderStored 报告头值密文当前是否仍物理存在于在线主库。
+	HeaderStored bool
 }
 
 // ExpiredAt 报告元数据在 now 时刻是否已到期（应用层拒绝读取）。
@@ -627,10 +666,16 @@ func (r ErrorDiagnosticRecord) BodyReadableAt(now time.Time) bool {
 	return r.BodyStored && r.BodyExpiresAt.After(now) && !r.ExpiredAt(now)
 }
 
+// HeaderValuesReadableAt 报告头值在 now 时刻是否仍可解密读取。
+func (r ErrorDiagnosticRecord) HeaderValuesReadableAt(now time.Time) bool {
+	return r.HeaderStored && r.HeaderExpiresAt.After(now) && !r.ExpiredAt(now)
+}
+
 // normalizeErrorDiagnosticRecord 用持久化事实重新推导 body_state，
 // 使「已到期」与「已物理清除」在读取路径上不被误报为仍可读。
 func normalizeErrorDiagnosticRecord(record ErrorDiagnosticRecord, now time.Time) ErrorDiagnosticRecord {
 	record.BodyState = DescribeBodyState(record.BodyReason, record.BodyStored, record.BodyExpiresAt, now)
+	record.HeaderState = DescribeHeaderState(record.HeaderReason, record.HeaderStored, record.HeaderExpiresAt, now)
 	return record
 }
 
@@ -664,6 +709,15 @@ type ErrorDiagnosticWrite struct {
 	BodyReason     string
 	BodyCiphertext []byte
 	BodyKeyVersion int
+	// HeaderCiphertext 是加密后的 429 头值 JSON；为空表示不留存头值。
+	// 它与 BodyCiphertext 相互独立：一行的两列可以有任意组合。
+	HeaderState      string
+	HeaderReason     string
+	HeaderCiphertext []byte
+	HeaderKeyVersion int
+	HeaderEntryCount int
+	// HeaderPayloadBytes 是加密前 JSON 载荷的字节数（不是密文长度）。
+	HeaderPayloadBytes int
 }
 
 // ErrorDiagnosticRepository 是诊断存储的持久化契约。
@@ -684,8 +738,13 @@ type ErrorDiagnosticRepository interface {
 	CountRecentErrorDiagnostics(ctx context.Context, protocol string, now time.Time) (int64, error)
 	// ReadErrorDiagnosticBody 返回解密后的出站正文；未留存或已到期返回 ErrErrorDiagnosticBodyGone。
 	ReadErrorDiagnosticBody(ctx context.Context, id string, now time.Time) ([]byte, error)
-	// ClearExpiredErrorDiagnosticBodies 在在线主库物理清除第 7 天到期的密文列。
+	// ReadErrorDiagnosticHeaderValues 返回解密并重新校验后的 429 头值；
+	// 未留存、已到期、已清除或解密结果不合格一律返回 ErrErrorDiagnosticHeaderValuesGone。
+	ReadErrorDiagnosticHeaderValues(ctx context.Context, id string, now time.Time) (ErrorDiagnosticHeaderValues, error)
+	// ClearExpiredErrorDiagnosticBodies 在在线主库物理清除第 7 天到期的正文密文列。
 	ClearExpiredErrorDiagnosticBodies(ctx context.Context, now time.Time, batch int) (int64, error)
+	// ClearExpiredErrorDiagnosticHeaderValues 在在线主库物理清除第 7 天到期的头值密文列。
+	ClearExpiredErrorDiagnosticHeaderValues(ctx context.Context, now time.Time, batch int) (int64, error)
 	// DeleteExpiredErrorDiagnostics 在在线主库物理删除第 30 天到期的整行。
 	DeleteExpiredErrorDiagnostics(ctx context.Context, now time.Time, batch int) (int64, error)
 }
@@ -706,8 +765,10 @@ type ErrorDiagnosticCleanupBacklogReader interface {
 type ErrorDiagnosticCleanupBacklog struct {
 	BodiesOverdue         int64
 	RecordsOverdue        int64
+	HeaderValuesOverdue   int64
 	OldestBodyOverdueAt   time.Time
 	OldestRecordOverdueAt time.Time
+	OldestHeaderOverdueAt time.Time
 }
 
 // OldestOverdueSeconds 返回最老的超期时长（秒），供监控直接上报。
@@ -716,11 +777,14 @@ type ErrorDiagnosticCleanupBacklog struct {
 // 又不把内部时间线细节带进监控系统。
 func (b ErrorDiagnosticCleanupBacklog) OldestOverdueSeconds(now time.Time) int64 {
 	oldest := time.Time{}
-	if !b.OldestBodyOverdueAt.IsZero() && (oldest.IsZero() || b.OldestBodyOverdueAt.Before(oldest)) {
-		oldest = b.OldestBodyOverdueAt
-	}
-	if !b.OldestRecordOverdueAt.IsZero() && (oldest.IsZero() || b.OldestRecordOverdueAt.Before(oldest)) {
-		oldest = b.OldestRecordOverdueAt
+	for _, candidate := range []time.Time{
+		b.OldestBodyOverdueAt,
+		b.OldestRecordOverdueAt,
+		b.OldestHeaderOverdueAt,
+	} {
+		if !candidate.IsZero() && (oldest.IsZero() || candidate.Before(oldest)) {
+			oldest = candidate
+		}
 	}
 	if oldest.IsZero() {
 		return 0
@@ -753,34 +817,48 @@ type ErrorDiagnosticMetricsSnapshot struct {
 	BodyReadDenied     int64
 	BodiesCleared      int64
 	RecordsDeleted     int64
-	CleanupFailures    int64
+	// HeaderValues* 是 429 头值留存的独立计数：与正文计数分开，便于分辨「哪一层没在采」。
+	HeaderValuesStored     int64
+	HeaderValuesSkipped    int64
+	HeaderValuesReads      int64
+	HeaderValuesReadDenied int64
+	HeaderValuesCleared    int64
+	CleanupFailures        int64
 	// Dropped 统计因有界队列溢出而被丢弃的诊断（不含正文，也不代表已持久化）。
 	Dropped int64
-	// OverdueBodies／OverdueRecords 是最近一次观测到的清理积压量（物理残留，不是可读范围）。
-	OverdueBodies  int64
-	OverdueRecords int64
+	// OverdueBodies／OverdueRecords／OverdueHeaderValues 是最近一次观测到的清理积压量
+	// （物理残留，不是可读范围）。
+	OverdueBodies       int64
+	OverdueRecords      int64
+	OverdueHeaderValues int64
 	// OldestOverdueSeconds 是最近一次观测到的最老超期时长。
 	OldestOverdueSeconds int64
 }
 
 // ErrorDiagnosticMetrics 是进程级计数，只累加离散事件，不记录正文、凭据或标识。
 type ErrorDiagnosticMetrics struct {
-	attempts           atomic.Int64
-	storedRecords      atomic.Int64
-	rejectedAttempts   atomic.Int64
-	disabledSuppressed atomic.Int64
-	writeFailures      atomic.Int64
-	bodyStored         atomic.Int64
-	bodySkipped        atomic.Int64
-	bodyReads          atomic.Int64
-	bodyReadDenied     atomic.Int64
-	bodiesCleared      atomic.Int64
-	recordsDeleted     atomic.Int64
-	cleanupFailures    atomic.Int64
-	dropped            atomic.Int64
-	overdueBodies      atomic.Int64
-	overdueRecords     atomic.Int64
-	oldestOverdue      atomic.Int64
+	attempts               atomic.Int64
+	storedRecords          atomic.Int64
+	rejectedAttempts       atomic.Int64
+	disabledSuppressed     atomic.Int64
+	writeFailures          atomic.Int64
+	bodyStored             atomic.Int64
+	bodySkipped            atomic.Int64
+	bodyReads              atomic.Int64
+	bodyReadDenied         atomic.Int64
+	bodiesCleared          atomic.Int64
+	recordsDeleted         atomic.Int64
+	headerValuesStored     atomic.Int64
+	headerValuesSkipped    atomic.Int64
+	headerValuesReads      atomic.Int64
+	headerValuesReadDenied atomic.Int64
+	headerValuesCleared    atomic.Int64
+	cleanupFailures        atomic.Int64
+	dropped                atomic.Int64
+	overdueBodies          atomic.Int64
+	overdueRecords         atomic.Int64
+	overdueHeaders         atomic.Int64
+	oldestOverdue          atomic.Int64
 }
 
 // NewErrorDiagnosticMetrics 创建一个进程级计数集。
@@ -792,22 +870,28 @@ func (m *ErrorDiagnosticMetrics) Snapshot() ErrorDiagnosticMetricsSnapshot {
 		return ErrorDiagnosticMetricsSnapshot{}
 	}
 	return ErrorDiagnosticMetricsSnapshot{
-		Attempts:             m.attempts.Load(),
-		StoredRecords:        m.storedRecords.Load(),
-		RejectedAttempts:     m.rejectedAttempts.Load(),
-		DisabledSuppressed:   m.disabledSuppressed.Load(),
-		WriteFailures:        m.writeFailures.Load(),
-		BodyStored:           m.bodyStored.Load(),
-		BodySkipped:          m.bodySkipped.Load(),
-		BodyReads:            m.bodyReads.Load(),
-		BodyReadDenied:       m.bodyReadDenied.Load(),
-		BodiesCleared:        m.bodiesCleared.Load(),
-		RecordsDeleted:       m.recordsDeleted.Load(),
-		CleanupFailures:      m.cleanupFailures.Load(),
-		Dropped:              m.dropped.Load(),
-		OverdueBodies:        m.overdueBodies.Load(),
-		OverdueRecords:       m.overdueRecords.Load(),
-		OldestOverdueSeconds: m.oldestOverdue.Load(),
+		Attempts:               m.attempts.Load(),
+		StoredRecords:          m.storedRecords.Load(),
+		RejectedAttempts:       m.rejectedAttempts.Load(),
+		DisabledSuppressed:     m.disabledSuppressed.Load(),
+		WriteFailures:          m.writeFailures.Load(),
+		BodyStored:             m.bodyStored.Load(),
+		BodySkipped:            m.bodySkipped.Load(),
+		BodyReads:              m.bodyReads.Load(),
+		BodyReadDenied:         m.bodyReadDenied.Load(),
+		BodiesCleared:          m.bodiesCleared.Load(),
+		RecordsDeleted:         m.recordsDeleted.Load(),
+		HeaderValuesStored:     m.headerValuesStored.Load(),
+		HeaderValuesSkipped:    m.headerValuesSkipped.Load(),
+		HeaderValuesReads:      m.headerValuesReads.Load(),
+		HeaderValuesReadDenied: m.headerValuesReadDenied.Load(),
+		HeaderValuesCleared:    m.headerValuesCleared.Load(),
+		CleanupFailures:        m.cleanupFailures.Load(),
+		Dropped:                m.dropped.Load(),
+		OverdueBodies:          m.overdueBodies.Load(),
+		OverdueRecords:         m.overdueRecords.Load(),
+		OverdueHeaderValues:    m.overdueHeaders.Load(),
+		OldestOverdueSeconds:   m.oldestOverdue.Load(),
 	}
 }
 
@@ -843,13 +927,16 @@ const (
 	ErrorDiagnosticAlertDropped       = "error_diagnostic.dropped"
 	ErrorDiagnosticAlertCleanupFailed = "error_diagnostic.cleanup_failed"
 
-	ErrorDiagnosticAlertCodeDBError            = "db_error"
-	ErrorDiagnosticAlertCodeUnavailable        = "unavailable"
-	ErrorDiagnosticAlertCodeQueueOverflow      = "queue_overflow"
-	ErrorDiagnosticAlertCodeBodyClearFailed    = "body_clear_failed"
-	ErrorDiagnosticAlertCodeRecordDeleteFailed = "record_delete_failed"
-	ErrorDiagnosticAlertCodeBacklog            = "cleanup_backlog"
-	ErrorDiagnosticAlertCodeBacklogProbeFailed = "backlog_probe_failed"
+	ErrorDiagnosticAlertCodeDBError         = "db_error"
+	ErrorDiagnosticAlertCodeUnavailable     = "unavailable"
+	ErrorDiagnosticAlertCodeQueueOverflow   = "queue_overflow"
+	ErrorDiagnosticAlertCodeBodyClearFailed = "body_clear_failed"
+	// ErrorDiagnosticAlertCodeHeaderValueClearFailed 与正文清除失败分开成不同的原因码：
+	// 两段卡住的处置不同（一个是模型正文，一个是 429 头值），合并会让运维看不出是哪一段。
+	ErrorDiagnosticAlertCodeHeaderValueClearFailed = "header_value_clear_failed"
+	ErrorDiagnosticAlertCodeRecordDeleteFailed     = "record_delete_failed"
+	ErrorDiagnosticAlertCodeBacklog                = "cleanup_backlog"
+	ErrorDiagnosticAlertCodeBacklogProbeFailed     = "backlog_probe_failed"
 )
 
 // ErrorDiagnosticAlertCleanupBacklog 是清理积压的稳定事件名。
@@ -1005,6 +1092,12 @@ func ValidateErrorDiagnosticAttempt(attempt ErrorDiagnosticAttempt) error {
 			return fmt.Errorf("%w: unsupported body verdict", ErrErrorDiagnosticInvalidAttempt)
 		}
 	}
+	if !ErrorDiagnosticHeaderVerdictAllowed(attempt.HeaderVerdict) {
+		// 头值同理：未知结论只有在同时夹带了头值时才算不合格，否则等同于「未观察到头值」。
+		if !attempt.HeaderValues.Empty() {
+			return fmt.Errorf("%w: unsupported header verdict", ErrErrorDiagnosticInvalidAttempt)
+		}
+	}
 	return nil
 }
 
@@ -1123,6 +1216,26 @@ func (s *ErrorDiagnosticService) RecordErrorDiagnostic(ctx context.Context, atte
 			write.BodyKeyVersion = s.cipher.KeyVersion()
 		}
 	}
+	// 头值是与正文正交的第二条留存路径：它有自己的开关与到期时刻，判定顺序
+	// （范围 → verdict → 白名单与有界校验 → 开关 → 密钥）见 DecideErrorDiagnosticHeaderValues。
+	// 正文结论不参与这里的任何一步，反之亦然。
+	headerDecision := DecideErrorDiagnosticHeaderValues(attempt, settings.HeaderValuesCaptureAllowed(), s.cipher != nil)
+	write.HeaderState = headerDecision.State
+	write.HeaderReason = headerDecision.Reason
+	write.HeaderEntryCount = headerDecision.EntryCount
+	if headerDecision.Retained() {
+		encrypted, err := s.cipher.Encrypt(headerDecision.Payload)
+		if err != nil || len(encrypted) == 0 {
+			// 与正文同一约定：加密失败绝不回退为明文，也不自称已留存。
+			write.HeaderState = ErrorDiagnosticHeaderStateSkipped
+			write.HeaderReason = ErrorDiagnosticHeaderSkippedEncryptionUnavailable
+			write.HeaderEntryCount = 0
+		} else {
+			write.HeaderCiphertext = encrypted
+			write.HeaderKeyVersion = s.cipher.KeyVersion()
+			write.HeaderPayloadBytes = len(headerDecision.Payload)
+		}
+	}
 	id, err := s.newID()
 	if err != nil || !ValidErrorDiagnosticID(id) {
 		if s.metrics != nil {
@@ -1149,6 +1262,14 @@ func (s *ErrorDiagnosticService) RecordErrorDiagnostic(ctx context.Context, atte
 			s.metrics.bodyStored.Add(1)
 		} else {
 			s.metrics.bodySkipped.Add(1)
+		}
+		// 头值只统计「在范围内、但没留下」的那部分为跳过：不在范围的行（其它协议与其它状态码）
+		// 记 skipped 会把未采集伪装成采集失败，指标就再也说明不了头值这一层是否在跑。
+		switch {
+		case record.HeaderState == ErrorDiagnosticHeaderStateStored:
+			s.metrics.headerValuesStored.Add(1)
+		case strings.HasPrefix(record.HeaderReason, "skipped_"):
+			s.metrics.headerValuesSkipped.Add(1)
 		}
 	}
 	return record, nil
@@ -1326,4 +1447,29 @@ func (s *ErrorDiagnosticService) Counters() ErrorDiagnosticMetricsSnapshot {
 		return ErrorDiagnosticMetricsSnapshot{}
 	}
 	return s.metrics.Snapshot()
+}
+
+// ReadErrorDiagnosticHeaderValues 解密并返回一次失败尝试的 429 头值。
+//
+// 与正文同一契约：这是显式动作，只有管理端显式请求且未到期才返回内容；未留存、
+// 已物理清除、已按 7 天到期、ID 不合法、密钥缺失或解密结果不合格，一律返回
+// ErrErrorDiagnosticHeaderValuesGone——使读取结果不能作为「这条尝试留过什么」的探针。
+func (s *ErrorDiagnosticService) ReadErrorDiagnosticHeaderValues(ctx context.Context, id string) (ErrorDiagnosticHeaderValues, error) {
+	if s == nil || s.repo == nil || s.cipher == nil || !ValidErrorDiagnosticID(id) {
+		if s != nil && s.metrics != nil {
+			s.metrics.headerValuesReadDenied.Add(1)
+		}
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	values, err := s.repo.ReadErrorDiagnosticHeaderValues(ctx, id, s.now())
+	if err != nil {
+		if s.metrics != nil && errors.Is(err, ErrErrorDiagnosticHeaderValuesGone) {
+			s.metrics.headerValuesReadDenied.Add(1)
+		}
+		return ErrorDiagnosticHeaderValues{}, err
+	}
+	if s.metrics != nil {
+		s.metrics.headerValuesReads.Add(1)
+	}
+	return values, nil
 }

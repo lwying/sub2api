@@ -52,6 +52,23 @@ export const errorDiagnosticsEn = {
       purged: 'Body cleared',
       unknown: 'Unknown state',
     },
+    headerStates: {
+      notObserved: 'No 429 header values were observed',
+      stored: 'Header values stored',
+      skipped: 'Header values not retained',
+      expired: 'Header values expired',
+      purged: 'Header values cleared',
+      unknown: 'Unknown state',
+    },
+    headerReasons: {
+      not_observed: 'No 429 header values were observed for this attempt',
+      retained: '429 header values retained',
+      skipped_out_of_scope: 'This attempt was not an upstream 429 on the Messages path',
+      skipped_header_retention_disabled: '429 header value retention is disabled',
+      skipped_encryption_unavailable: 'Encryption was unavailable',
+      skipped_invalid_values: 'The observed header values did not pass validation',
+      unknown: 'Unknown retention outcome',
+    },
     reasons: {
       not_observed: 'No request body was observed for this attempt',
       retained: 'Request body retained',
@@ -81,6 +98,16 @@ export const errorDiagnosticsEn = {
       usageLink: 'Related usage record',
       usageAbsent: 'No usage record',
       notice: 'The body is decrypted only on request and is never cached.',
+      headers: 'Allowlisted upstream 429 header values',
+      headerExpiresAt: 'Header values expire',
+      headerNotice:
+        'Only allowlisted header values are shown, not a complete wire capture. Values are decrypted only on request, never cached, and exclude credentials, cookies and the request body. They are revealed separately from the body.',
+      revealHeaders: 'Reveal 429 header values',
+      revealingHeaders: 'Revealing…',
+      headerRevealFailed: 'The 429 header values could not be revealed',
+      headerEntryCount: '{count} header values stored',
+      requestHeaders: 'Request header values',
+      responseHeaders: 'Response header values',
     },
     operator: {
       title: 'Operator capture settings',
@@ -92,10 +119,11 @@ export const errorDiagnosticsEn = {
       state: {
         captureLabel: 'Effective capture',
         retentionLabel: 'Effective request body retention',
+        headerValuesLabel: 'Effective 429 header value retention',
         on: 'On',
         off: 'Off',
         storedLabel: 'Stored setting',
-        keyLabel: 'Body encryption key',
+        keyLabel: 'Encryption key',
         keyAvailable: 'Configured and restart-stable',
         keyUnavailable: 'Not configured, or not restart-stable',
         captureMismatchStaleAck:
@@ -106,6 +134,10 @@ export const errorDiagnosticsEn = {
           'Request body retention is stored as on, but it is not in effect because capture is not running.',
         retentionMismatchKey:
           'Request body retention is stored as on, but it is not in effect because no usable encryption key is configured.',
+        headerValuesMismatchCapture:
+          '429 header value retention is stored as on, but it is not in effect because capture is not running.',
+        headerValuesMismatchKey:
+          '429 header value retention is stored as on, but it is not in effect because no usable encryption key is configured. Both retention layers encrypt with the same stable key.',
       },
       ack: {
         none: 'No written risk acknowledgement has been recorded.',
@@ -122,7 +154,7 @@ export const errorDiagnosticsEn = {
       },
       enable: {
         title: 'Enable capture',
-        titleRetention: 'Enable request body retention',
+        titleRetention: 'Enable retention',
         notice:
           'Enabling always requires typing the statement exactly as shown. The statement is never saved in this browser, and it is asked for again on every enable.',
         language: 'Statement language',
@@ -133,8 +165,11 @@ export const errorDiagnosticsEn = {
         retentionToggle: 'Also retain request bodies (encrypted)',
         retentionUnavailable:
           'Request body retention needs a configured, restart-stable encryption key. Capture can still be enabled without it.',
+        headerValuesToggle: 'Also retain upstream 429 header values (encrypted)',
+        headerValuesUnavailable:
+          '429 header value retention needs a configured, restart-stable encryption key. It is a separate switch from request body retention, and capture can be enabled without either.',
         retentionBlocked:
-          'Request body retention cannot be enabled because no usable encryption key is configured. Capture can be enabled without retention.',
+          'Request body and 429 header value retention both need a configured, restart-stable encryption key. Capture can be enabled without them.',
         confirm: 'Enable',
         confirming: 'Enabling…',
       },
@@ -142,13 +177,15 @@ export const errorDiagnosticsEn = {
         action: 'Disable',
         disabling: 'Disabling…',
         notice:
-          'Disabling is always possible, needs no statement and turns request body retention off as well.',
+          'Disabling is always possible, needs no statement and turns request body and 429 header value retention off as well.',
       },
       errors: {
         phraseRequired: 'The written statement is required to enable capture.',
         phraseInvalid: 'The statement does not match the required statement.',
         keyUnavailable:
           'Request body retention needs a configured, restart-stable encryption key.',
+        headerKeyUnavailable:
+          '429 header value retention needs a configured, restart-stable encryption key.',
         sessionRequired:
           'Enabling needs an authenticated admin session so the acknowledgement can be recorded.',
         adminApiKeyForbidden:
@@ -200,6 +237,23 @@ export const errorDiagnosticsZh = {
       purged: '正文已清除',
       unknown: '未知状态',
     },
+    headerStates: {
+      notObserved: '未观察到 429 头值',
+      stored: '头值已留存',
+      skipped: '头值未留存',
+      expired: '头值已过期',
+      purged: '头值已清除',
+      unknown: '未知状态',
+    },
+    headerReasons: {
+      not_observed: '该次尝试未观察到 429 头值',
+      retained: '429 头值已留存',
+      skipped_out_of_scope: '该次尝试不是 Messages 路径上的上游 429',
+      skipped_header_retention_disabled: '429 头值留存已关闭',
+      skipped_encryption_unavailable: '加密不可用',
+      skipped_invalid_values: '观察到的头值未通过校验',
+      unknown: '未知留存结果',
+    },
     reasons: {
       not_observed: '该次尝试未观察到请求正文',
       retained: '请求正文已留存',
@@ -229,6 +283,16 @@ export const errorDiagnosticsZh = {
       usageLink: '关联用量记录',
       usageAbsent: '无用量记录',
       notice: '正文仅在明确请求时解密，且不会被缓存。',
+      headers: '上游 429 白名单头值',
+      headerExpiresAt: '头值到期',
+      headerNotice:
+        '只展示白名单内允许记录的头值，不是完整请求抓包。头值仅在明确请求时解密、不会被缓存，且不包含凭据、Cookie 与请求正文；头值与正文分开揭示。',
+      revealHeaders: '查看 429 头值',
+      revealingHeaders: '正在解密…',
+      headerRevealFailed: '无法获取 429 头值',
+      headerEntryCount: '已留存 {count} 条头值',
+      requestHeaders: '请求头值',
+      responseHeaders: '响应头值',
     },
     operator: {
       title: '错误诊断采集开关',
@@ -239,10 +303,11 @@ export const errorDiagnosticsZh = {
       state: {
         captureLabel: '实际采集',
         retentionLabel: '实际正文留存',
+        headerValuesLabel: '实际 429 头值留存',
         on: '开启',
         off: '关闭',
         storedLabel: '存储的设置',
-        keyLabel: '正文加密密钥',
+        keyLabel: '加密密钥',
         keyAvailable: '已配置且重启后稳定',
         keyUnavailable: '未配置，或重启后不稳定',
         captureMismatchStaleAck:
@@ -253,6 +318,10 @@ export const errorDiagnosticsZh = {
           '设置上已存为开启，但采集并未运行，因此正文留存没有生效。',
         retentionMismatchKey:
           '设置上已存为开启，但没有可用的加密密钥，因此正文留存没有生效。',
+        headerValuesMismatchCapture:
+          '设置上已存为开启，但采集并未运行，因此 429 头值留存没有生效。',
+        headerValuesMismatchKey:
+          '设置上已存为开启，但没有可用的加密密钥，因此 429 头值留存没有生效。两层留存使用同一把稳定密钥。',
       },
       ack: {
         none: '尚未记录书面风险确认。',
@@ -269,7 +338,7 @@ export const errorDiagnosticsZh = {
       },
       enable: {
         title: '开启采集',
-        titleRetention: '开启正文留存',
+        titleRetention: '开启留存',
         notice:
           '开启时必须逐字输入所显示的语句。输入内容不会保存在本浏览器中，且每次开启都会重新要求输入。',
         language: '语句语言',
@@ -280,20 +349,24 @@ export const errorDiagnosticsZh = {
         retentionToggle: '同时留存请求正文（加密）',
         retentionUnavailable:
           '正文留存需要已配置且重启后稳定的加密密钥；不配置密钥仍可开启采集。',
+        headerValuesToggle: '同时留存上游 429 头值（加密）',
+        headerValuesUnavailable:
+          '429 头值留存需要已配置且重启后稳定的加密密钥；它与正文留存是两个独立开关，不配置密钥仍可开启采集。',
         retentionBlocked:
-          '没有可用的加密密钥，无法开启正文留存；可以先开启采集而不留存正文。',
+          '正文留存与 429 头值留存都需要已配置且重启后稳定的加密密钥；可以先开启采集而两者都不留存。',
         confirm: '开启',
         confirming: '正在开启…',
       },
       disable: {
         action: '关闭',
         disabling: '正在关闭…',
-        notice: '关闭始终可用，无需输入语句，并会同时关闭正文留存。',
+        notice: '关闭始终可用，无需输入语句，并会同时关闭正文留存与 429 头值留存。',
       },
       errors: {
         phraseRequired: '开启采集必须提交书面确认语句。',
         phraseInvalid: '输入的语句与必须确认的语句不一致。',
         keyUnavailable: '正文留存需要已配置且重启后稳定的加密密钥。',
+        headerKeyUnavailable: '429 头值留存需要已配置且重启后稳定的加密密钥。',
         sessionRequired: '开启需要已认证的管理员会话，以便记录这次确认。',
         adminApiKeyForbidden:
           '开启需要管理员会话，不能使用管理员 API Key；仍然可以关闭采集。',

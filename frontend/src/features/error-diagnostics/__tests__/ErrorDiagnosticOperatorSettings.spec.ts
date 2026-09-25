@@ -39,7 +39,8 @@ const labels: Record<string, string> = {
   'admin.errorDiagnostics.operator.state.on': 'On',
   'admin.errorDiagnostics.operator.state.off': 'Off',
   'admin.errorDiagnostics.operator.state.retentionLabel': 'Effective request body retention',
-  'admin.errorDiagnostics.operator.state.keyLabel': 'Body encryption key',
+  'admin.errorDiagnostics.operator.state.headerValuesLabel': 'Effective 429 header value retention',
+  'admin.errorDiagnostics.operator.state.keyLabel': 'Encryption key',
   'admin.errorDiagnostics.operator.state.keyAvailable': 'Configured and restart-stable',
   'admin.errorDiagnostics.operator.state.keyUnavailable': 'Not configured or not restart-stable',
   'admin.errorDiagnostics.operator.state.storedLabel': 'Stored setting',
@@ -47,6 +48,8 @@ const labels: Record<string, string> = {
   'admin.errorDiagnostics.operator.state.captureMismatchNoAck': 'Capture is stored as on, but it is not running: no written acknowledgement is in effect.',
   'admin.errorDiagnostics.operator.state.retentionMismatchCapture': 'Request body retention is stored as on, but capture is not running.',
   'admin.errorDiagnostics.operator.state.retentionMismatchKey': 'Request body retention is stored as on, but no usable encryption key is configured.',
+  'admin.errorDiagnostics.operator.state.headerValuesMismatchCapture': '429 header value retention is stored as on, but capture is not running.',
+  'admin.errorDiagnostics.operator.state.headerValuesMismatchKey': '429 header value retention is stored as on, but no usable encryption key is configured.',
   'admin.errorDiagnostics.operator.ack.none': 'No written risk acknowledgement has been recorded.',
   'admin.errorDiagnostics.operator.ack.stale': 'The recorded acknowledgement does not cover the current statement version; it must be given again.',
   'admin.errorDiagnostics.operator.ack.version': 'Statement version',
@@ -54,7 +57,7 @@ const labels: Record<string, string> = {
   'admin.errorDiagnostics.operator.ack.acceptedAt': 'Acknowledged at',
   'admin.errorDiagnostics.operator.ack.phrase': 'Statement accepted',
   'admin.errorDiagnostics.operator.enable.title': 'Enable capture',
-  'admin.errorDiagnostics.operator.enable.titleRetention': 'Enable request body retention',
+  'admin.errorDiagnostics.operator.enable.titleRetention': 'Enable retention',
   'admin.errorDiagnostics.operator.enable.notice': 'Enabling requires typing the current statement exactly; the statement is never stored in this browser.',
   'admin.errorDiagnostics.operator.enable.language': 'Statement language',
   'admin.errorDiagnostics.operator.enable.requiredPhrase': 'Required statement',
@@ -63,15 +66,18 @@ const labels: Record<string, string> = {
   'admin.errorDiagnostics.operator.enable.phrasePlaceholder': 'Type the statement above exactly',
   'admin.errorDiagnostics.operator.enable.retentionToggle': 'Also retain request bodies (encrypted)',
   'admin.errorDiagnostics.operator.enable.retentionUnavailable': 'Request body retention needs a configured, restart-stable encryption key; capture can still be enabled without it.',
-  'admin.errorDiagnostics.operator.enable.retentionBlocked': 'Request body retention cannot be enabled because no usable encryption key is configured.',
+  'admin.errorDiagnostics.operator.enable.headerValuesToggle': 'Also retain upstream 429 header values (encrypted)',
+  'admin.errorDiagnostics.operator.enable.headerValuesUnavailable': '429 header value retention needs a configured, restart-stable encryption key. It is a separate switch from request body retention.',
+  'admin.errorDiagnostics.operator.enable.retentionBlocked': 'Request body and 429 header value retention both need a configured, restart-stable encryption key. Capture can be enabled without them.',
   'admin.errorDiagnostics.operator.enable.confirm': 'Enable',
   'admin.errorDiagnostics.operator.enable.confirming': 'Enabling…',
   'admin.errorDiagnostics.operator.disable.action': 'Disable',
   'admin.errorDiagnostics.operator.disable.disabling': 'Disabling…',
-  'admin.errorDiagnostics.operator.disable.notice': 'Disabling is always allowed and needs no statement; it also turns request body retention off.',
+  'admin.errorDiagnostics.operator.disable.notice': 'Disabling is always allowed and needs no statement; it also turns both retention layers off.',
   'admin.errorDiagnostics.operator.errors.phraseRequired': 'The statement is required to enable capture.',
   'admin.errorDiagnostics.operator.errors.phraseInvalid': 'The statement does not match the required statement.',
   'admin.errorDiagnostics.operator.errors.keyUnavailable': 'Request body retention needs a configured, restart-stable encryption key.',
+  'admin.errorDiagnostics.operator.errors.headerKeyUnavailable': '429 header value retention needs a configured, restart-stable encryption key.',
   'admin.errorDiagnostics.operator.errors.sessionRequired': 'Enabling needs an authenticated admin session to record the acknowledgement.',
   'admin.errorDiagnostics.operator.errors.adminApiKeyForbidden': 'Enabling needs an admin session, not an admin API key; capture can still be disabled.',
   'admin.errorDiagnostics.operator.errors.unavailable': 'The operator settings are temporarily unavailable; nothing was changed.',
@@ -99,10 +105,12 @@ const status = (overrides: Partial<ErrorDiagnosticOperatorStatus> = {}): ErrorDi
   enabled: false,
   risk_acknowledged: false,
   body_retention_enabled: false,
+  header_values_enabled: false,
   capture_allowed: false,
   body_retention_allowed: false,
+  header_values_allowed: false,
   body_encryption_key_available: true,
-  risk_version: 'v2026.09.24',
+  risk_version: 'v2026.09.24.1',
   risk_phrase_en: PHRASE_EN,
   risk_phrase_zh: PHRASE_ZH,
   risk_acknowledgement_current: false,
@@ -245,6 +253,7 @@ describe('ErrorDiagnosticOperatorSettings', () => {
     expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
       enabled: true,
       body_retention_enabled: false,
+      header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
     })
@@ -263,6 +272,7 @@ describe('ErrorDiagnosticOperatorSettings', () => {
     expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
       enabled: true,
       body_retention_enabled: false,
+      header_values_enabled: false,
       language: 'zh',
       phrase: PHRASE_ZH,
     })
@@ -274,6 +284,8 @@ describe('ErrorDiagnosticOperatorSettings', () => {
       capture_allowed: true,
       body_retention_enabled: true,
       body_retention_allowed: true,
+      header_values_enabled: true,
+      header_values_allowed: true,
     })
     mocks.updateOperatorSettings.mockResolvedValue(enabled)
     const wrapper = mountPanel()
@@ -332,6 +344,7 @@ describe('ErrorDiagnosticOperatorSettings', () => {
     expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
       enabled: false,
       body_retention_enabled: false,
+      header_values_enabled: false,
       language: expect.any(String),
       phrase: '',
     })
@@ -366,6 +379,7 @@ describe('ErrorDiagnosticOperatorSettings', () => {
       ['ERROR_DIAGNOSTIC_RISK_ACK_REQUIRED', 'The statement is required to enable capture.'],
       ['ERROR_DIAGNOSTIC_RISK_ACK_INVALID', 'The statement does not match the required statement.'],
       ['ERROR_DIAGNOSTIC_BODY_KEY_UNAVAILABLE', 'Request body retention needs a configured, restart-stable encryption key.'],
+      ['ERROR_DIAGNOSTIC_HEADER_KEY_UNAVAILABLE', '429 header value retention needs a configured, restart-stable encryption key.'],
       ['ERROR_DIAGNOSTIC_OPERATOR_SESSION_REQUIRED', 'Enabling needs an authenticated admin session to record the acknowledgement.'],
       ['ERROR_DIAGNOSTIC_ADMIN_API_KEY_FORBIDDEN', 'Enabling needs an admin session, not an admin API key; capture can still be disabled.'],
       ['ERROR_DIAGNOSTIC_SETTINGS_UNAVAILABLE', 'The operator settings are temporarily unavailable; nothing was changed.'],
@@ -412,6 +426,7 @@ describe('ErrorDiagnosticOperatorSettings', () => {
     expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
       enabled: true,
       body_retention_enabled: true,
+      header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
     })
@@ -513,6 +528,7 @@ describe('ErrorDiagnosticOperatorSettings', () => {
     expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
       enabled: true,
       body_retention_enabled: true,
+      header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
     })
@@ -565,5 +581,220 @@ describe('ErrorDiagnosticOperatorSettings', () => {
     await flushPromises()
 
     expect(writeText).toHaveBeenCalledWith(PHRASE_EN)
+  })
+
+  // ---------------------------------------------------------------------------
+  // 429 header value retention: a second layer with its own switch and its own row
+  // ---------------------------------------------------------------------------
+
+  it('reports the two retention layers as separate verified states', () => {
+    const headerOnly = mountPanel({
+      status: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: true,
+        risk_acknowledgement_current: true,
+        body_retention_enabled: false,
+        body_retention_allowed: false,
+        header_values_enabled: true,
+        header_values_allowed: true,
+      }),
+    })
+
+    // One row per layer: the header layer being on says nothing about the body layer.
+    expect(headerOnly.find('[data-testid="operator-body-retention-state"]').text()).toContain('Off')
+    expect(headerOnly.find('[data-testid="operator-header-values-state"]').text()).toContain('On')
+    expect(headerOnly.find('[data-testid="operator-header-values-mismatch"]').exists()).toBe(false)
+
+    const bodyOnly = mountPanel({
+      status: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: true,
+        risk_acknowledgement_current: true,
+        body_retention_enabled: true,
+        body_retention_allowed: true,
+        header_values_enabled: false,
+        header_values_allowed: false,
+      }),
+    })
+    expect(bodyOnly.find('[data-testid="operator-body-retention-state"]').text()).toContain('On')
+    expect(bodyOnly.find('[data-testid="operator-header-values-state"]').text()).toContain('Off')
+  })
+
+  it('enables only the header value layer when the operator asks for it', async () => {
+    mocks.updateOperatorSettings.mockResolvedValue(
+      status({
+        enabled: true,
+        capture_allowed: true,
+        header_values_enabled: true,
+        header_values_allowed: true,
+      }),
+    )
+    const wrapper = mountPanel()
+
+    // Nothing is pre-selected for the operator: both layers start off and stay off
+    // unless they are ticked and the statement is typed.
+    expect((wrapper.find('[data-testid="operator-retention-toggle"]').element as HTMLInputElement).checked).toBe(false)
+    expect((wrapper.find('[data-testid="operator-header-values-toggle"]').element as HTMLInputElement).checked).toBe(false)
+
+    await wrapper.find('[data-testid="operator-header-values-toggle"]').setValue(true)
+    await typePhrase(wrapper, PHRASE_EN)
+    await enableButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: true,
+      body_retention_enabled: false,
+      header_values_enabled: true,
+      language: 'en',
+      phrase: PHRASE_EN,
+    })
+  })
+
+  it('offers the header value switch even when body retention is already running', async () => {
+    mocks.updateOperatorSettings.mockResolvedValue(
+      status({
+        enabled: true,
+        capture_allowed: true,
+        body_retention_enabled: true,
+        body_retention_allowed: true,
+        header_values_enabled: true,
+        header_values_allowed: true,
+      }),
+    )
+    const wrapper = mountPanel({
+      status: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: true,
+        risk_acknowledgement_current: true,
+        body_retention_enabled: true,
+        body_retention_allowed: true,
+        header_values_enabled: false,
+        header_values_allowed: false,
+      }),
+    })
+
+    // The form appears for the layer that is still off, and the switch for the
+    // layer that is already on is not offered for turning off here.
+    expect(enableButton(wrapper).exists()).toBe(true)
+    expect(wrapper.find('[data-testid="operator-retention-toggle"]').exists()).toBe(false)
+    const toggle = wrapper.find('[data-testid="operator-header-values-toggle"]')
+    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+
+    await toggle.setValue(true)
+    await typePhrase(wrapper, PHRASE_EN)
+    await enableButton(wrapper).trigger('click')
+    await flushPromises()
+
+    // The layer this form is not touching keeps the value the server reported.
+    expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: true,
+      body_retention_enabled: true,
+      header_values_enabled: true,
+      language: 'en',
+      phrase: PHRASE_EN,
+    })
+  })
+
+  it('explains a stored-on header value layer that is not in effect', () => {
+    const noKey = mountPanel({
+      status: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: true,
+        risk_acknowledgement_current: true,
+        header_values_enabled: true,
+        header_values_allowed: false,
+        body_encryption_key_available: false,
+      }),
+    })
+    expect(noKey.find('[data-testid="operator-header-values-state"]').text()).toContain('Off')
+    expect(noKey.find('[data-testid="operator-header-values-mismatch"]').text()).toContain(
+      'no usable encryption key',
+    )
+
+    const capturePaused = mountPanel({
+      status: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: false,
+        risk_acknowledgement_current: false,
+        header_values_enabled: true,
+        header_values_allowed: false,
+        body_encryption_key_available: true,
+      }),
+    })
+    expect(capturePaused.find('[data-testid="operator-header-values-mismatch"]').text()).toContain(
+      'capture is not running',
+    )
+  })
+
+  it('keeps the header value switch unusable, and says so, without a usable key', () => {
+    const wrapper = mountPanel({ status: status({ body_encryption_key_available: false }) })
+
+    const toggle = wrapper.find('[data-testid="operator-header-values-toggle"]')
+    expect(toggle.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="operator-header-values-unavailable"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="operator-retention-unavailable"]').exists()).toBe(true)
+  })
+
+  it('keeps the stored header value intent when an acknowledgement has to be re-given', async () => {
+    mocks.updateOperatorSettings.mockResolvedValue(status())
+    const wrapper = mountPanel({
+      status: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: false,
+        risk_acknowledgement_current: false,
+        header_values_enabled: true,
+        header_values_allowed: false,
+        body_encryption_key_available: true,
+      }),
+    })
+
+    // Pre-set from the server's stored flag, not invented locally: re-acknowledging
+    // does not silently drop a layer that is already recorded.
+    expect((wrapper.find('[data-testid="operator-header-values-toggle"]').element as HTMLInputElement).checked).toBe(
+      true,
+    )
+
+    await typePhrase(wrapper, PHRASE_EN)
+    await enableButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: true,
+      body_retention_enabled: false,
+      header_values_enabled: true,
+      language: 'en',
+      phrase: PHRASE_EN,
+    })
+  })
+
+  it('clears both retention layers when the operator disables the gate', async () => {
+    mocks.updateOperatorSettings.mockResolvedValue(status())
+    const wrapper = mountPanel({
+      status: status({
+        enabled: true,
+        capture_allowed: true,
+        body_retention_enabled: true,
+        body_retention_allowed: true,
+        header_values_enabled: true,
+        header_values_allowed: true,
+      }),
+    })
+
+    await disableButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: false,
+      body_retention_enabled: false,
+      header_values_enabled: false,
+      language: expect.any(String),
+      phrase: '',
+    })
   })
 })

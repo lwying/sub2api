@@ -72,7 +72,7 @@ func TestErrorDiagnosticObserver_OverflowIsCountedWithoutBlocking(t *testing.T) 
 
 	// 先填满所有写入槽：每次调用同步占槽后交给 goroutine，槽位因此在回调返回时即被占用。
 	for i := 0; i < errorDiagnosticMaxInflightWrites; i++ {
-		observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+		observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 	}
 
 	// 此时槽位已满：后续观察必须在溢出分支立即返回，而不是阻塞等待。
@@ -80,7 +80,7 @@ func TestErrorDiagnosticObserver_OverflowIsCountedWithoutBlocking(t *testing.T) 
 	// 因此在释放之前这 3 次观察必然每次都走溢出分支，计数是确定的。
 	start := time.Now()
 	for i := 0; i < 3; i++ {
-		observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+		observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 	}
 	require.Less(t, time.Since(start).Seconds(), 2.0, "写入积压不得阻塞上游响应路径")
 
@@ -98,7 +98,7 @@ func TestErrorDiagnosticObserver_OverflowIsCountedWithoutBlocking(t *testing.T) 
 	}, 5*time.Second, 10*time.Millisecond, "写入完成后必须归还所有槽位")
 
 	// 槽位归还后新的观察正常入队，不再被计入丢弃。
-	observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+	observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 	_, dropsAfter := recorder.counts()
 	require.Equal(t, 3, dropsAfter, "槽位归还后不得再记为丢弃")
 	require.Eventually(t, func() bool {
@@ -117,11 +117,11 @@ func TestErrorDiagnosticObserver_DropIsSkippedWhenRecorderLacksTheCapability(t *
 	observation := httpattempt.DiagnosticObservation{StatusCode: 503, BodyVerdict: httpattempt.DiagnosticBodyNotRequested}
 
 	for i := 0; i < errorDiagnosticMaxInflightWrites; i++ {
-		observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+		observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 	}
 	require.NotPanics(t, func() {
 		for i := 0; i < 3; i++ {
-			observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+			observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 		}
 	})
 	close(recorder.fail)
@@ -189,14 +189,14 @@ func TestErrorDiagnosticObserver_OverflowReachesRealServiceDropCounter(t *testin
 
 	// 槽位由 record 同步占用，因此 16 次观察后队列必定已满；真实写入则被仓储挡住。
 	for i := 0; i < errorDiagnosticMaxInflightWrites; i++ {
-		observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+		observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 	}
 	require.Eventually(t, func() bool {
 		return repo.createdCount() == errorDiagnosticMaxInflightWrites
 	}, 5*time.Second, 5*time.Millisecond, "真实服务必须已经发出 16 次写入")
 
 	start := time.Now()
-	observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages), "")
+	observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, errorDiagnosticOrdinalContextKey(ErrorDiagnosticProtocolMessages))
 	require.Less(t, time.Since(start).Seconds(), 2.0, "队列满时必须立刻返回，不得阻塞上游响应路径")
 	require.Equal(t, int64(1), svc.Counters().Dropped, "每次溢出都必须累加服务侧的无正文计数")
 	require.Zero(t, svc.Counters().WriteFailures, "丢弃不是写入失败，两个计数不得混用")
@@ -229,7 +229,7 @@ func TestErrorDiagnosticObserver_OverflowDropsWithoutCopyingTheBody(t *testing.T
 
 	// 先占满写入槽；这一步的复制属于设计内的有界明文（槽位数 × 单次上限）。
 	for i := 0; i < errorDiagnosticMaxInflightWrites; i++ {
-		observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, ordinalKey, "")
+		observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, ordinalKey)
 	}
 	_, dropsBefore := recorder.counts()
 	require.Zero(t, dropsBefore)
@@ -239,7 +239,7 @@ func TestErrorDiagnosticObserver_OverflowDropsWithoutCopyingTheBody(t *testing.T
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	for i := 0; i < droppedAttempts; i++ {
-		observer.record(context.Background(), ErrorDiagnosticProtocolMessages, observation, nil, ordinalKey, "")
+		observer.record(context.Background(), errorDiagnosticBinding{protocol: ErrorDiagnosticProtocolMessages}, observation, nil, ordinalKey)
 	}
 	runtime.ReadMemStats(&after)
 

@@ -79,6 +79,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		idempotencyCleanupSvc,
 		service.NewRequestAuditReservationCleanupService(nil),
 		service.NewErrorDiagnosticCleanupService(nil, nil),
+		service.NewRequestAuditValueDetailCleanupService(nil),
 		&service.BatchImageCleanupService{},
 		nil, // batchImageWorker
 		pricingSvc,

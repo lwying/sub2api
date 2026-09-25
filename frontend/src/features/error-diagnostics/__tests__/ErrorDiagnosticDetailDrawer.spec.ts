@@ -15,12 +15,25 @@ import type { DiagnosticAttempt } from '../types'
 const mocks = vi.hoisted(() => ({
   getDiagnostic: vi.fn(),
   revealDiagnosticBody: vi.fn(),
+  revealDiagnosticHeaders: vi.fn(),
 }))
 
-vi.mock('../api', () => ({
-  getDiagnostic: mocks.getDiagnostic,
-  revealDiagnosticBody: mocks.revealDiagnosticBody,
-}))
+/**
+ * The header reveal returns a RAW payload that the real normalizer then filters,
+ * so the allowlist stays under test: a canary the real boundary drops proves the
+ * guard, not the stub.
+ */
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>()
+  const { normalizeDiagnosticHeaderReveal } = await import('../types')
+  return {
+    ...actual,
+    getDiagnostic: mocks.getDiagnostic,
+    revealDiagnosticBody: mocks.revealDiagnosticBody,
+    revealDiagnosticHeaders: async (id: string) =>
+      normalizeDiagnosticHeaderReveal(await mocks.revealDiagnosticHeaders(id)),
+  }
+})
 
 vi.mock('vue-i18n', async (importOriginal) => {
   const labels: Record<string, string> = {
@@ -61,6 +74,34 @@ vi.mock('vue-i18n', async (importOriginal) => {
     'admin.errorDiagnostics.reasons.skipped_encryption_unavailable': 'Encryption was unavailable',
     'admin.errorDiagnostics.reasons.skipped_body_retention_disabled': 'Request body retention is disabled',
     'admin.errorDiagnostics.reasons.unknown': 'Unknown retention outcome',
+    'admin.errorDiagnostics.headerStates.notObserved': 'No 429 header values were observed',
+    'admin.errorDiagnostics.headerStates.stored': 'Header values stored',
+    'admin.errorDiagnostics.headerStates.skipped': 'Header values not retained',
+    'admin.errorDiagnostics.headerStates.expired': 'Header values expired',
+    'admin.errorDiagnostics.headerStates.purged': 'Header values cleared',
+    'admin.errorDiagnostics.headerStates.unknown': 'Unknown state',
+    'admin.errorDiagnostics.headerReasons.not_observed': 'No 429 header values were observed for this attempt',
+    'admin.errorDiagnostics.headerReasons.retained': '429 header values retained',
+    'admin.errorDiagnostics.headerReasons.skipped_out_of_scope':
+      'This attempt was not an upstream 429 on the Messages path',
+    'admin.errorDiagnostics.headerReasons.skipped_header_retention_disabled':
+      '429 header value retention is disabled',
+    'admin.errorDiagnostics.headerReasons.skipped_encryption_unavailable': 'Encryption was unavailable',
+    'admin.errorDiagnostics.headerReasons.skipped_invalid_values':
+      'The observed header values did not pass validation',
+    'admin.errorDiagnostics.headerReasons.unknown': 'Unknown retention outcome',
+    'admin.errorDiagnostics.detail.headers': 'Upstream 429 header values',
+    'admin.errorDiagnostics.detail.headerExpiresAt': 'Header values expire',
+    'admin.errorDiagnostics.detail.headerNotice':
+      'Header values are decrypted only on request, are never cached, and never include credentials, cookies or the request body. They are revealed separately from the body.',
+    'admin.errorDiagnostics.detail.revealHeaders': 'Reveal 429 header values',
+    'admin.errorDiagnostics.detail.revealingHeaders': 'Revealing…',
+    'admin.errorDiagnostics.detail.headerRevealFailed': 'The 429 header values could not be revealed',
+    'admin.errorDiagnostics.detail.headerEntryCount': '{count} header values stored',
+    'admin.errorDiagnostics.detail.requestHeaders': 'Request header values',
+    'admin.errorDiagnostics.detail.responseHeaders': 'Response header values',
+    'stepUp.notEnabled': 'Enable two-factor authentication on your profile first',
+    'stepUp.adminApiKeyForbidden': 'Admin API keys cannot perform this operation',
   }
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return {
@@ -73,6 +114,23 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 import ErrorDiagnosticDetailDrawer from '../components/ErrorDiagnosticDetailDrawer.vue'
+
+/**
+ * Stand-in for the real TOTP dialog, which needs a Pinia store and the API
+ * client. It renders only while the controller says the prompt is open and keeps
+ * the controller reachable through its props, so these tests drive the real
+ * `useStepUp` flow (prompt, verify, cancel, blocked) the drawer actually wires.
+ */
+const TotpStepUpDialogStub = {
+  name: 'TotpStepUpDialog',
+  props: { controller: { type: Object, required: true } },
+  template: '<div v-if="controller.visible.value" data-testid="totp-step-up-dialog" />',
+}
+
+/** The controller the drawer handed to the (stubbed) TOTP dialog. */
+function stepUpController(wrapper: any) {
+  return wrapper.findComponent(TotpStepUpDialogStub).props('controller')
+}
 
 const attempt = (overrides: Partial<DiagnosticAttempt> = {}): DiagnosticAttempt => ({
   id: 'diag_1',
@@ -95,6 +153,7 @@ function mountDrawer(props: Record<string, unknown> = {}) {
       stubs: {
         BaseDialog: { template: '<div><slot /></div>' },
         Icon: true,
+        TotpStepUpDialog: TotpStepUpDialogStub,
       },
     },
   })
@@ -104,6 +163,7 @@ describe('ErrorDiagnosticDetailDrawer', () => {
   beforeEach(() => {
     mocks.getDiagnostic.mockReset()
     mocks.revealDiagnosticBody.mockReset()
+    mocks.revealDiagnosticHeaders.mockReset()
     mocks.getDiagnostic.mockResolvedValue(attempt())
   })
 
@@ -384,5 +444,431 @@ describe('ErrorDiagnosticDetailDrawer', () => {
     expect(wrapper.text()).toContain('Could not load the diagnostic metadata')
     expect(wrapper.text()).not.toContain('CANARY_SECRET')
     expect(wrapper.find('[data-testid="error-diagnostic-reveal"]').exists()).toBe(false)
+  })
+})
+
+/**
+ * 429 header values (Claude Messages only) are a second short-lived secret with
+ * their own window and their own reveal. These tests pin the parts that keep them
+ * from leaking or from being confused with the body.
+ */
+describe('ErrorDiagnosticDetailDrawer 429 header values', () => {
+  const HEADER_REVEAL_SELECTOR = '[data-testid="error-diagnostic-header-reveal"]'
+  const HEADER_VALUES_SELECTOR = '[data-testid="error-diagnostic-header-values"]'
+
+  beforeEach(() => {
+    mocks.getDiagnostic.mockReset()
+    mocks.revealDiagnosticBody.mockReset()
+    mocks.revealDiagnosticHeaders.mockReset()
+    mocks.getDiagnostic.mockResolvedValue(attempt())
+  })
+
+  const withHeaders = (overrides: Record<string, unknown> = {}) =>
+    attempt({
+      header_state: 'stored',
+      header_reason: 'retained',
+      header_entry_count: 3,
+      header_expires_at: '2999-01-01T00:00:00Z',
+      ...overrides,
+    })
+
+  it('hides the section entirely when no header values were observed', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="error-diagnostic-headers"]').exists()).toBe(false)
+    expect(mocks.revealDiagnosticHeaders).not.toHaveBeenCalled()
+  })
+
+  it('offers the header reveal even when no request body was retained', async () => {
+    mocks.getDiagnostic.mockResolvedValue(
+      withHeaders({
+        body_state: 'not_observed',
+        reason: 'not_observed',
+        body_expires_at: undefined,
+      }),
+    )
+    mocks.revealDiagnosticHeaders.mockResolvedValue({
+      request_headers: { Host: 'api.anthropic.com' },
+      response_headers: {},
+      header_entry_count: 1,
+      header_expires_at: '2999-01-01T00:00:00Z',
+    })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    // The body is not available at all, and that does not gate the headers.
+    expect(wrapper.find('[data-testid="error-diagnostic-reveal"]').exists()).toBe(false)
+    expect(wrapper.find(HEADER_REVEAL_SELECTOR).exists()).toBe(true)
+
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get(HEADER_VALUES_SELECTOR).text()).toContain('api.anthropic.com')
+    expect(mocks.revealDiagnosticBody).not.toHaveBeenCalled()
+  })
+
+  it('shows the state and deadline but fetches nothing until the admin clicks', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    expect(mocks.revealDiagnosticHeaders).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="error-diagnostic-header-state"]').text()).toBe('Header values stored')
+    expect(wrapper.get('[data-testid="error-diagnostic-header-expires"]').text()).toContain('Header values expire')
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+
+    mocks.revealDiagnosticHeaders.mockResolvedValue({
+      request_headers: { 'User-Agent': 'claude-cli/2.0.0 (external, cli)', Host: 'api.anthropic.com' },
+      response_headers: { 'Retry-After': '30', 'Anthropic-Ratelimit-Requests-Remaining': '0' },
+      header_entry_count: 4,
+      header_expires_at: '2999-01-01T00:00:00Z',
+    })
+
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledWith('diag_1')
+    const values = wrapper.get(HEADER_VALUES_SELECTOR)
+    expect(values.text()).toContain('claude-cli/2.0.0 (external, cli)')
+    expect(values.text()).toContain('api.anthropic.com')
+    expect(values.text()).toContain('Retry-After')
+    expect(values.text()).toContain('30')
+    expect(values.text()).toContain('4 header values stored')
+  })
+
+  it('reveals the headers without touching the body, and the body without touching the headers', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockResolvedValue({
+      request_headers: { Host: 'api.anthropic.com' },
+      response_headers: {},
+      header_entry_count: 1,
+      header_expires_at: '2999-01-01T00:00:00Z',
+    })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(mocks.revealDiagnosticBody).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="error-diagnostic-body"]').exists()).toBe(false)
+
+    mocks.revealDiagnosticBody.mockResolvedValue({ body_text: '{"messages":[]}', body_bytes: 15 })
+    await wrapper.get('[data-testid="error-diagnostic-reveal"]').trigger('click')
+    await flushPromises()
+
+    // Revealing the body leaves the header payload on screen: they are separate.
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(1)
+    expect(wrapper.get(HEADER_VALUES_SELECTOR).text()).toContain('api.anthropic.com')
+    expect(wrapper.get('[data-testid="error-diagnostic-body"]').text()).toContain('{"messages":[]}')
+  })
+
+  it('never renders a credential, a cookie, an unknown header or a credential-shaped value', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockResolvedValue({
+      request_headers: {
+        Authorization: 'Bearer sk-canary',
+        Cookie: 'session=canary',
+        'X-Api-Key': 'sk-canary',
+        'X-Unknown-Header': 'canary',
+        // An allowlisted name carrying a credential-shaped value.
+        Host: 'sk-canary',
+        'User-Agent': 'Bearer canary',
+      },
+      response_headers: {
+        'Set-Cookie': 'session=canary',
+        'WWW-Authenticate': 'Basic canary',
+        'Retry-After': '30',
+        'Anthropic-Ratelimit-Requests-Reset': '2026-09-24T00:00:00Z',
+      },
+      header_entry_count: 9,
+      header_expires_at: '2999-01-01T00:00:00Z',
+    })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    const html = wrapper.html()
+    expect(html).not.toContain('sk-canary')
+    expect(html).not.toContain('canary')
+    expect(html).not.toContain('Bearer')
+    expect(html).not.toContain('Basic')
+    expect(html).not.toContain('session=')
+    expect(html).not.toContain('Authorization')
+    expect(html).not.toContain('Cookie')
+    expect(html).not.toContain('X-Api-Key')
+    expect(html).not.toContain('X-Unknown-Header')
+    expect(html).not.toContain('WWW-Authenticate')
+    // The allowlisted, innocuous values still come through.
+    expect(wrapper.get(HEADER_VALUES_SELECTOR).text()).toContain('30')
+    expect(wrapper.get(HEADER_VALUES_SELECTOR).text()).toContain('2026-09-24T00:00:00Z')
+  })
+
+  it('offers no header reveal for skipped, expired, purged or already-expired states', async () => {
+    const states = [
+      { header_state: 'skipped', header_reason: 'skipped_header_retention_disabled', header_expires_at: undefined },
+      { header_state: 'expired', header_reason: 'retained' },
+      { header_state: 'purged', header_reason: 'retained' },
+      // Still called `stored` by the server, but past its own window.
+      { header_state: 'stored', header_reason: 'retained', header_expires_at: '2020-01-01T00:00:00Z' },
+    ]
+
+    for (const state of states) {
+      mocks.getDiagnostic.mockResolvedValue(withHeaders(state))
+
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      expect(wrapper.find(HEADER_REVEAL_SELECTOR).exists()).toBe(false)
+      expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+      wrapper.unmount()
+    }
+
+    mocks.getDiagnostic.mockResolvedValue(withHeaders({ header_expires_at: '2020-01-01T00:00:00Z' }))
+    const expired = mountDrawer()
+    await flushPromises()
+    expect(expired.get('[data-testid="error-diagnostic-header-state"]').text()).toBe('Header values expired')
+  })
+
+  it('re-reads the metadata after a refused reveal instead of guessing from the error code', async () => {
+    mocks.getDiagnostic
+      .mockResolvedValueOnce(withHeaders())
+      .mockResolvedValueOnce(withHeaders({ header_state: 'expired' }))
+    mocks.revealDiagnosticHeaders.mockRejectedValue({ status: 410, message: 'headers gone' })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(mocks.getDiagnostic).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('Header values expired')
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find('[data-testid="error-diagnostic-header-reveal-failed"]').exists()).toBe(false)
+  })
+
+  it('keeps a genuine reveal failure visible while the values are still retained', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockRejectedValue({ status: 500, message: 'Bearer CANARY_SECRET' })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="error-diagnostic-header-reveal-failed"]').text()).toContain(
+      'The 429 header values could not be revealed',
+    )
+    expect(wrapper.text()).not.toContain('CANARY_SECRET')
+  })
+
+  it('drops the revealed headers when the drawer closes, and never writes them to storage', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockResolvedValue({
+      request_headers: { Host: 'api.anthropic.com' },
+      response_headers: {},
+      header_entry_count: 1,
+      header_expires_at: '2999-01-01T00:00:00Z',
+    })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(HEADER_VALUES_SELECTOR).text()).toContain('api.anthropic.com')
+
+    const stored = [
+      ...Object.keys(localStorage).map((key) => `${key}=${localStorage.getItem(key)}`),
+      ...Object.keys(sessionStorage).map((key) => `${key}=${sessionStorage.getItem(key)}`),
+    ].join('|')
+    expect(stored).not.toContain('api.anthropic.com')
+
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * The header reveal route is step-up gated server-side, while the body route is
+   * not. A STEP_UP_REQUIRED is therefore a prompt for the headers: the admin
+   * verifies and the same explicit POST is retried once. Nothing here auto-runs —
+   * the first POST is still only issued by the click, the retry by the verification.
+   */
+  const STEP_UP_REQUIRED = { status: 403, code: 'STEP_UP_REQUIRED', message: 'recent verification required' }
+  const TOTP_DIALOG_SELECTOR = '[data-testid="totp-step-up-dialog"]'
+  const HEADER_BLOCKED_SELECTOR = '[data-testid="error-diagnostic-header-reveal-blocked"]'
+  const HEADER_FAILED_SELECTOR = '[data-testid="error-diagnostic-header-reveal-failed"]'
+
+  it('prompts for step-up on a refused header reveal and retries it once after verification', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders
+      .mockRejectedValueOnce(STEP_UP_REQUIRED)
+      .mockResolvedValueOnce({
+        request_headers: { Host: 'api.anthropic.com' },
+        response_headers: {},
+        header_entry_count: 1,
+        header_expires_at: '2999-01-01T00:00:00Z',
+      })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(false)
+
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    // The refusal asks for verification instead of reporting a failed reveal.
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(true)
+    expect(stepUpController(wrapper).visible.value).toBe(true)
+    expect(wrapper.find(HEADER_FAILED_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(HEADER_BLOCKED_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(1)
+    // A refused reveal is not a retention change, so the metadata is not re-read.
+    expect(mocks.getDiagnostic).toHaveBeenCalledTimes(1)
+
+    stepUpController(wrapper).onVerified()
+    await flushPromises()
+
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(2)
+    expect(wrapper.get(HEADER_VALUES_SELECTOR).text()).toContain('api.anthropic.com')
+    expect(wrapper.find(HEADER_FAILED_SELECTOR).exists()).toBe(false)
+    // The step-up gate covers the headers only; the body was never involved.
+    expect(mocks.revealDiagnosticBody).not.toHaveBeenCalled()
+  })
+
+  it('shows no failure and drops the prompt when the step-up verification is cancelled', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockRejectedValue(STEP_UP_REQUIRED)
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(true)
+
+    stepUpController(wrapper).onCancel()
+    await flushPromises()
+
+    // Cancelling is not a failure and reads nothing: no error text, no values.
+    expect(wrapper.find(HEADER_FAILED_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(HEADER_BLOCKED_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(false)
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(1)
+
+    // The action is available again, so the admin can retry deliberately.
+    expect(wrapper.get(HEADER_REVEAL_SELECTOR).attributes('disabled')).toBeUndefined()
+  })
+
+  it.each([
+    ['STEP_UP_TOTP_NOT_ENABLED', 'Enable two-factor authentication on your profile first'],
+    ['STEP_UP_ADMIN_API_KEY_FORBIDDEN', 'Admin API keys cannot perform this operation'],
+  ])('reports %s with the shared step-up wording instead of a reveal failure', async (code, expected) => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockRejectedValue({ status: 403, code, message: 'refused' })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get(HEADER_BLOCKED_SELECTOR).text()).toContain(expected)
+    expect(wrapper.find(HEADER_FAILED_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a step-up retry that resolves after the drawer moved to another attempt', async () => {
+    let resolveRetry!: (value: unknown) => void
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders
+      .mockRejectedValueOnce(STEP_UP_REQUIRED)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        }),
+      )
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    stepUpController(wrapper).onVerified()
+    await flushPromises()
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(2)
+
+    await wrapper.setProps({ show: false })
+    mocks.getDiagnostic.mockResolvedValue(withHeaders({ id: 'diag_2' }))
+    await wrapper.setProps({ show: true, diagnosticId: 'diag_2' })
+    await flushPromises()
+
+    resolveRetry({
+      request_headers: { Host: 'late-step-up-canary' },
+      response_headers: {},
+      header_entry_count: 1,
+      header_expires_at: '2999-01-01T00:00:00Z',
+    })
+    await flushPromises()
+
+    expect(mocks.getDiagnostic).toHaveBeenLastCalledWith('diag_2')
+    expect(wrapper.text()).not.toContain('late-step-up-canary')
+    expect(wrapper.find(HEADER_VALUES_SELECTOR).exists()).toBe(false)
+  })
+
+  it('dismisses an open step-up prompt when the drawer closes', async () => {
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticHeaders.mockRejectedValue(STEP_UP_REQUIRED)
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(true)
+
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+
+    // A prompt left over from a closed drawer would float over the list and its
+    // retry would target an attempt nobody is looking at.
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(false)
+    expect(stepUpController(wrapper).visible.value).toBe(false)
+    expect(mocks.revealDiagnosticHeaders).toHaveBeenCalledTimes(1)
+    expect(wrapper.find(HEADER_FAILED_SELECTOR).exists()).toBe(false)
+  })
+
+  it('keeps the ungated body reveal out of the step-up prompt', async () => {
+    // The body route is not step-up gated, so a step-up code arriving there is an
+    // ordinary error: the drawer must not offer a prompt the backend never asked for.
+    mocks.getDiagnostic.mockResolvedValue(withHeaders())
+    mocks.revealDiagnosticBody.mockRejectedValue(STEP_UP_REQUIRED)
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="error-diagnostic-reveal"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(false)
+    expect(wrapper.find('[data-testid="error-diagnostic-reveal-failed"]').exists()).toBe(true)
+    expect(mocks.revealDiagnosticBody).toHaveBeenCalledTimes(1)
+
+    // The header reveal still prompts on its own refusal.
+    mocks.revealDiagnosticHeaders.mockRejectedValueOnce(STEP_UP_REQUIRED)
+    await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(true)
   })
 })

@@ -25,10 +25,15 @@ import (
 // 过滤参数，因此无法被用作按身份检索客户数据的通道。设置类响应禁止中间缓存。
 
 type errorDiagnosticOperatorSettingsRequest struct {
-	Enabled              bool   `json:"enabled"`
-	BodyRetentionEnabled bool   `json:"body_retention_enabled"`
-	Language             string `json:"language"`
-	Phrase               string `json:"phrase"`
+	Enabled              bool `json:"enabled"`
+	BodyRetentionEnabled bool `json:"body_retention_enabled"`
+	// HeaderValuesEnabled 是 429 头值留存的独立开关（与正文留存正交）。
+	//
+	// 未提交即按关闭处理：它与 body_retention_enabled 一样必须由本次请求显式表达，
+	// 不做隐式保留，也不会被正文开关顺带打开。
+	HeaderValuesEnabled bool   `json:"header_values_enabled"`
+	Language            string `json:"language"`
+	Phrase              string `json:"phrase"`
 }
 
 var (
@@ -68,9 +73,9 @@ func (h *SettingHandler) GetErrorDiagnosticOperatorSettings(c *gin.Context) {
 // PUT /api/v1/admin/settings/error-diagnostic
 //
 // 这是整体状态更新（与 /settings 大对象的部分更新语义不同）：未提交的字段按关闭处理，
-// 不做隐式保留——开启与正文留存都必须由本次请求显式表达。开启由服务层强制逐字风险确认
-// （每次更新都校验）；关闭不需要确认、不需要操作员身份，也不能被任何前置校验挡住，
-// 且会把正文留存一并关掉。
+// 不做隐式保留——开启、正文留存与 429 头值留存都必须由本次请求显式表达。开启由服务层强制
+// 逐字风险确认（每次更新都校验）；关闭不需要确认、不需要操作员身份，也不能被任何前置校验
+// 挡住，且会把正文留存与头值留存一并关掉。
 func (h *SettingHandler) UpdateErrorDiagnosticOperatorSettings(c *gin.Context) {
 	c.Header("Cache-Control", "no-store, private")
 	if h == nil || h.settingService == nil {
@@ -94,13 +99,14 @@ func (h *SettingHandler) UpdateErrorDiagnosticOperatorSettings(c *gin.Context) {
 	}
 
 	status, err := h.settingService.UpdateErrorDiagnosticOperatorSettings(c.Request.Context(), service.ErrorDiagnosticOperatorUpdateInput{
-		Enabled:              req.Enabled,
-		BodyRetentionEnabled: req.BodyRetentionEnabled,
-		Language:             req.Language,
-		Phrase:               req.Phrase,
-		AdminUserID:          adminUserID,
-		IPAddress:            ip.GetClientIP(c),
-		UserAgent:            strings.TrimSpace(c.GetHeader("User-Agent")),
+		Enabled:                     req.Enabled,
+		BodyRetentionEnabled:        req.BodyRetentionEnabled,
+		HeaderValueRetentionEnabled: req.HeaderValuesEnabled,
+		Language:                    req.Language,
+		Phrase:                      req.Phrase,
+		AdminUserID:                 adminUserID,
+		IPAddress:                   ip.GetClientIP(c),
+		UserAgent:                   strings.TrimSpace(c.GetHeader("User-Agent")),
 	})
 	if err != nil {
 		// 校验类错误带稳定 reason 码；其余（存储写入失败等）按不可用处理，

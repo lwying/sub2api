@@ -255,7 +255,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	adminSubscriptionHandler := admin.NewSubscriptionHandler(subscriptionService)
 	usageCleanupRepository := repository.NewUsageCleanupRepository(client, db)
 	usageCleanupService := service.ProvideUsageCleanupService(usageCleanupRepository, timingWheelService, dashboardAggregationService, configConfig)
-	adminUsageHandler := admin.NewUsageHandler(usageService, apiKeyService, adminService, usageCleanupService, requestAuditRepository)
+	requestAuditValueDetailCipher := repository.ProvideRequestAuditValueDetailCipher(configConfig)
+	requestAuditValueDetailRepository := repository.NewRequestAuditValueDetailRepository(db, requestAuditValueDetailCipher)
+	requestAuditValueDetailService := service.ProvideRequestAuditValueDetailService(requestAuditValueDetailRepository, settingService)
+	adminUsageHandler := handler.ProvideAdminUsageHandler(usageService, apiKeyService, adminService, usageCleanupService, requestAuditRepository, requestAuditValueDetailService)
 	errorDiagnosticBodyCipher := repository.ProvideErrorDiagnosticBodyCipher(configConfig)
 	errorDiagnosticRepository := repository.NewErrorDiagnosticRepository(db, errorDiagnosticBodyCipher)
 	errorDiagnosticService := service.ProvideErrorDiagnosticService(errorDiagnosticRepository, settingService, errorDiagnosticBodyCipher)
@@ -308,7 +311,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator, keyBillingSnapshotService, errorDiagnosticService, requestAuditFingerprinter)
+	requestAuditValueDetailCapture := service.ProvideRequestAuditValueDetailCapture(requestAuditValueDetailRepository, settingService)
+	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator, keyBillingSnapshotService, errorDiagnosticService, requestAuditFingerprinter, requestAuditValueDetailCapture)
 	openAIGatewayHandler := handler.ProvideOpenAIGatewayHandler(openAIGatewayService, pluginManager, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, grokQuotaService, configConfig, coordinator, errorDiagnosticService, requestAuditRepository, requestAuditFingerprinter)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	totpHandler := handler.NewTotpHandler(totpService)
@@ -353,6 +357,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	}
 	requestAuditReservationCleanupService := service.NewRequestAuditReservationCleanupService(requestAuditReservationRepository)
 	errorDiagnosticCleanupService := service.ProvideErrorDiagnosticCleanupService(errorDiagnosticRepository, errorDiagnosticService)
+	requestAuditValueDetailCleanupService := service.NewRequestAuditValueDetailCleanupService(requestAuditValueDetailRepository)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
 	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, redisClient, configConfig, proxyRepository)
@@ -372,13 +377,14 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService, channelMonitorQuotaFetcher)
 	channelMonitorV2Aggregator := service.ProvideChannelMonitorV2Aggregator(channelMonitorV2Repository, db, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, requestAuditReservationCleanupService, errorDiagnosticCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, requestAuditReservationCleanupService, errorDiagnosticCleanupService, requestAuditValueDetailCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
 	application := &Application{
 		Server:                         httpServer,
 		PromptAudit:                    promptService,
 		PluginManager:                  pluginManager,
 		RequestAuditReservationCleanup: requestAuditReservationCleanupService,
 		ErrorDiagnosticCleanup:         errorDiagnosticCleanupService,
+		RequestAuditValueDetailCleanup: requestAuditValueDetailCleanupService,
 		Cleanup:                        v,
 	}
 	return application, nil
@@ -392,6 +398,7 @@ type Application struct {
 	PluginManager                  *service.PluginManager
 	RequestAuditReservationCleanup *service.RequestAuditReservationCleanupService
 	ErrorDiagnosticCleanup         *service.ErrorDiagnosticCleanupService
+	RequestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService
 	Cleanup                        func()
 }
 
@@ -439,6 +446,7 @@ func provideCleanup(
 	idempotencyCleanup *service.IdempotencyCleanupService,
 	requestAuditReservationCleanup *service.RequestAuditReservationCleanupService,
 	errorDiagnosticCleanup *service.ErrorDiagnosticCleanupService,
+	requestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -587,6 +595,12 @@ func provideCleanup(
 			{"ErrorDiagnosticCleanupService", func() error {
 				if errorDiagnosticCleanup != nil {
 					errorDiagnosticCleanup.Stop()
+				}
+				return nil
+			}},
+			{"RequestAuditValueDetailCleanupService", func() error {
+				if requestAuditValueDetailCleanup != nil {
+					requestAuditValueDetailCleanup.Stop()
 				}
 				return nil
 			}},

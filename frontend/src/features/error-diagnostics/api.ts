@@ -18,10 +18,12 @@ import {
   normalizeDiagnosticAttempt,
   normalizeDiagnosticAttemptPage,
   normalizeDiagnosticBodyReveal,
+  normalizeDiagnosticHeaderReveal,
   normalizeErrorDiagnosticOperatorStatus,
   type DiagnosticAttempt,
   type DiagnosticAttemptPage,
   type DiagnosticBodyReveal,
+  type DiagnosticHeaderReveal,
   type ErrorDiagnosticOperatorStatus,
   type ErrorDiagnosticOperatorUpdateInput,
 } from './types'
@@ -77,6 +79,23 @@ export async function revealDiagnosticBody(id: string): Promise<DiagnosticBodyRe
 }
 
 /**
+ * Decrypts and returns the retained 429 header values for one attempt.
+ *
+ * Headers are an independent secret with their own retention window: they can be
+ * retained when no body was, and revealing the body never returns them. Like the
+ * body reveal this is an explicit POST, so it cannot be issued by a prefetcher
+ * or a cache, and the request is marked no-store as well.
+ */
+export async function revealDiagnosticHeaders(id: string): Promise<DiagnosticHeaderReveal> {
+  const { data } = await apiClient.post<unknown>(
+    `${basePath}/${encodeURIComponent(id)}/headers`,
+    undefined,
+    { headers: NO_STORE_HEADERS },
+  )
+  return normalizeDiagnosticHeaderReveal(data)
+}
+
+/**
  * Reads the capture gate. Never cached: a stale "enabled" would tell an operator
  * that failures are being recorded when they are not, and a stale "disabled" would
  * invite a pointless re-acknowledgement.
@@ -94,10 +113,14 @@ export async function getOperatorSettings(options?: {
 /**
  * Applies one whole-state update to the gate.
  *
- * The payload is built explicitly from the four agreed fields: enabling is bound
- * to the typed acknowledgement the operator just gave, so no extra field (an
+ * The payload is built explicitly from the agreed fields: enabling is bound to
+ * the typed acknowledgement the operator just gave, so no extra field (an
  * identity, a source address, a key) may be attached here. Disabling is expressed
  * the same way with `phrase: ''` — the server requires no statement for it.
+ *
+ * Both retention layers are always stated (the server reads an omitted field as
+ * off): they are independent switches, and neither one may be left to be inferred
+ * from the other.
  */
 export async function updateOperatorSettings(
   input: ErrorDiagnosticOperatorUpdateInput,
@@ -107,6 +130,7 @@ export async function updateOperatorSettings(
     {
       enabled: input.enabled,
       body_retention_enabled: input.body_retention_enabled,
+      header_values_enabled: input.header_values_enabled,
       language: input.language,
       phrase: input.phrase,
     },
@@ -119,6 +143,7 @@ export const errorDiagnosticsAPI = {
   listDiagnostics,
   getDiagnostic,
   revealDiagnosticBody,
+  revealDiagnosticHeaders,
   getOperatorSettings,
   updateOperatorSettings,
 }

@@ -5,8 +5,16 @@
  * set (an older or tampered record, a future literal) resolves to an explicit
  * "unknown" label — the raw value is never returned as display text.
  */
-import type { DiagnosticBodyReason, DiagnosticBodyState, DiagnosticProtocol, OperatorAckLanguage } from './types'
-import { isBodyExpired } from './types'
+import type {
+  DiagnosticBodyReason,
+  DiagnosticBodyState,
+  DiagnosticHeaderReason,
+  DiagnosticHeaderReveal,
+  DiagnosticHeaderState,
+  DiagnosticProtocol,
+  OperatorAckLanguage,
+} from './types'
+import { isBodyExpired, isHeaderValuesExpired } from './types'
 
 export type Translate = (key: string, params?: Record<string, unknown>) => string
 
@@ -80,6 +88,82 @@ export function formatDateTime(value: string | undefined): string {
   return new Date(parsed).toLocaleString()
 }
 
+const HEADER_STATE_KEYS: Record<DiagnosticHeaderState, string> = {
+  not_observed: 'notObserved',
+  stored: 'stored',
+  skipped: 'skipped',
+  expired: 'expired',
+  purged: 'purged',
+}
+
+const HEADER_REASON_KEYS: Record<DiagnosticHeaderReason, string> = {
+  not_observed: 'not_observed',
+  retained: 'retained',
+  skipped_out_of_scope: 'skipped_out_of_scope',
+  skipped_header_retention_disabled: 'skipped_header_retention_disabled',
+  skipped_encryption_unavailable: 'skipped_encryption_unavailable',
+  skipped_invalid_values: 'skipped_invalid_values',
+}
+
+export function headerStateLabel(t: Translate, state: string | undefined): string {
+  const key = state ? HEADER_STATE_KEYS[state as DiagnosticHeaderState] : undefined
+  return t(`admin.errorDiagnostics.headerStates.${key ?? 'unknown'}`)
+}
+
+export function headerReasonLabel(t: Translate, reason: string | undefined): string {
+  const key = reason ? HEADER_REASON_KEYS[reason as DiagnosticHeaderReason] : undefined
+  return t(`admin.errorDiagnostics.headerReasons.${key ?? 'unknown'}`)
+}
+
+/**
+ * The 429 header section is only meaningful for an attempt that is in scope for
+ * header capture. Every other attempt reports `not_observed` (out of scope is
+ * "not collected", not a failure), and a missing state — an older row — says the
+ * same thing, so the section is hidden rather than shown empty.
+ */
+export function hasHeaderValuesSection(state: string | undefined): boolean {
+  return state !== undefined && state !== 'not_observed'
+}
+
+/**
+ * Header values may be revealed only while they really are readable: `stored`
+ * and not past their own expiry. Expired, purged, skipped and not-observed
+ * values never get an action, so the UI cannot invite a read the server refuses.
+ */
+export function canRevealHeaders(
+  state: string | undefined,
+  headerExpiresAt: string | undefined,
+  now: number = Date.now(),
+): boolean {
+  return state === 'stored' && !isHeaderValuesExpired(headerExpiresAt, now)
+}
+
+/** True when `stored` header values silently became unreadable because the window passed. */
+export function isHeaderValuesStoredButExpired(
+  state: string | undefined,
+  headerExpiresAt: string | undefined,
+  now: number = Date.now(),
+): boolean {
+  return state === 'stored' && isHeaderValuesExpired(headerExpiresAt, now)
+}
+
+/** Only a direction that actually carries values gets a heading. */
+export function headerDirections(
+  reveal: DiagnosticHeaderReveal,
+): Array<{ key: 'requestHeaders' | 'responseHeaders'; headers: Record<string, string> }> {
+  const directions: Array<{
+    key: 'requestHeaders' | 'responseHeaders'
+    headers: Record<string, string>
+  }> = []
+  if (Object.keys(reveal.request_headers).length) {
+    directions.push({ key: 'requestHeaders', headers: reveal.request_headers })
+  }
+  if (Object.keys(reveal.response_headers).length) {
+    directions.push({ key: 'responseHeaders', headers: reveal.response_headers })
+  }
+  return directions
+}
+
 const ACK_LANGUAGE_KEYS: Record<OperatorAckLanguage, string> = {
   en: 'en',
   zh: 'zh',
@@ -108,6 +192,9 @@ const OPERATOR_ERROR_KEYS: Record<string, string> = {
   ERROR_DIAGNOSTIC_RISK_ACK_REQUIRED: 'phraseRequired',
   ERROR_DIAGNOSTIC_RISK_ACK_INVALID: 'phraseInvalid',
   ERROR_DIAGNOSTIC_BODY_KEY_UNAVAILABLE: 'keyUnavailable',
+  // The two retention layers have their own key refusals: the UI must say which
+  // layer could not be turned on, not that "retention" in general is unavailable.
+  ERROR_DIAGNOSTIC_HEADER_KEY_UNAVAILABLE: 'headerKeyUnavailable',
   ERROR_DIAGNOSTIC_OPERATOR_SESSION_REQUIRED: 'sessionRequired',
   ERROR_DIAGNOSTIC_ADMIN_API_KEY_FORBIDDEN: 'adminApiKeyForbidden',
   ERROR_DIAGNOSTIC_SETTINGS_UNAVAILABLE: 'unavailable',

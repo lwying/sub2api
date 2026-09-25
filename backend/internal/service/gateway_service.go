@@ -259,16 +259,6 @@ func parseDebugEnvBool(raw string) bool {
 	}
 }
 
-func shortSessionHash(sessionHash string) string {
-	if sessionHash == "" {
-		return ""
-	}
-	if len(sessionHash) <= 8 {
-		return sessionHash
-	}
-	return sessionHash[:8]
-}
-
 func redactAuthHeaderValue(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -794,49 +784,60 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 
 // GatewayService handles API gateway operations
 type GatewayService struct {
-	accountRepo               AccountRepository
-	groupRepo                 GroupRepository
-	usageLogRepo              UsageLogRepository
-	requestAuditRepo          RequestAuditRepository
-	requestAuditFingerprinter RequestAuditFingerprinter
-	usageBillingRepo          UsageBillingRepository
-	userRepo                  UserRepository
-	userSubRepo               UserSubscriptionRepository
-	userGroupRateRepo         UserGroupRateRepository
-	cache                     GatewayCache
-	digestStore               *DigestSessionStore
-	cfg                       *config.Config
-	schedulerSnapshot         *SchedulerSnapshotService
-	billingService            *BillingService
-	rateLimitService          *RateLimitService
-	billingCacheService       *BillingCacheService
-	identityService           *IdentityService
-	httpUpstream              HTTPUpstream
-	deferredService           *DeferredService
-	concurrencyService        *ConcurrencyService
-	claudeTokenProvider       *ClaudeTokenProvider
-	sessionLimitCache         SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
-	rpmCache                  RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
-	userGroupRateResolver     *userGroupRateResolver
-	userGroupRateCache        *gocache.Cache
-	userGroupRateSF           singleflight.Group
-	modelsListCache           *gocache.Cache
-	modelsListCacheTTL        time.Duration
-	settingService            *SettingService
-	responseHeaderFilter      *responseheaders.CompiledHeaderFilter
-	debugModelRouting         atomic.Bool
-	debugClaudeMimic          atomic.Bool
-	channelService            *ChannelService
-	resolver                  *ModelPricingResolver
-	compositeResolver         *CompositeRouteResolver
-	debugGatewayBodyFile      atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
-	tlsFPProfileService       *TLSFingerprintProfileService
-	balanceNotifyService      *BalanceNotifyService
-	userPlatformQuotaRepo     UserPlatformQuotaRepository
+	accountRepo                    AccountRepository
+	groupRepo                      GroupRepository
+	usageLogRepo                   UsageLogRepository
+	requestAuditRepo               RequestAuditRepository
+	requestAuditValueDetailCapture *RequestAuditValueDetailCapture
+	requestAuditFingerprinter      RequestAuditFingerprinter
+	usageBillingRepo               UsageBillingRepository
+	userRepo                       UserRepository
+	userSubRepo                    UserSubscriptionRepository
+	userGroupRateRepo              UserGroupRateRepository
+	cache                          GatewayCache
+	digestStore                    *DigestSessionStore
+	cfg                            *config.Config
+	schedulerSnapshot              *SchedulerSnapshotService
+	billingService                 *BillingService
+	rateLimitService               *RateLimitService
+	billingCacheService            *BillingCacheService
+	identityService                *IdentityService
+	httpUpstream                   HTTPUpstream
+	deferredService                *DeferredService
+	concurrencyService             *ConcurrencyService
+	claudeTokenProvider            *ClaudeTokenProvider
+	sessionLimitCache              SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
+	rpmCache                       RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
+	userGroupRateResolver          *userGroupRateResolver
+	userGroupRateCache             *gocache.Cache
+	userGroupRateSF                singleflight.Group
+	modelsListCache                *gocache.Cache
+	modelsListCacheTTL             time.Duration
+	settingService                 *SettingService
+	responseHeaderFilter           *responseheaders.CompiledHeaderFilter
+	debugModelRouting              atomic.Bool
+	debugClaudeMimic               atomic.Bool
+	channelService                 *ChannelService
+	resolver                       *ModelPricingResolver
+	compositeResolver              *CompositeRouteResolver
+	debugGatewayBodyFile           atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
+	tlsFPProfileService            *TLSFingerprintProfileService
+	balanceNotifyService           *BalanceNotifyService
+	userPlatformQuotaRepo          UserPlatformQuotaRepository
 	// errorDiagnostics 是上游错误诊断接缝（见 error_diagnostic_observer.go），
 	// 供各协议分支在真实发送接缝显式绑定。
 	// nil 表示未注入，一律不采集。
 	errorDiagnostics *errorDiagnosticObserver
+}
+
+func (s *GatewayService) SetRequestAuditValueDetailCapture(capture *RequestAuditValueDetailCapture) {
+	if s != nil {
+		s.requestAuditValueDetailCapture = capture
+	}
+}
+
+func (s *GatewayService) ClaudeRequestAuditValueCaptureEnabled(ctx context.Context) bool {
+	return s != nil && s.requestAuditValueDetailCapture.Enabled(ctx)
 }
 
 func (s *GatewayService) SetRequestAuditFingerprinter(f RequestAuditFingerprinter) {
@@ -952,14 +953,11 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		if uid != nil && uid.SessionID != "" {
 			slog.Info("sticky.hash_source",
 				"source", "metadata_user_id",
-				"session_id", uid.SessionID,
-				"device_id", uid.DeviceID,
 				"is_new_format", uid.IsNewFormat,
 			)
 			return uid.SessionID
 		}
 		slog.Info("sticky.hash_metadata_parse_failed",
-			"metadata_user_id", parsed.MetadataUserID,
 			"parsed_nil", uid == nil,
 		)
 	}

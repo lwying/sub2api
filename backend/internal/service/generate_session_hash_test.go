@@ -3,7 +3,9 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
@@ -645,4 +647,35 @@ func TestGenerateSessionHash_GeminiEndToEnd(t *testing.T) {
 	parsed3 := mustParseGeminiSessionHashRequest(t, body, &SessionContext{ClientIP: "10.0.0.2", UserAgent: "gemini-cli/1.0", APIKeyID: 99})
 	h3 := svc.GenerateSessionHash(parsed3)
 	require.NotEqual(t, h, h3, "different user with same Gemini request should get different hash")
+}
+
+// sticky 会话 hash 的日志只能保留分支骨架，不能写出 metadata.user_id 的明文值
+// （device_id / account_uuid / session_id，以及无法解析时的原始字符串）。
+func TestGenerateSessionHash_LogsDoNotLeakMetadataUserIDPlaintext(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	svc := &GatewayService{}
+	const (
+		deviceID    = "canary-device-0123456789abcdef0123456789abcdef"
+		accountUUID = "canary-account-uuid-0000"
+		sessionID   = "canary-session-123e4567-e89b-12d3-a456-426614174000"
+	)
+	metadata := `{"device_id":"` + deviceID + `","account_uuid":"` + accountUUID + `","session_id":"` + sessionID + `"}`
+
+	parsed := mustParseSessionHashRequest(t, anthropicSessionBody("You are a helpful assistant.", []any{msg("user", "hello")}, metadata), nil)
+	require.Equal(t, sessionID, svc.GenerateSessionHash(parsed),
+		"removing the plaintext logs must not change the metadata session_id priority")
+
+	// 解析失败路径：无法解析的 metadata.user_id 原文同样不能落日志。
+	const malformed = "canary-unparsable-metadata-user-id"
+	failed := mustParseSessionHashRequest(t, anthropicSessionBody(nil, []any{msg("user", "hello")}, malformed), nil)
+	require.NotEmpty(t, svc.GenerateSessionHash(failed))
+
+	logs := output.String()
+	for _, leaked := range []string{deviceID, accountUUID, sessionID, malformed} {
+		require.NotContains(t, logs, leaked, "sticky logs must not carry plaintext metadata.user_id values")
+	}
 }

@@ -668,7 +668,7 @@ func assignBestEffortUsageLogIDs(ctx context.Context, db *sql.DB, groups []*usag
 		if i > 0 {
 			_ = b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "($%d,$%d)", i*2+1, i*2+2)
+		_, _ = fmt.Fprintf(&b, "($%d,$%d)", i*2+1, i*2+2)
 		args = append(args, key.requestID, key.apiKeyID)
 	}
 	_ = b.WriteByte(')')

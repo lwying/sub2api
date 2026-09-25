@@ -76,14 +76,14 @@
             type="button"
             data-testid="error-diagnostic-reveal"
             class="btn btn-secondary btn-sm"
-            :disabled="revealing"
-            @click="reveal"
+            :disabled="revealingBody"
+            @click="revealBody"
           >
-            {{ revealing ? t('admin.errorDiagnostics.detail.revealing') : t('admin.errorDiagnostics.detail.reveal') }}
+            {{ revealingBody ? t('admin.errorDiagnostics.detail.revealing') : t('admin.errorDiagnostics.detail.reveal') }}
           </button>
         </div>
 
-        <p v-if="revealFailed" data-testid="error-diagnostic-reveal-failed" class="mt-3 text-xs text-red-500">
+        <p v-if="bodyRevealFailed" data-testid="error-diagnostic-reveal-failed" class="mt-3 text-xs text-red-500">
           {{ t('admin.errorDiagnostics.detail.revealFailed') }}
         </p>
 
@@ -93,23 +93,139 @@
           dropped as soon as the drawer closes.
         -->
         <div v-if="revealedBody" class="mt-3" data-testid="error-diagnostic-body">
-          <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-900 dark:bg-dark-900 dark:text-dark-100">{{ revealedBody.body_text }}</pre>
+          <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-900 dark:text-dark-100">{{ revealedBody.body_text }}</pre>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
             {{ t('admin.errorDiagnostics.detail.bodyBytes', { bytes: revealedBody.body_bytes }) }}
           </p>
         </div>
       </section>
+
+      <!--
+        429 header values (Claude Messages only). A separate retention fact with
+        its own window and its own reveal action: it can be readable when no body
+        was retained, so it gets its own section rather than a body sub-section.
+      -->
+      <section
+        v-if="showHeaderValues"
+        data-testid="error-diagnostic-headers"
+        class="rounded-lg border border-gray-200 px-3 py-3 dark:border-dark-700"
+      >
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div class="font-medium text-gray-500 dark:text-dark-400">
+            {{ t('admin.errorDiagnostics.detail.headers') }}
+          </div>
+          <div class="text-xs">
+            <span data-testid="error-diagnostic-header-state" class="font-mono text-gray-900 dark:text-dark-100">
+              {{ effectiveHeaderStateLabel }}
+            </span>
+          </div>
+        </div>
+
+        <dl
+          v-if="detail.header_expires_at"
+          data-testid="error-diagnostic-header-expires"
+          class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs"
+        >
+          <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.detail.headerExpiresAt') }}</dt>
+          <dd class="font-mono text-gray-900 dark:text-dark-100">{{ formatDateTime(detail.header_expires_at) }}</dd>
+        </dl>
+
+        <p v-if="showHeaderReason" data-testid="error-diagnostic-header-reason" class="text-xs text-gray-600 dark:text-dark-300">
+          {{ headerReasonLabel(t, detail.header_reason) }}
+        </p>
+
+        <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+          {{ t('admin.errorDiagnostics.detail.headerNotice') }}
+        </p>
+
+        <div v-if="canRevealHeaderValues" class="mt-3">
+          <button
+            type="button"
+            data-testid="error-diagnostic-header-reveal"
+            class="btn btn-secondary btn-sm"
+            :disabled="revealingHeaders"
+            @click="revealHeaders"
+          >
+            {{ revealingHeaders ? t('admin.errorDiagnostics.detail.revealingHeaders') : t('admin.errorDiagnostics.detail.revealHeaders') }}
+          </button>
+        </div>
+
+        <!--
+          A step-up refusal that entering a code cannot resolve (no TOTP enrolled,
+          or an admin API key session) is not a reveal failure: it is reported with
+          the shared step-up wording, and no values were read.
+        -->
+        <p
+          v-if="headersRevealBlockedLabel"
+          data-testid="error-diagnostic-header-reveal-blocked"
+          class="mt-3 text-xs text-amber-700 dark:text-amber-300"
+        >
+          {{ headersRevealBlockedLabel }}
+        </p>
+
+        <p v-else-if="headersRevealFailed" data-testid="error-diagnostic-header-reveal-failed" class="mt-3 text-xs text-red-500">
+          {{ t('admin.errorDiagnostics.detail.headerRevealFailed') }}
+        </p>
+
+        <!--
+          Untrusted text, rendered through interpolation only, and dropped as soon
+          as the drawer closes or moves to another attempt.
+        -->
+        <div v-if="revealedHeaders" class="mt-3 space-y-3" data-testid="error-diagnostic-header-values">
+          <p class="text-xs text-gray-500 dark:text-dark-400">
+            {{ t('admin.errorDiagnostics.detail.headerEntryCount', { count: revealedHeaders.header_entry_count }) }}
+          </p>
+          <div v-for="direction in headerDirections(revealedHeaders)" :key="direction.key">
+            <div class="mb-1 text-xs font-medium text-gray-500 dark:text-dark-400">
+              {{ t(`admin.errorDiagnostics.detail.${direction.key}`) }}
+            </div>
+            <dl class="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-xs">
+              <template v-for="(value, name) in direction.headers" :key="`${direction.key}-${name}`">
+                <dt class="text-gray-500 dark:text-dark-400">{{ name }}</dt>
+                <dd class="break-all text-gray-900 dark:text-dark-100">{{ value }}</dd>
+              </template>
+            </dl>
+          </div>
+        </div>
+      </section>
     </div>
   </BaseDialog>
+
+  <!--
+    The 429 header reveal is step-up gated server-side (the body replay is not).
+    On STEP_UP_REQUIRED the admin is asked for a TOTP code and the same explicit
+    POST is retried once; the prompt is dismissed when the drawer leaves the attempt.
+  -->
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import { getDiagnostic, revealDiagnosticBody } from '../api'
-import { bodyReasonLabel, bodyStateLabel, canRevealBody, formatDateTime, isStoredButExpired, protocolLabel } from '../labels'
-import type { DiagnosticAttempt, DiagnosticBodyReveal } from '../types'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import {
+  isStepUpBlocked,
+  isStepUpCancelled,
+  stepUpBlockReason,
+  useStepUp,
+} from '@/composables/useStepUp'
+import { getDiagnostic, revealDiagnosticBody, revealDiagnosticHeaders } from '../api'
+import {
+  bodyReasonLabel,
+  bodyStateLabel,
+  canRevealBody,
+  canRevealHeaders,
+  formatDateTime,
+  hasHeaderValuesSection,
+  headerDirections,
+  headerReasonLabel,
+  headerStateLabel,
+  isHeaderValuesStoredButExpired,
+  isStoredButExpired,
+  protocolLabel,
+} from '../labels'
+import type { DiagnosticAttempt, DiagnosticBodyReveal, DiagnosticHeaderReveal } from '../types'
 
 const props = defineProps<{
   show: boolean
@@ -125,15 +241,36 @@ const { t } = useI18n()
 const loading = ref(false)
 const loadError = ref(false)
 const detail = ref<DiagnosticAttempt | null>(null)
+
+/** The reveal that produced a payload: its attempt and the revision it was issued in. */
+interface RevealOwner {
+  id: string
+  revision: number
+}
+
 const revealedBody = ref<DiagnosticBodyReveal | null>(null)
+const revealedBodyOwner = ref<RevealOwner | null>(null)
+const revealingBody = ref(false)
+const bodyRevealFailed = ref(false)
+
 /**
- * The reveal request that produced `revealedBody`: its attempt and the revision it
- * was issued in. Never rendered; it exists so a late response can only ever
- * discard its own payload, never one a newer request already delivered.
+ * 429 header values are a separate secret with a separate reveal: keeping them in
+ * their own state means a header payload is never cleared by a body reveal (or
+ * the reverse), and each can only be discarded by the request that produced it.
  */
-const revealedBodyOwner = ref<{ id: string; revision: number } | null>(null)
-const revealing = ref(false)
-const revealFailed = ref(false)
+const revealedHeaders = ref<DiagnosticHeaderReveal | null>(null)
+const revealedHeadersOwner = ref<RevealOwner | null>(null)
+const revealingHeaders = ref(false)
+const headersRevealFailed = ref(false)
+/**
+ * Step-up refusal code that a TOTP code cannot resolve (`STEP_UP_TOTP_NOT_ENABLED`
+ * or `STEP_UP_ADMIN_API_KEY_FORBIDDEN`). Empty while there is no such refusal, and
+ * never set for the plain failures above: the two are different outcomes.
+ */
+const headersRevealBlockedReason = ref('')
+
+/** Wraps the step-up gated header reveal: prompt on refusal, retry once, then discard. */
+const stepUp = useStepUp()
 
 /** Discards a stale response when the admin switches rows or closes the drawer. */
 let revision = 0
@@ -143,6 +280,10 @@ watch(
   ([show, id]) => {
     revision += 1
     clearSensitiveState()
+    // A prompt belongs to the attempt that was on screen when it was opened. Once
+    // that attempt (or the whole drawer) goes away, so does the prompt, and the
+    // abandoned retry is discarded rather than applied to whatever is opened next.
+    dismissStepUpPrompt()
     if (!show) return
     if (typeof id === 'string' && id !== '') {
       void load(id, revision)
@@ -151,22 +292,70 @@ watch(
   { immediate: true },
 )
 
+/** Closes an open TOTP prompt, which resolves the pending reveal as cancelled. */
+function dismissStepUpPrompt() {
+  if (stepUp.visible.value) {
+    stepUp.onCancel()
+  }
+}
+
 /**
- * Clears everything derived from a stored body. Called on every open/close and
- * before any new fetch so a previously revealed payload never survives into the
- * next diagnostic, and is gone from memory once the drawer is closed.
+ * Clears everything derived from a stored body or retained header values. Called
+ * on every open/close and before any new fetch so a previously revealed payload
+ * never survives into the next diagnostic, and is gone from memory once the
+ * drawer is closed.
  */
 function clearSensitiveState() {
   revealedBody.value = null
   revealedBodyOwner.value = null
-  revealing.value = false
-  revealFailed.value = false
+  revealingBody.value = false
+  bodyRevealFailed.value = false
+  revealedHeaders.value = null
+  revealedHeadersOwner.value = null
+  revealingHeaders.value = false
+  headersRevealFailed.value = false
+  headersRevealBlockedReason.value = ''
   detail.value = null
   loadError.value = false
   loading.value = false
 }
 
 const canReveal = computed(() => canRevealBody(detail.value?.body_state, detail.value?.body_expires_at))
+
+const canRevealHeaderValues = computed(() =>
+  canRevealHeaders(detail.value?.header_state, detail.value?.header_expires_at),
+)
+
+/**
+ * A step-up refusal that entering a code cannot fix is explained with the shared
+ * step-up wording, because the reveal itself never started. Everything else stays
+ * on the reveal-failure path.
+ */
+const headersRevealBlockedLabel = computed(() => {
+  if (!headersRevealBlockedReason.value) return ''
+  return headersRevealBlockedReason.value === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+    ? t('stepUp.adminApiKeyForbidden')
+    : t('stepUp.notEnabled')
+})
+
+/** Out-of-scope attempts report `not_observed`, so no empty header section is shown. */
+const showHeaderValues = computed(() => hasHeaderValuesSection(detail.value?.header_state))
+
+/**
+ * `retained` is the reason of values that WERE retained, so it explains nothing
+ * about the header state the section already shows.
+ */
+const showHeaderReason = computed(
+  () => detail.value?.header_reason !== undefined && detail.value.header_reason !== 'retained',
+)
+
+/** `stored` past its window is presented as expired, never as readable. */
+const effectiveHeaderStateLabel = computed(() => {
+  if (isHeaderValuesStoredButExpired(detail.value?.header_state, detail.value?.header_expires_at)) {
+    return headerStateLabel(t, 'expired')
+  }
+  return headerStateLabel(t, detail.value?.header_state)
+})
 
 /**
  * `stored` is only a server statement about the ciphertext; once the retention
@@ -228,12 +417,34 @@ function isRevealStillCurrent(currentRevision: number, id: string): boolean {
  * payload is cleared: a reveal issued after the row changed must survive an older
  * response landing late.
  */
-function discardRevealedBody(id: string, currentRevision: number) {
-  const owner = revealedBodyOwner.value
-  if (owner !== null && owner.id === id && owner.revision === currentRevision) {
-    revealedBody.value = null
-    revealedBodyOwner.value = null
+function discardReveal<T>(
+  target: Ref<T | null>,
+  owner: Ref<RevealOwner | null>,
+  id: string,
+  currentRevision: number,
+) {
+  const current = owner.value
+  if (current !== null && current.id === id && current.revision === currentRevision) {
+    target.value = null
+    owner.value = null
   }
+}
+
+interface RevealRequest<T> {
+  fetch: (id: string) => Promise<T>
+  target: Ref<T | null>
+  owner: Ref<RevealOwner | null>
+  pending: Ref<boolean>
+  failed: Ref<boolean>
+  /**
+   * Present only for an action behind the step-up gate. A step-up refusal is then
+   * reported through it instead of as a reveal failure; an ungated action (the
+   * body replay) can never be refused that way, so it carries none and keeps its
+   * behaviour byte for byte.
+   */
+  blockedReason?: Ref<string>
+  /** Read against the reloaded metadata, so a stale payload is never claimed. */
+  stillAvailable: () => boolean
 }
 
 /**
@@ -244,50 +455,92 @@ function discardRevealedBody(id: string, currentRevision: number) {
  * The reveal is asynchronous and can outlive the row it was requested for, so its
  * result is only accepted while that same attempt is still the one on screen;
  * otherwise the plaintext is discarded instead of being rendered under whatever
- * the admin opened next.
+ * the admin opened next. The body and the 429 headers share this flow because
+ * they share the rule; only the retention they re-check differs.
  */
-async function reveal() {
+async function revealSensitive<T>(request: RevealRequest<T>) {
   const id = detail.value?.id ?? props.diagnosticId
-  if (!id || revealing.value) return
+  if (!id || request.pending.value) return
 
   const currentRevision = revision
-  revealing.value = true
-  revealFailed.value = false
+  request.pending.value = true
+  request.failed.value = false
+  if (request.blockedReason) request.blockedReason.value = ''
   try {
-    const revealed = await revealDiagnosticBody(id)
+    const revealed = await request.fetch(id)
     if (!isRevealStillCurrent(currentRevision, id)) {
-      discardRevealedBody(id, currentRevision)
+      discardReveal(request.target, request.owner, id, currentRevision)
       return
     }
-    revealedBody.value = revealed
-    revealedBodyOwner.value = { id, revision: currentRevision }
-  } catch {
+    request.target.value = revealed
+    request.owner.value = { id, revision: currentRevision }
+  } catch (error) {
     if (!isRevealStillCurrent(currentRevision, id)) {
       // A refusal for an abandoned attempt says nothing about the one on screen.
-      discardRevealedBody(id, currentRevision)
-      revealFailed.value = false
+      discardReveal(request.target, request.owner, id, currentRevision)
+      request.failed.value = false
+      if (request.blockedReason) request.blockedReason.value = ''
       return
     }
-    // The reveal error is deliberately not used to infer why the body is gone;
-    // re-read the metadata, which is the authoritative body_state.
-    revealFailed.value = true
+    if (request.blockedReason) {
+      if (isStepUpCancelled(error)) {
+        // The admin dismissed the prompt: nothing was read, so this is neither a
+        // failure nor a retention outcome.
+        return
+      }
+      if (isStepUpBlocked(error)) {
+        // Step-up cannot be satisfied by entering a code here, so say why instead
+        // of reporting a reveal that never happened.
+        request.blockedReason.value = stepUpBlockReason(error)
+        return
+      }
+    }
+    // The refusal is deliberately not used to infer why the values are gone;
+    // re-read the metadata, which is the authoritative retention state.
+    request.failed.value = true
     await load(id, currentRevision)
     if (!isRevealStillCurrent(currentRevision, id)) {
-      revealFailed.value = false
+      request.failed.value = false
       return
     }
-    if (detail.value?.body_state === 'stored' && canReveal.value) {
-      // Still stored: the failure is a real error, keep it visible.
-      revealFailed.value = true
+    if (request.stillAvailable()) {
+      // Still readable: the failure is a real error, keep it visible.
+      request.failed.value = true
     } else {
-      revealFailed.value = false
+      request.failed.value = false
     }
   } finally {
     // Only the reveal that owns the current revision may clear the pending state;
     // an abandoned one must not cancel a newer request made after it.
     if (currentRevision === revision) {
-      revealing.value = false
+      request.pending.value = false
     }
   }
+}
+
+function revealBody() {
+  return revealSensitive({
+    fetch: revealDiagnosticBody,
+    target: revealedBody,
+    owner: revealedBodyOwner,
+    pending: revealingBody,
+    failed: bodyRevealFailed,
+    stillAvailable: () => detail.value?.body_state === 'stored' && canReveal.value,
+  })
+}
+
+/** Revealing the headers never reads the body, and never reveals it: a separate action. */
+function revealHeaders() {
+  return revealSensitive({
+    // This route is step-up gated: a refusal opens the prompt and retries this
+    // same explicit POST once. The retry is still a consequence of the click.
+    fetch: (id) => stepUp.run(() => revealDiagnosticHeaders(id)),
+    target: revealedHeaders,
+    owner: revealedHeadersOwner,
+    pending: revealingHeaders,
+    failed: headersRevealFailed,
+    blockedReason: headersRevealBlockedReason,
+    stillAvailable: () => detail.value?.header_state === 'stored' && canRevealHeaderValues.value,
+  })
 }
 </script>

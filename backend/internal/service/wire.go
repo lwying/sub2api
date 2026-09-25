@@ -916,8 +916,11 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenCodeGoUsageService,
 	ProvideSettingService,
 	ProvideKeyBillingSnapshotService,
-	ProvideErrorDiagnosticService,        // 错误诊断记录（票 01／02）
-	ProvideErrorDiagnosticCleanupService, // 按 7／30 天清理在线主库诊断数据
+	ProvideErrorDiagnosticService,            // 错误诊断记录（票 01／02）
+	ProvideErrorDiagnosticCleanupService,     // 按 7／30 天清理在线主库诊断数据
+	ProvideRequestAuditValueDetailService,    // Claude /v1/messages 值明细读取与运维接缝
+	ProvideRequestAuditValueDetailCapture,    // 值明细采集接缝（审计行落库后调用）
+	NewRequestAuditValueDetailCleanupService, // 按 7 天清理在线主库上的值密文
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,

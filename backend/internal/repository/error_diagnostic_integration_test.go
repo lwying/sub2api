@@ -94,13 +94,17 @@ func setErrorDiagnosticTestRiskAcknowledgement(t *testing.T, repo service.Settin
 
 func setErrorDiagnosticTestSettings(t *testing.T, repo service.SettingRepository, settings service.ErrorDiagnosticSettings) error {
 	t.Helper()
-	if !settings.Enabled && !settings.RiskAcknowledged && !settings.BodyRetentionEnabled {
+	if !settings.Enabled && !settings.RiskAcknowledged && !settings.BodyRetentionEnabled && !settings.HeaderValueRetentionEnabled {
 		// 显式写入「全关」，避免受共享测试库里其他设置的影响。
 		return repo.Set(context.Background(), service.SettingKeyErrorDiagnostic, `{"enabled":false}`)
 	}
 	raw := `{"enabled":true,"risk_acknowledged":true`
 	if settings.BodyRetentionEnabled {
 		raw += `,"body_retention_enabled":true`
+	}
+	// 头值留存是独立开关：它不跟着 body_retention_enabled 走，因此必须单独写入。
+	if settings.HeaderValueRetentionEnabled {
+		raw += `,"header_values_enabled":true`
 	}
 	raw += `}`
 	return repo.Set(context.Background(), service.SettingKeyErrorDiagnostic, raw)
@@ -138,7 +142,8 @@ func backdateErrorDiagnostic(t *testing.T, id string, age time.Duration) {
 		UPDATE error_diagnostic_records
 		SET created_at = created_at - ($2::double precision * INTERVAL '1 second'),
 		    metadata_expires_at = metadata_expires_at - ($2::double precision * INTERVAL '1 second'),
-		    body_expires_at = body_expires_at - ($2::double precision * INTERVAL '1 second')
+		    body_expires_at = body_expires_at - ($2::double precision * INTERVAL '1 second'),
+		    header_expires_at = header_expires_at - ($2::double precision * INTERVAL '1 second')
 		WHERE diagnostic_id = $1`, id, age.Seconds())
 	require.NoError(t, err, "模拟时间推进")
 }
@@ -151,6 +156,136 @@ func deleteErrorDiagnosticRows(t *testing.T, ids ...string) {
 		}
 		_, err := integrationDB.Exec(`DELETE FROM error_diagnostic_records WHERE diagnostic_id = $1`, id)
 		require.NoError(t, err)
+	}
+}
+
+// errorDiagnosticHeaderRowFacts 读取头值列的物理事实，供断言「密文/到期时刻」而非「可读性」。
+func errorDiagnosticHeaderRowFacts(t *testing.T, id string) (headerCiphertext []byte, headerState string, headerBytes, headerEntryCount int, headerExpiresAt sql.NullTime) {
+	t.Helper()
+	require.NoError(t, integrationDB.QueryRow(`
+		SELECT header_ciphertext, header_state, header_bytes, header_entry_count, header_expires_at
+		FROM error_diagnostic_records WHERE diagnostic_id = $1`, id).
+		Scan(&headerCiphertext, &headerState, &headerBytes, &headerEntryCount, &headerExpiresAt))
+	return
+}
+
+// TestErrorDiagnostic_HeaderValuesAreRetainedAndPurgedIndependently 覆盖 429 头值的真实存储接缝：
+//   - 正文留存关闭时头值照样加密落库（两者正交）；
+//   - 明文绝不入库，只有密文列；
+//   - 第 7 天起 API 立即拒绝读取头值，而元数据行仍在；周期清理再物理清除密文列。
+func TestErrorDiagnostic_HeaderValuesAreRetainedAndPurgedIndependently(t *testing.T) {
+	ctx := context.Background()
+	svc, cleanup := newErrorDiagnosticTestService(t, service.ErrorDiagnosticSettings{
+		Enabled: true, RiskAcknowledged: true,
+		BodyRetentionEnabled:        false, // 正文关闭：头值必须照常留存
+		HeaderValueRetentionEnabled: true,
+	})
+
+	attempt := errorDiagnosticMessagesAttempt()
+	attempt.UpstreamStatusCode = 429
+	attempt.HeaderVerdict = service.ErrorDiagnosticHeaderVerdictCaptured
+	attempt.HeaderValues = service.ErrorDiagnosticHeaderValues{
+		Request:  map[string]string{"Anthropic-Version": "2023-06-01"},
+		Response: map[string]string{"Retry-After": "42", "Anthropic-Ratelimit-Requests-Remaining": "0"},
+	}
+
+	record, err := svc.RecordErrorDiagnostic(ctx, attempt)
+	require.NoError(t, err)
+	t.Cleanup(func() { deleteErrorDiagnosticRows(t, record.ID) })
+
+	require.Equal(t, service.ErrorDiagnosticHeaderStateStored, record.HeaderState)
+	require.Equal(t, service.ErrorDiagnosticHeaderRetained, record.HeaderReason)
+	require.Equal(t, 3, record.HeaderEntryCount)
+	require.False(t, record.BodyStored, "正文留存关着，正文一个字节都不该留")
+	require.True(t, record.BodyExpiresAt.IsZero())
+
+	// 明文绝不入库：列里只有密文。
+	ciphertext, headerState, headerBytes, entryCount, headerExpiresAt := errorDiagnosticHeaderRowFacts(t, record.ID)
+	require.NotEmpty(t, ciphertext)
+	require.Equal(t, service.ErrorDiagnosticHeaderStateStored, headerState)
+	require.Equal(t, 3, entryCount)
+	require.Greater(t, headerBytes, 0)
+	require.True(t, headerExpiresAt.Valid)
+	require.False(t, bytes.Contains(ciphertext, []byte("Retry-After")), "密文不得包含头名明文")
+	require.False(t, bytes.Contains(ciphertext, []byte("2023-06-01")), "密文不得包含头值明文")
+
+	// 未到期：管理员读取必须还原出逐条一致的值。
+	values, err := svc.ReadErrorDiagnosticHeaderValues(ctx, record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "2023-06-01", values.Request["Anthropic-Version"])
+	require.Equal(t, "42", values.Response["Retry-After"])
+	require.Equal(t, "0", values.Response["Anthropic-Ratelimit-Requests-Remaining"])
+
+	// 推进到第 7 天之后：API 立即拒绝读取头值，但整行元数据仍可读（拒绝读取不等于已删除）。
+	backdateErrorDiagnostic(t, record.ID, service.ErrorDiagnosticHeaderRetention+time.Minute)
+	_, err = svc.ReadErrorDiagnosticHeaderValues(ctx, record.ID)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone, "第 7 天后 API 必须拒绝读取头值")
+
+	metadata, err := svc.GetErrorDiagnostic(ctx, record.ID)
+	require.NoError(t, err, "第 30 天之前元数据仍可读")
+	require.Equal(t, service.ErrorDiagnosticHeaderStateExpired, metadata.HeaderState)
+	require.Equal(t, 1, countErrorDiagnosticRows(t, record.ID), "拒绝读取不得等同于删除")
+
+	// 周期清理：物理清除头值密文列，整行元数据保留。
+	result, err := cleanup.RunOnce(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, result.HeaderValuesCleared, int64(1))
+
+	ciphertextAfter, stateAfter, bytesAfter, countAfter, headerExpiresAtAfter := errorDiagnosticHeaderRowFacts(t, record.ID)
+	require.Empty(t, ciphertextAfter, "第 7 天必须物理清除主库上的头值密文列")
+	require.Equal(t, service.ErrorDiagnosticHeaderStatePurged, stateAfter)
+	// 条目数与载荷长度是**历史事实**，与正文的 body_bytes 一样保留：
+	// 它们说明「曾经留存过什么规模的头值」，不是可读内容，也不构成泄露。
+	require.Equal(t, 3, countAfter)
+	require.Greater(t, bytesAfter, 0)
+	require.True(t, headerExpiresAtAfter.Valid, "到期时刻保留，作为「曾留存、已清除」的记录")
+	require.Equal(t, 1, countErrorDiagnosticRows(t, record.ID), "头值清理不得删除整行元数据")
+
+	// 清理后读取依旧是同一个「不可用」结论。
+	_, err = svc.ReadErrorDiagnosticHeaderValues(ctx, record.ID)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+}
+
+// TestErrorDiagnostic_HeaderValuesAreNeverCapturedOutsideMessages429 覆盖范围内的二次判定：
+// 非 429 或非 Messages 的尝试即使被调用方夹带了头值，也一个字节都不落库。
+func TestErrorDiagnostic_HeaderValuesAreNeverCapturedOutsideMessages429(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newErrorDiagnosticTestService(t, service.ErrorDiagnosticSettings{
+		Enabled: true, RiskAcknowledged: true, HeaderValueRetentionEnabled: true,
+	})
+
+	for _, tc := range []struct {
+		name     string
+		protocol string
+		status   int
+	}{
+		{name: "messages 500", protocol: service.ErrorDiagnosticProtocolMessages, status: 500},
+		{name: "chat completions 429", protocol: service.ErrorDiagnosticProtocolChatCompletions, status: 429},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attempt := errorDiagnosticMessagesAttempt()
+			attempt.Protocol = tc.protocol
+			attempt.UpstreamStatusCode = tc.status
+			attempt.HeaderVerdict = service.ErrorDiagnosticHeaderVerdictCaptured
+			attempt.HeaderValues = service.ErrorDiagnosticHeaderValues{
+				Response: map[string]string{"Retry-After": "42"},
+			}
+
+			record, err := svc.RecordErrorDiagnostic(ctx, attempt)
+			require.NoError(t, err, "越界只影响头值，不影响该行元数据落库")
+			t.Cleanup(func() { deleteErrorDiagnosticRows(t, record.ID) })
+
+			require.Equal(t, service.ErrorDiagnosticHeaderStateNotObserved, record.HeaderState)
+			require.Equal(t, service.ErrorDiagnosticHeaderNotObserved, record.HeaderReason)
+			require.Zero(t, record.HeaderEntryCount)
+
+			ciphertext, _, _, _, headerExpiresAt := errorDiagnosticHeaderRowFacts(t, record.ID)
+			require.Empty(t, ciphertext, "越界尝试不得留下任何头值密文")
+			require.False(t, headerExpiresAt.Valid)
+
+			_, err = svc.ReadErrorDiagnosticHeaderValues(ctx, record.ID)
+			require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+		})
 	}
 }
 
@@ -369,9 +504,9 @@ func TestErrorDiagnostic_BodyRetentionAndPrimaryPurge(t *testing.T) {
 	require.Equal(t, service.ErrorDiagnosticBodyStateExpired, metadata.BodyState)
 
 	// 清理：在线主库物理清除密文列，整行元数据保留。
-	cleared, deleted, err := cleanup.RunOnce(ctx)
+	result, err := cleanup.RunOnce(ctx)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, cleared, int64(1))
+	require.GreaterOrEqual(t, result.BodiesCleared, int64(1))
 
 	var afterPurgeBody []byte
 	var afterPurgeBytes int
@@ -387,7 +522,6 @@ func TestErrorDiagnostic_BodyRetentionAndPrimaryPurge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, service.ErrorDiagnosticBodyStatePurged, purged.BodyState)
 	require.Equal(t, service.ErrorDiagnosticBodyRetained, purged.BodyReason)
-	_ = deleted
 
 	// 清理之后仍然不可读。
 	_, err = svc.ReadErrorDiagnosticBody(ctx, record.ID)
@@ -417,9 +551,9 @@ func TestErrorDiagnostic_MetadataDay30IsPhysicallyDeletedFromPrimary(t *testing.
 
 	require.Equal(t, 1, countErrorDiagnosticRows(t, record.ID), "清理前主库行仍在（API 拒绝不等于已删除）")
 
-	_, deleted, err := cleanup.RunOnce(ctx)
+	result, err := cleanup.RunOnce(ctx)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, deleted, int64(1))
+	require.GreaterOrEqual(t, result.RecordsDeleted, int64(1))
 
 	require.Zero(t, countErrorDiagnosticRows(t, record.ID), "第 30 天必须在主库物理删除整行")
 }
@@ -799,7 +933,7 @@ func TestErrorDiagnostic_PurgedBodyStillReportsGone(t *testing.T) {
 
 	// 推进到第 7 天，再让清理真正把密文列物理清除。
 	backdateErrorDiagnostic(t, record.ID, service.ErrorDiagnosticBodyRetention+time.Minute)
-	_, _, err = cleanup.RunOnce(ctx)
+	_, err = cleanup.RunOnce(ctx)
 	require.NoError(t, err)
 
 	ciphertext, _, _, _, bodyExpiresAt := errorDiagnosticRowFacts(t, record.ID)
@@ -949,7 +1083,7 @@ func TestErrorDiagnosticCleanupBacklogIsObservable(t *testing.T) {
 		"最老超期时长不得被高估")
 
 	// 清理之后积压回落，证明度量的是「尚未物理清除」而不是「曾经过期」。
-	_, _, err = cleanup.RunOnce(ctx)
+	_, err = cleanup.RunOnce(ctx)
 	require.NoError(t, err)
 	require.Zero(t, countErrorDiagnosticRows(t, record.ID), "超期记录必须已被物理删除")
 

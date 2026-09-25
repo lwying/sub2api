@@ -44,6 +44,16 @@
           {{ status.body_retention_allowed ? t('admin.errorDiagnostics.operator.state.on') : t('admin.errorDiagnostics.operator.state.off') }}
         </dd>
 
+        <!--
+          The 429 header value layer is its own row with its own conclusion: it is
+          independent of body retention, and showing one value for "retention" would
+          misreport whichever layer is actually running.
+        -->
+        <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.operator.state.headerValuesLabel') }}</dt>
+        <dd data-testid="operator-header-values-state" class="font-medium text-gray-900 dark:text-dark-100">
+          {{ status.header_values_allowed ? t('admin.errorDiagnostics.operator.state.on') : t('admin.errorDiagnostics.operator.state.off') }}
+        </dd>
+
         <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.operator.state.keyLabel') }}</dt>
         <dd data-testid="operator-encryption-key" class="text-gray-900 dark:text-dark-100">
           {{ status.body_encryption_key_available ? t('admin.errorDiagnostics.operator.state.keyAvailable') : t('admin.errorDiagnostics.operator.state.keyUnavailable') }}
@@ -68,6 +78,15 @@
         class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
       >
         {{ t(retentionMismatchKey) }}
+      </p>
+      <!-- The header value layer gets its own explanation: a stored flag that is not
+           in effect has its own reason, and it is not the body layer's reason. -->
+      <p
+        v-if="headerValuesMismatchKey"
+        data-testid="operator-header-values-mismatch"
+        class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      >
+        {{ t(headerValuesMismatchKey) }}
       </p>
 
       <section class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
@@ -180,7 +199,7 @@
           />
         </div>
 
-        <div v-if="canEnableCapture">
+        <div v-if="showBodyRetentionToggle">
           <label class="inline-flex items-center gap-2 text-sm">
             <input
               v-model="retainBodies"
@@ -195,6 +214,30 @@
           </label>
           <p v-if="!keyAvailable" data-testid="operator-retention-unavailable" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
             {{ t('admin.errorDiagnostics.operator.enable.retentionUnavailable') }}
+          </p>
+        </div>
+
+        <!--
+          The 429 header value layer is a second, independent switch: it can be turned
+          on while request body retention stays off. It is never pre-selected for the
+          operator beyond the intent the server already stores, and it is only
+          offered when the shared stable key can actually be used.
+        -->
+        <div v-if="showHeaderValuesToggle">
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input
+              v-model="retainHeaderValues"
+              type="checkbox"
+              data-testid="operator-header-values-toggle"
+              :disabled="!keyAvailable"
+              class="h-4 w-4"
+            />
+            <span class="text-gray-700 dark:text-dark-200">
+              {{ t('admin.errorDiagnostics.operator.enable.headerValuesToggle') }}
+            </span>
+          </label>
+          <p v-if="!keyAvailable" data-testid="operator-header-values-unavailable" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('admin.errorDiagnostics.operator.enable.headerValuesUnavailable') }}
           </p>
         </div>
 
@@ -271,6 +314,7 @@ function defaultAckLanguage(): OperatorAckLanguage {
 const ackLanguage = ref<OperatorAckLanguage>(defaultAckLanguage())
 const typedPhrase = ref('')
 const retainBodies = ref(false)
+const retainHeaderValues = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 
@@ -295,17 +339,47 @@ const canEnableRetention = computed(
     !props.status.body_retention_enabled &&
     keyAvailable.value,
 )
-const showEnableForm = computed(() => canEnableCapture.value || canEnableRetention.value)
+const canEnableHeaderValues = computed(
+  () =>
+    props.status !== null &&
+    props.status.enabled &&
+    props.status.capture_allowed &&
+    !props.status.header_values_enabled &&
+    keyAvailable.value,
+)
+/**
+ * Either retention layer being off is a reason to show the form on its own: the
+ * layers are independent, so "body retention is already on" must not hide the
+ * switch that turns header value retention on.
+ */
+const showEnableForm = computed(
+  () => canEnableCapture.value || canEnableRetention.value || canEnableHeaderValues.value,
+)
+/**
+ * A toggle is only rendered for a layer this form can actually change: when
+ * capture itself has to be (re-)enabled both layers are shown, otherwise only the
+ * layer that is still off. A layer that is already on is not offered for turning
+ * off here — disabling is the documented action for that, and it turns both off.
+ */
+const showBodyRetentionToggle = computed(() => canEnableCapture.value || canEnableRetention.value)
+const showHeaderValuesToggle = computed(() => canEnableCapture.value || canEnableHeaderValues.value)
+/**
+ * No usable key: neither layer can be turned on, and the notice names both so the
+ * operator is not left guessing why the switches are unavailable. It is never
+ * rendered as a silent no-op toggle.
+ */
 const retentionBlocked = computed(
   () =>
     props.status !== null &&
     props.status.enabled &&
     props.status.capture_allowed &&
-    !props.status.body_retention_enabled &&
-    !keyAvailable.value,
+    !keyAvailable.value &&
+    (!props.status.body_retention_enabled || !props.status.header_values_enabled),
 )
 const showDisable = computed(
-  () => props.status !== null && (props.status.enabled || props.status.body_retention_enabled),
+  () =>
+    props.status !== null &&
+    (props.status.enabled || props.status.body_retention_enabled || props.status.header_values_enabled),
 )
 
 /** Stored on but nothing is running: which acknowledgement is missing. */
@@ -326,6 +400,31 @@ const retentionMismatchKey = computed(() => {
     : 'admin.errorDiagnostics.operator.state.retentionMismatchKey'
 })
 
+/** The same question for the header value layer, answered from its own two flags. */
+const headerValuesMismatchKey = computed(() => {
+  const status = props.status
+  if (status === null || !status.header_values_enabled || status.header_values_allowed) return ''
+  return status.body_encryption_key_available
+    ? 'admin.errorDiagnostics.operator.state.headerValuesMismatchCapture'
+    : 'admin.errorDiagnostics.operator.state.headerValuesMismatchKey'
+})
+
+/**
+ * The stored intent of one layer, which is what the matching toggle is pre-set to.
+ *
+ * This is not an automatic opt-in: the flag is already recorded server-side, the
+ * toggle is rendered with that value so re-giving an acknowledgement does not
+ * silently drop it, and the operator can clear it before submitting. It is only
+ * ever pre-set when the shared key can be used.
+ */
+function storedRetentionIntent(
+  status: ErrorDiagnosticOperatorStatus | null,
+  layer: 'body_retention_enabled' | 'header_values_enabled',
+): boolean {
+  if (status === null || !status.body_encryption_key_available) return false
+  return status[layer] === true
+}
+
 /**
  * The confirmation is deliberate every time: the server refuses an enable without a
  * freshly typed statement, so the button stays unavailable until the exact text is
@@ -343,10 +442,11 @@ watch(
   () => props.status,
   (status) => {
     typedPhrase.value = ''
-    // The retention intent comes from the server's stored flag, so re-giving an
+    // Each layer's intent comes from the server's stored flag, so re-giving an
     // acknowledgement does not silently drop a retention choice that is already
     // recorded. It is only offered when the key can actually be used.
-    retainBodies.value = status?.body_retention_enabled === true && status.body_encryption_key_available
+    retainBodies.value = storedRetentionIntent(status, 'body_retention_enabled')
+    retainHeaderValues.value = storedRetentionIntent(status, 'header_values_enabled')
     errorMessage.value = ''
   },
   { immediate: true },
@@ -354,19 +454,29 @@ watch(
 
 async function enable() {
   if (!canEnable.value || !props.status) return
+  const status = props.status
 
   submitting.value = true
   errorMessage.value = ''
   try {
     const next = await updateOperatorSettings({
       enabled: true,
-      body_retention_enabled: canEnableCapture.value ? retainBodies.value && keyAvailable.value : true,
+      // Both layers are always stated, because the server reads an omitted field as
+      // off. A layer this form is changing is sent exactly as the operator sees it;
+      // a layer it is not touching keeps the value the server last reported.
+      body_retention_enabled: showBodyRetentionToggle.value
+        ? retainBodies.value && keyAvailable.value
+        : status.body_retention_enabled,
+      header_values_enabled: showHeaderValuesToggle.value
+        ? retainHeaderValues.value && keyAvailable.value
+        : status.header_values_enabled,
       language: ackLanguage.value,
       phrase: typedPhrase.value.trim(),
     })
     // The statement is not kept: the next enable has to be given again.
     typedPhrase.value = ''
     retainBodies.value = false
+    retainHeaderValues.value = false
     // The server's answer is the state; nothing is assumed from what was requested.
     emit('updated', next)
   } catch (error) {
@@ -382,13 +492,17 @@ async function disable() {
   try {
     const next = await updateOperatorSettings({
       enabled: false,
+      // Turning the gate off turns both retention layers off with it; the server
+      // enforces that, and this states the same intent.
       body_retention_enabled: false,
+      header_values_enabled: false,
       language: ackLanguage.value,
       // Disabling is not an acknowledgement, so no statement is carried with it.
       phrase: '',
     })
     typedPhrase.value = ''
     retainBodies.value = false
+    retainHeaderValues.value = false
     emit('updated', next)
   } catch (error) {
     errorMessage.value = operatorErrorMessage(t, (error as { reason?: unknown } | null)?.reason)

@@ -33,10 +33,12 @@ const status = (overrides: Record<string, unknown> = {}) => ({
   enabled: false,
   risk_acknowledged: false,
   body_retention_enabled: false,
+  header_values_enabled: false,
   capture_allowed: false,
   body_retention_allowed: false,
+  header_values_allowed: false,
   body_encryption_key_available: true,
-  risk_version: 'v2026.09.24',
+  risk_version: 'v2026.09.24.1',
   risk_phrase_en: PHRASE_EN,
   risk_phrase_zh: PHRASE_ZH,
   risk_acknowledgement_current: false,
@@ -64,10 +66,12 @@ describe('error diagnostic operator settings API', () => {
       enabled: false,
       risk_acknowledged: false,
       body_retention_enabled: false,
+      header_values_enabled: false,
       capture_allowed: false,
       body_retention_allowed: false,
+      header_values_allowed: false,
       body_encryption_key_available: true,
-      risk_version: 'v2026.09.24',
+      risk_version: 'v2026.09.24.1',
       risk_acknowledgement_current: false,
     })
     expect(result.risk_phrase_en).toBe(PHRASE_EN)
@@ -75,12 +79,13 @@ describe('error diagnostic operator settings API', () => {
     expect(result.risk_acknowledgement).toBeUndefined()
   })
 
-  it('sends exactly the four contract fields when updating the gate', async () => {
+  it('sends exactly the contract fields, stating both retention layers', async () => {
     client.put.mockResolvedValue({ data: status({ enabled: true, capture_allowed: true }) })
 
     const updated = await updateOperatorSettings({
       enabled: true,
       body_retention_enabled: false,
+      header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
     })
@@ -89,16 +94,48 @@ describe('error diagnostic operator settings API', () => {
     const [url, payload, config] = client.put.mock.calls[0]
     expect(url).toBe('/admin/settings/error-diagnostic')
     // Whole-state update: the server treats an omitted field as off, so the client
-    // must always state both gates and the acknowledgement it is making.
-    expect(Object.keys(payload).sort()).toEqual(['body_retention_enabled', 'enabled', 'language', 'phrase'])
+    // must always state both retention layers and the acknowledgement it is making.
+    expect(Object.keys(payload).sort()).toEqual([
+      'body_retention_enabled',
+      'enabled',
+      'header_values_enabled',
+      'language',
+      'phrase',
+    ])
     expect(payload).toEqual({
       enabled: true,
       body_retention_enabled: false,
+      header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
     })
     expect(config.headers).toMatchObject({ 'Cache-Control': 'no-store' })
     expect(updated).toMatchObject({ enabled: true, capture_allowed: true })
+  })
+
+  it('states the header value layer on its own, independently of body retention', async () => {
+    client.put.mockResolvedValue({
+      data: status({ enabled: true, capture_allowed: true, header_values_enabled: true, header_values_allowed: true }),
+    })
+
+    // Body retention stays off while the 429 header value layer is turned on: the
+    // two switches are orthogonal, and neither may be derived from the other.
+    const updated = await updateOperatorSettings({
+      enabled: true,
+      body_retention_enabled: false,
+      header_values_enabled: true,
+      language: 'en',
+      phrase: PHRASE_EN,
+    })
+
+    const [, payload] = client.put.mock.calls[0]
+    expect(payload.body_retention_enabled).toBe(false)
+    expect(payload.header_values_enabled).toBe(true)
+    expect(updated).toMatchObject({
+      body_retention_allowed: false,
+      header_values_enabled: true,
+      header_values_allowed: true,
+    })
   })
 
   it('never lets a key, a body or an operator identity reach a consumer', async () => {
@@ -181,6 +218,33 @@ describe('error diagnostic operator settings API', () => {
     expect(result.risk_acknowledgement_current).toBe(false)
   })
 
+  it('keeps the two retention layers apart, stored flags and conclusions alike', async () => {
+    // Stored on but not effective (no usable key): the stored intent and the verified
+    // conclusion are different facts for each layer, and a layer's conclusion must
+    // not be read off the other layer's flags.
+    client.get.mockResolvedValue({
+      data: status({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: true,
+        risk_acknowledgement_current: true,
+        body_retention_enabled: true,
+        body_retention_allowed: false,
+        header_values_enabled: true,
+        header_values_allowed: false,
+        body_encryption_key_available: false,
+      }),
+    })
+
+    const result = await getOperatorSettings()
+
+    expect(result.body_retention_enabled).toBe(true)
+    expect(result.body_retention_allowed).toBe(false)
+    expect(result.header_values_enabled).toBe(true)
+    expect(result.header_values_allowed).toBe(false)
+    expect(result.body_encryption_key_available).toBe(false)
+  })
+
   it('treats a malformed acknowledgement as no acknowledgement at all', async () => {
     const withoutAcceptedAt = normalizeErrorDiagnosticOperatorStatus(
       status({ risk_acknowledgement: { version: 'v1', phrase: PHRASE_EN, admin_user_id: 7 } }),
@@ -207,8 +271,10 @@ describe('error diagnostic operator settings API', () => {
       'enabled',
       'risk_acknowledged',
       'body_retention_enabled',
+      'header_values_enabled',
       'capture_allowed',
       'body_retention_allowed',
+      'header_values_allowed',
       'body_encryption_key_available',
     ]) {
       expect(() => normalizeErrorDiagnosticOperatorStatus(status({ [key]: undefined })), key).toThrow()

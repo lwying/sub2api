@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -234,6 +235,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
+	claudeValueCapture := c.Request.URL.Path == "/v1/messages" &&
+		h.gatewayService.ClaudeRequestAuditValueCaptureEnabled(c.Request.Context())
+	if claudeValueCapture {
+		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
+	}
 	if requestAuditFingerprint != nil {
 		requestAuditFingerprint.DigestRequest(body)
 		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
@@ -301,12 +307,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
 
-	// [DEBUG-STICKY] 打印会话 hash 生成结果
-	reqLog.Info("sticky.session_hash_generated",
-		zap.String("session_hash", sessionHash),
-		zap.String("metadata_user_id_raw", parsedReq.MetadataUserID),
-	)
-
 	// 获取平台：优先使用强制平台（/antigravity 路由），其次使用 composite 解析出的目标平台，否则使用分组平台
 	platform := ""
 	if forcePlatform, ok := middleware2.GetForcePlatformFromContext(c); ok {
@@ -327,7 +327,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		sessionBoundAccountID, _ = h.gatewayService.GetCachedSessionAccountID(c.Request.Context(), apiKey.GroupID, sessionKey)
 		// [DEBUG-STICKY] 打印粘性会话查询结果
 		reqLog.Info("sticky.cache_lookup",
-			zap.String("session_key", sessionKey),
+			zap.Bool("has_session_key", true),
 			zap.Int64("bound_account_id", sessionBoundAccountID),
 		)
 		if sessionBoundAccountID > 0 {
@@ -339,7 +339,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			c.Request = c.Request.WithContext(ctx)
 		}
 	} else {
-		reqLog.Info("sticky.no_session_key", zap.String("session_hash", sessionHash))
+		reqLog.Info("sticky.no_session_key")
 	}
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
@@ -691,7 +691,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			// 选择支持该模型的账号
 			reqLog.Info("sticky.selecting_account",
-				zap.String("session_key", sessionKey),
+				zap.Bool("has_session_key", sessionKey != ""),
 				zap.Int64("sticky_bound_account_id", sessionBoundAccountID),
 				zap.Bool("has_bound_session", hasBoundSession),
 				zap.Int("failed_account_count", len(fs.FailedAccountIDs)),
@@ -921,6 +921,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			c.Set("parsed_request", attemptParsedReq)
 			var result *service.ForwardResult
 			requestCtx := c.Request.Context()
+			// Bedrock 的最终协议会移除 metadata，不可把入站身份误认为
+			// 实际发往 Anthropic Messages 的身份。429 诊断仍使用自己的开关。
+			if account.IsBedrock() {
+				requestCtx = httpattempt.WithClaudeHeaderValueCapture(requestCtx, false)
+			}
 			if fs.SwitchCount > 0 {
 				requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
 			}
@@ -1005,10 +1010,32 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 				requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, "", localRequestID, upstreamRequestID)
 				requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
+				valueDetail := service.RequestAuditValueDetailInput{}
+				if claudeValueCapture && notCapturedReason == "" {
+					inboundValues, inboundOmission := service.RequestAuditValueDetailInboundHeaders(c.Request.Header)
+					protocol := service.RequestAuditProtocolAnthropic
+					if account.IsBedrock() {
+						protocol = "bedrock"
+					}
+					valueDetail = service.RequestAuditValueDetailInput{
+						Route:                 inboundEndpoint,
+						Protocol:              protocol,
+						InboundHeaderValues:   inboundValues,
+						InboundHeaderOmission: inboundOmission,
+						MetadataUserID:        parsedReq.MetadataUserID,
+						Model:                 reqModel,
+						StartedAt:             pricingAt,
+						CompletedAt:           time.Now(),
+						Attempts:              service.RequestAuditValueDetailAttemptsFromHTTPMetadata(service.RequestAuditHTTPAttemptMetadata(c)),
+					}
+				}
 				// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
 				// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
 				if notCapturedReason == "" {
 					requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
+					if status, ok := requestAuditMetadata.Status[service.RequestAuditClientResponseKey]; ok {
+						valueDetail.ClientStatus = status
+					}
 				}
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
@@ -1031,6 +1058,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						RequestAuditAttempts:    requestAuditAttempts,
 						RequestAuditFingerprint: requestAuditFingerprint,
 						RequestAuditMetadata:    requestAuditMetadata,
+						RequestAuditValueDetail: valueDetail,
 						NotCapturedReason:       notCapturedReason,
 						AuditLogicalKey:         auditLogicalKey,
 						ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),

@@ -32,7 +32,9 @@ func NewErrorDiagnosticRepository(db *sql.DB, cipher service.ErrorDiagnosticBody
 const errorDiagnosticRecordColumns = `
 	diagnostic_id, usage_log_id, protocol, attempt_index, stage, upstream_status,
 	body_state, body_reason, (body_ciphertext IS NOT NULL), body_bytes, body_key_version,
-	created_at, metadata_expires_at, body_expires_at
+	created_at, metadata_expires_at, body_expires_at,
+	header_state, header_reason, (header_ciphertext IS NOT NULL), header_bytes, header_key_version,
+	header_entry_count, header_expires_at
 `
 
 type errorDiagnosticRowScanner interface {
@@ -43,11 +45,14 @@ func scanErrorDiagnosticRecord(row errorDiagnosticRowScanner) (service.ErrorDiag
 	var record service.ErrorDiagnosticRecord
 	var usageLogID sql.NullInt64
 	var bodyExpiresAt sql.NullTime
+	var headerExpiresAt sql.NullTime
 	err := row.Scan(
 		&record.ID, &usageLogID, &record.Protocol, &record.AttemptIndex, &record.Stage,
 		&record.UpstreamStatusCode, &record.BodyState, &record.BodyReason, &record.BodyStored,
 		&record.BodyBytes, &record.BodyKeyVersion, &record.CreatedAt, &record.MetadataExpiresAt,
 		&bodyExpiresAt,
+		&record.HeaderState, &record.HeaderReason, &record.HeaderStored, &record.HeaderBytes,
+		&record.HeaderKeyVersion, &record.HeaderEntryCount, &headerExpiresAt,
 	)
 	if err != nil {
 		return service.ErrorDiagnosticRecord{}, err
@@ -58,6 +63,9 @@ func scanErrorDiagnosticRecord(row errorDiagnosticRowScanner) (service.ErrorDiag
 	}
 	if bodyExpiresAt.Valid {
 		record.BodyExpiresAt = bodyExpiresAt.Time
+	}
+	if headerExpiresAt.Valid {
+		record.HeaderExpiresAt = headerExpiresAt.Time
 	}
 	return record, nil
 }
@@ -92,6 +100,29 @@ func (r *errorDiagnosticRepository) CreateErrorDiagnostic(ctx context.Context, w
 		bodyKeyVersion = 0
 	}
 
+	// 头值列与正文列同构，但**独立**判定：正文可以不留而头值留存，反之亦然。
+	headerState := write.HeaderState
+	headerReason := write.HeaderReason
+	if headerState == "" {
+		headerState = service.ErrorDiagnosticHeaderStateNotObserved
+	}
+	if headerReason == "" {
+		headerReason = service.ErrorDiagnosticHeaderNotObserved
+	}
+	headerCiphertext := write.HeaderCiphertext
+	headerKeyVersion := write.HeaderKeyVersion
+	headerEntryCount := write.HeaderEntryCount
+	headerPayloadBytes := write.HeaderPayloadBytes
+	if headerState == service.ErrorDiagnosticHeaderStateStored && len(headerCiphertext) == 0 {
+		headerState = service.ErrorDiagnosticHeaderStateSkipped
+		headerReason = service.ErrorDiagnosticHeaderSkippedEncryptionUnavailable
+	}
+	if headerState != service.ErrorDiagnosticHeaderStateStored || len(headerCiphertext) == 0 {
+		headerKeyVersion = 0
+		headerEntryCount = 0
+		headerPayloadBytes = 0
+	}
+
 	var usageLogID any
 	if write.Attempt.UsageLogID > 0 {
 		usageLogID = write.Attempt.UsageLogID
@@ -111,6 +142,15 @@ func (r *errorDiagnosticRepository) CreateErrorDiagnostic(ctx context.Context, w
 		bodyKeyVersion = 0
 	}
 
+	// ciphertext 保持 any：nil 才会被绑定成 SQL NULL（空 []byte 会变成非 NULL 的空 bytea，
+	// 从而违反「密文与到期时刻成对」的约束）。
+	var headerCiphertextParam any
+	var headerExpiresAt sql.NullTime
+	if headerState == service.ErrorDiagnosticHeaderStateStored && len(headerCiphertext) > 0 {
+		headerCiphertextParam = headerCiphertext
+		headerExpiresAt = sql.NullTime{Time: now.Add(service.ErrorDiagnosticHeaderRetention), Valid: true}
+	}
+
 	record := service.ErrorDiagnosticRecord{
 		ID:                 write.ID,
 		UsageLogID:         write.Attempt.UsageLogID,
@@ -126,20 +166,31 @@ func (r *errorDiagnosticRepository) CreateErrorDiagnostic(ctx context.Context, w
 		BodyStored:         ciphertext != nil,
 		MetadataExpiresAt:  metadataExpiresAt,
 		// 只有真的绑定了正文时才带到期时刻；否则保持零值（与绑定到 SQL 的 NULL 一致）。
-		BodyExpiresAt: bodyExpiresAt.Time,
+		BodyExpiresAt:    bodyExpiresAt.Time,
+		HeaderState:      headerState,
+		HeaderReason:     headerReason,
+		HeaderBytes:      headerPayloadBytes,
+		HeaderKeyVersion: headerKeyVersion,
+		HeaderEntryCount: headerEntryCount,
+		HeaderStored:     headerCiphertextParam != nil,
+		HeaderExpiresAt:  headerExpiresAt.Time,
 	}
 
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO error_diagnostic_records (
 			diagnostic_id, usage_log_id, protocol, attempt_index, stage, upstream_status,
 			body_state, body_reason, body_ciphertext, body_key_version, body_bytes,
-			created_at, metadata_expires_at, body_expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			created_at, metadata_expires_at, body_expires_at,
+			header_state, header_reason, header_ciphertext, header_key_version, header_bytes,
+			header_entry_count, header_expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING created_at
 	`,
 		record.ID, usageLogID, record.Protocol, record.AttemptIndex, record.Stage, record.UpstreamStatusCode,
 		record.BodyState, record.BodyReason, ciphertext, bodyKeyVersion, bodyBytes,
 		now, metadataExpiresAt, bodyExpiresAt,
+		headerState, headerReason, headerCiphertextParam, headerKeyVersion, headerPayloadBytes,
+		headerEntryCount, headerExpiresAt,
 	).Scan(&record.CreatedAt)
 	if err != nil {
 		return service.ErrorDiagnosticRecord{}, fmt.Errorf("create error diagnostic: %w", err)
@@ -295,6 +346,47 @@ func (r *errorDiagnosticRepository) ReadErrorDiagnosticBody(ctx context.Context,
 	return plaintext, nil
 }
 
+// ReadErrorDiagnosticHeaderValues 只在记录仍持有未到期头值密文且本层持有密钥时才解密。
+//
+// 与正文同一约定：未留存、已物理清除、已到期、密钥缺失、认证失败或**解密结果不合格**
+// 统一返回 ErrErrorDiagnosticHeaderValuesGone，使读取结果不能作为「这条尝试留过什么」的探针。
+// 解密结果还要过一遍白名单与有界校验（DecodeErrorDiagnosticHeaderValues）：
+// 解密成功不等于内容可信。
+func (r *errorDiagnosticRepository) ReadErrorDiagnosticHeaderValues(ctx context.Context, id string, now time.Time) (service.ErrorDiagnosticHeaderValues, error) {
+	if r == nil || r.db == nil || r.cipher == nil {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	if !service.ValidErrorDiagnosticID(id) {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	var ciphertext []byte
+	var headerExpiresAt, metadataExpiresAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+		SELECT header_ciphertext, header_expires_at, metadata_expires_at
+		FROM error_diagnostic_records WHERE diagnostic_id = $1
+	`, id).Scan(&ciphertext, &headerExpiresAt, &metadataExpiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+		}
+		return service.ErrorDiagnosticHeaderValues{}, fmt.Errorf("read error diagnostic header values: %w", err)
+	}
+	now = now.UTC()
+	if !headerExpiresAt.Valid || !metadataExpiresAt.Valid ||
+		!headerExpiresAt.Time.After(now) || !metadataExpiresAt.Time.After(now) || len(ciphertext) == 0 {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	plaintext, err := r.cipher.Decrypt(ciphertext)
+	if err != nil || len(plaintext) == 0 {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	values, err := service.DecodeErrorDiagnosticHeaderValues(plaintext)
+	if err != nil {
+		return service.ErrorDiagnosticHeaderValues{}, service.ErrErrorDiagnosticHeaderValuesGone
+	}
+	return values, nil
+}
+
 // ClearExpiredErrorDiagnosticBodies 在在线主库物理清除已到第 7 天的正文密文。
 //
 // 只置空密文列与密钥代，保留整行元数据与 body_expires_at，
@@ -321,6 +413,36 @@ func (r *errorDiagnosticRepository) ClearExpiredErrorDiagnosticBodies(ctx contex
 	cleared, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("clear expired error diagnostic bodies: %w", err)
+	}
+	return cleared, nil
+}
+
+// ClearExpiredErrorDiagnosticHeaderValues 在在线主库物理清除已到第 7 天的头值密文。
+//
+// 与正文同一约定：只置空密文列与密钥代并记 purged，保留整行元数据与 header_expires_at，
+// 使「曾留存、现已清除」与「从未留存」在状态上可区分。
+func (r *errorDiagnosticRepository) ClearExpiredErrorDiagnosticHeaderValues(ctx context.Context, now time.Time, batch int) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, service.ErrErrorDiagnosticUnavailable
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE error_diagnostic_records
+		SET header_ciphertext = NULL, header_key_version = 0, header_state = 'purged'
+		WHERE diagnostic_id IN (
+			SELECT diagnostic_id FROM error_diagnostic_records
+			WHERE header_ciphertext IS NOT NULL
+			  AND header_expires_at IS NOT NULL
+			  AND header_expires_at <= $1
+			ORDER BY header_expires_at ASC
+			LIMIT $2
+		)
+	`, now.UTC(), batch)
+	if err != nil {
+		return 0, fmt.Errorf("clear expired error diagnostic header values: %w", err)
+	}
+	cleared, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("clear expired error diagnostic header values: %w", err)
 	}
 	return cleared, nil
 }
@@ -362,6 +484,21 @@ func (r *errorDiagnosticRepository) ReadErrorDiagnosticCleanupBacklog(ctx contex
 	}
 	if oldestRecord.Valid {
 		backlog.OldestRecordOverdueAt = oldestRecord.Time
+	}
+
+	var oldestHeaderValue sql.NullTime
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(header_expires_at)
+		FROM error_diagnostic_records
+		WHERE header_ciphertext IS NOT NULL
+		  AND header_expires_at IS NOT NULL
+		  AND header_expires_at <= $1
+	`, now).Scan(&backlog.HeaderValuesOverdue, &oldestHeaderValue)
+	if err != nil {
+		return service.ErrorDiagnosticCleanupBacklog{}, fmt.Errorf("read error diagnostic header value backlog: %w", err)
+	}
+	if oldestHeaderValue.Valid {
+		backlog.OldestHeaderOverdueAt = oldestHeaderValue.Time
 	}
 	return backlog, nil
 }

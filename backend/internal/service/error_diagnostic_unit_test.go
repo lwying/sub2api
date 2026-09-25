@@ -25,29 +25,39 @@ type errorDiagnosticRepoFake struct {
 	records map[string]ErrorDiagnosticRecord
 
 	// caller 模拟真实仓储持有的解密能力：存储的是密文，返回的是明文。
-	caller       ErrorDiagnosticBodyCipher
-	body         map[string][]byte
-	bodyErr      error
-	bodyReads    int
-	cleared      int64
-	deleted      int64
-	clearErr     error
-	deleteErr    error
-	clearCalls   int
-	deleteCalls  int
-	getCalls     int
-	listCalls    int
-	countCalls   int
-	backlogCalls int
-	backlog      ErrorDiagnosticCleanupBacklog
-	backlogErr   error
-	listRecent   []string
+	caller    ErrorDiagnosticBodyCipher
+	body      map[string][]byte
+	bodyErr   error
+	bodyReads int
+	cleared   int64
+	deleted   int64
+	clearErr  error
+	deleteErr error
+	// 头值与正文各有一套状态：替身也必须把两者分开，否则「正文没留、头值留了」这类
+	// 正交事实在测试里会被抹平。
+	headerValues            map[string][]byte
+	headerValuesErr         error
+	headerValuesReads       int
+	headerValuesCleared     int64
+	headerValuesClearErr    error
+	headerValuesClearCalls  int
+	headerValuesReturnsGone bool
+	clearCalls              int
+	deleteCalls             int
+	getCalls                int
+	listCalls               int
+	countCalls              int
+	backlogCalls            int
+	backlog                 ErrorDiagnosticCleanupBacklog
+	backlogErr              error
+	listRecent              []string
 }
 
 func newErrorDiagnosticRepoFake() *errorDiagnosticRepoFake {
 	return &errorDiagnosticRepoFake{
-		records: map[string]ErrorDiagnosticRecord{},
-		body:    map[string][]byte{},
+		records:      map[string]ErrorDiagnosticRecord{},
+		body:         map[string][]byte{},
+		headerValues: map[string][]byte{},
 	}
 }
 
@@ -75,6 +85,16 @@ func (f *errorDiagnosticRepoFake) CreateErrorDiagnostic(_ context.Context, write
 		record.BodyKeyVersion = write.BodyKeyVersion
 		record.BodyStored = true
 		f.body[write.ID] = write.BodyCiphertext
+	}
+	record.HeaderState = write.HeaderState
+	record.HeaderReason = write.HeaderReason
+	record.HeaderEntryCount = write.HeaderEntryCount
+	if len(write.HeaderCiphertext) > 0 {
+		record.HeaderExpiresAt = now.Add(ErrorDiagnosticHeaderRetention)
+		record.HeaderBytes = write.HeaderPayloadBytes
+		record.HeaderKeyVersion = write.HeaderKeyVersion
+		record.HeaderStored = true
+		f.headerValues[write.ID] = write.HeaderCiphertext
 	}
 	f.records[write.ID] = record
 	return record, nil
@@ -167,6 +187,9 @@ func (f *errorDiagnosticRepoFake) ReadErrorDiagnosticCleanupBacklog(_ context.Co
 	if !backlog.OldestBodyOverdueAt.IsZero() && backlog.BodiesOverdue == 0 {
 		backlog.BodiesOverdue = 1
 	}
+	if !backlog.OldestHeaderOverdueAt.IsZero() && backlog.HeaderValuesOverdue == 0 {
+		backlog.HeaderValuesOverdue = 1
+	}
 	return backlog, nil
 }
 
@@ -191,6 +214,41 @@ func (f *errorDiagnosticRepoFake) ReadErrorDiagnosticBody(_ context.Context, id 
 		return nil, ErrErrorDiagnosticBodyGone
 	}
 	return plaintext, nil
+}
+
+func (f *errorDiagnosticRepoFake) ReadErrorDiagnosticHeaderValues(_ context.Context, id string, now time.Time) (ErrorDiagnosticHeaderValues, error) {
+	f.headerValuesReads++
+	if f.headerValuesErr != nil {
+		return ErrorDiagnosticHeaderValues{}, f.headerValuesErr
+	}
+	if f.headerValuesReturnsGone {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	record, ok := f.records[id]
+	if !ok || !record.HeaderValuesReadableAt(now) {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	ciphertext, ok := f.headerValues[id]
+	if !ok || f.caller == nil {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	plaintext, err := f.caller.Decrypt(ciphertext)
+	if err != nil {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	values, err := DecodeErrorDiagnosticHeaderValues(plaintext)
+	if err != nil {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	return values, nil
+}
+
+func (f *errorDiagnosticRepoFake) ClearExpiredErrorDiagnosticHeaderValues(_ context.Context, _ time.Time, _ int) (int64, error) {
+	f.headerValuesClearCalls++
+	if f.headerValuesClearErr != nil {
+		return 0, f.headerValuesClearErr
+	}
+	return f.headerValuesCleared, nil
 }
 
 func (f *errorDiagnosticRepoFake) ClearExpiredErrorDiagnosticBodies(_ context.Context, _ time.Time, _ int) (int64, error) {

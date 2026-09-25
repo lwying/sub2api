@@ -6,6 +6,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 const requestAuditHTTPAttemptCounterKey = "request_audit_http_attempt_counter"
@@ -138,4 +139,22 @@ func bindRequestAuditHTTPAttempt(
 	}
 	metadata := httpattempt.Metadata{AccountID: accountID, Model: model, Protocol: protocol}
 	return req.WithContext(httpattempt.WithMetadata(req.Context(), metadata))
+}
+
+func bindClaudeRequestAuditValueDetail(req *http.Request, wireBody []byte, proxyID *int64) *http.Request {
+	if req == nil || !httpattempt.ClaudeHeaderValueCaptureEnabled(req.Context()) {
+		return req
+	}
+	ctx := req.Context()
+	if metadata, ok := httpattempt.MetadataFromContext(ctx); ok {
+		if proxyID != nil {
+			metadata.ProxyID = *proxyID
+		}
+		ctx = httpattempt.WithMetadata(ctx, metadata)
+	}
+	uid := gjson.GetBytes(wireBody, "metadata.user_id")
+	if uid.Type == gjson.String && len(uid.String()) <= 256 {
+		ctx = httpattempt.WithClaudeMetadataUserID(ctx, uid.String())
+	}
+	return req.WithContext(ctx)
 }

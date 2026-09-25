@@ -2,12 +2,15 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -26,6 +29,10 @@ type UsageHandler struct {
 	adminService     service.AdminService
 	cleanupService   *service.UsageCleanupService
 	requestAuditRepo service.RequestAuditRepository
+	// requestAuditValueDetail 是默认关闭的 Claude /v1/messages 值明细接缝。
+	// 通过 SetRequestAuditValueDetailService 显式注入；为 nil 时入口按不可用处理，
+	// 不使用构造函数参数以免改动既有装配调用。
+	requestAuditValueDetail *service.RequestAuditValueDetailService
 }
 
 // NewUsageHandler creates a new admin usage handler
@@ -81,6 +88,167 @@ func (h *UsageHandler) GetRequestAudit(c *gin.Context) {
 		"fingerprint_key_version": rec.FingerprintKeyVersion,
 		"metadata":                rec.Metadata,
 	})
+}
+
+// SetRequestAuditValueDetailService 注入值明细接缝（采集与读取共用同一份门控判定）。
+//
+// 用显式 setter 而不是构造函数参数：既有装配调用点保持不变，nil 时入口按不可用处理。
+func (h *UsageHandler) SetRequestAuditValueDetailService(valueDetail *service.RequestAuditValueDetailService) {
+	if h == nil {
+		return
+	}
+	h.requestAuditValueDetail = valueDetail
+}
+
+// 值明细披露层错误：稳定 reason 码 + 固定文案，供 response.ErrorFrom 输出。
+//
+// 「没有行」「从未留存」「曾经留存但已不可揭示」「存储不可用」四者必须分开：
+// 把它们合并成一个 404 会让管理员无法区分「这个部署没开」与「值已经到期被清掉了」。
+var (
+	errValueDetailNotFound        = infraerrors.New(http.StatusNotFound, "REQUEST_AUDIT_VALUE_DETAIL_NOT_FOUND", "Request audit value detail not found")
+	errValueDetailNotRetained     = infraerrors.New(http.StatusConflict, "REQUEST_AUDIT_VALUE_DETAIL_NOT_RETAINED", "Request audit value details were not retained for this usage log")
+	errValueDetailGone            = infraerrors.New(http.StatusGone, "REQUEST_AUDIT_VALUE_DETAIL_GONE", "Retained request audit value details are no longer available")
+	errValueDetailUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "REQUEST_AUDIT_VALUE_DETAIL_UNAVAILABLE", "Request audit value details are temporarily unavailable")
+	errValueDetailStorageFailed   = infraerrors.New(http.StatusInternalServerError, "REQUEST_AUDIT_VALUE_DETAIL_STORAGE_FAILED", "Failed to read request audit value details")
+	errValueDetailSettingsUnavail = infraerrors.New(http.StatusServiceUnavailable, "REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_UNAVAILABLE", "Request audit value detail settings are temporarily unavailable")
+	errValueDetailAPIKeyForbidden = infraerrors.Forbidden("REQUEST_AUDIT_VALUE_DETAIL_ADMIN_API_KEY_FORBIDDEN", "enabling request audit value details requires an admin session, not an admin API key")
+)
+
+// requestAuditValueDetailDisclosureError 把服务层哨兵映射成对外错误。
+//
+// 未知错误按 500 处理并给固定文案，不回显内部细节；存储层的哨兵是普通 error，
+// 管理员信封需要 {code, reason, message}，因此在这里包装，而不是让 service 依赖 HTTP 错误包。
+func requestAuditValueDetailDisclosureError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, service.ErrRequestAuditValueDetailNotFound):
+		return errValueDetailNotFound
+	case errors.Is(err, service.ErrRequestAuditValueDetailNotRetained):
+		return errValueDetailNotRetained
+	case errors.Is(err, service.ErrRequestAuditValueDetailGone):
+		return errValueDetailGone
+	case errors.Is(err, service.ErrRequestAuditValueDetailUnavailable):
+		return errValueDetailUnavailable
+	default:
+		return errValueDetailStorageFailed
+	}
+}
+
+// GetRequestAuditValueDetail 返回值明细的**信封**，永不返回值本身。
+// GET /api/v1/admin/usage/:id/request-audit/value-detail
+//
+// 默认视图只有「有没有留、为什么没留、还能量多久」：真实值必须由管理员显式 POST 揭示。
+// 响应禁止任何中间缓存。
+func (h *UsageHandler) GetRequestAuditValueDetail(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	if h == nil || h.requestAuditValueDetail == nil {
+		response.ErrorFrom(c, errValueDetailUnavailable)
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid id")
+		return
+	}
+	envelope, err := h.requestAuditValueDetail.GetRequestAuditValueDetail(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, requestAuditValueDetailDisclosureError(err))
+		return
+	}
+	response.Success(c, envelope)
+}
+
+// RevealRequestAuditValueDetail 仅在管理员显式请求时返回未过期的值。
+// POST /api/v1/admin/usage/:id/request-audit/value-detail
+//
+// 使用 POST 而非 GET：这是显式的非安全动作，既不会被浏览器／代理预取或缓存，
+// 也会被 admin 组的审计中间件记录。响应禁止任何中间缓存。
+func (h *UsageHandler) RevealRequestAuditValueDetail(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
+	if h == nil || h.requestAuditValueDetail == nil {
+		response.ErrorFrom(c, errValueDetailUnavailable)
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid id")
+		return
+	}
+	values, err := h.requestAuditValueDetail.RevealRequestAuditValueDetail(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, requestAuditValueDetailDisclosureError(err))
+		return
+	}
+	response.Success(c, service.RequestAuditValueDetailReveal{UsageLogID: id, Values: values})
+}
+
+// GetRequestAuditValueDetailSettings 读取值明细的运维开关状态（存量值与校验结论）。
+// GET /api/v1/admin/usage/request-audit-value-detail-settings
+func (h *UsageHandler) GetRequestAuditValueDetailSettings(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	if h == nil || h.requestAuditValueDetail == nil {
+		response.ErrorFrom(c, errValueDetailSettingsUnavail)
+		return
+	}
+	status, err := h.requestAuditValueDetail.GetRequestAuditValueDetailOperatorStatus(c.Request.Context())
+	if err != nil {
+		// 读取失败不是「关闭」：显式返回不可用，不假装门控是关的。
+		response.ErrorFrom(c, errValueDetailSettingsUnavail)
+		return
+	}
+	response.Success(c, status)
+}
+
+// requestAuditValueDetailSettingsRequest 是一次运维开关更新请求。
+//
+// 这是整体状态更新：未提交的字段按关闭处理，不做隐式保留——开启必须由本次请求显式表达。
+type requestAuditValueDetailSettingsRequest struct {
+	Enabled  bool   `json:"enabled"`
+	Language string `json:"language"`
+	Phrase   string `json:"phrase"`
+}
+
+// UpdateRequestAuditValueDetailSettings 更新值明细的运维开关。
+// PUT /api/v1/admin/usage/request-audit-value-detail-settings
+//
+// 开启由服务层强制逐字风险确认（每次更新都校验）并记录管理员 ID；
+// 关闭不需要确认、不需要操作员身份，也不能被任何前置校验挡住。
+func (h *UsageHandler) UpdateRequestAuditValueDetailSettings(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	if h == nil || h.requestAuditValueDetail == nil {
+		response.ErrorFrom(c, errValueDetailSettingsUnavail)
+		return
+	}
+	var req requestAuditValueDetailSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	// 机器凭证可以读、可以关，但不能开：书面确认是不可由常量代替的操作员动作。
+	if req.Enabled && c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
+		response.ErrorFrom(c, errValueDetailAPIKeyForbidden)
+		return
+	}
+	adminUserID := int64(0)
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok {
+		adminUserID = subject.UserID
+	}
+	status, err := h.requestAuditValueDetail.UpdateRequestAuditValueDetailOperatorSettings(c.Request.Context(), service.RequestAuditValueDetailOperatorUpdateInput{
+		Enabled:     req.Enabled,
+		Language:    req.Language,
+		Phrase:      req.Phrase,
+		AdminUserID: adminUserID,
+		IPAddress:   ip.GetClientIP(c),
+		UserAgent:   strings.TrimSpace(c.GetHeader("User-Agent")),
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, status)
 }
 
 // CreateUsageCleanupTaskRequest represents cleanup task creation request

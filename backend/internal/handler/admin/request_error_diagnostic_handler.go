@@ -23,9 +23,10 @@ import (
 //
 // 路由（挂在既有 admin 组，由 adminAuth 中间件保证仅管理员可访问；在串行 pass 中注册）：
 //
-//	GET  /api/v1/admin/error-diagnostics          列表（仅元数据，分页）
-//	GET  /api/v1/admin/error-diagnostics/:id      详情（仅元数据，不含正文）
-//	POST /api/v1/admin/error-diagnostics/:id/body 显式揭示未过期的出站正文
+//	GET  /api/v1/admin/error-diagnostics              列表（仅元数据，分页）
+//	GET  /api/v1/admin/error-diagnostics/:id          详情（仅元数据，不含正文与头值）
+//	POST /api/v1/admin/error-diagnostics/:id/body     显式揭示未过期的出站正文
+//	POST /api/v1/admin/error-diagnostics/:id/headers  显式揭示未过期的 429 头值
 type RequestErrorDiagnosticHandler struct {
 	diagnostics ErrorDiagnosticReader
 	// now 可注入，用于在 handler 侧按 7／30 天到期规则做二次校验（存储层已同样拒绝）。
@@ -39,6 +40,9 @@ type ErrorDiagnosticReader interface {
 	ListRecentErrorDiagnosticPage(ctx context.Context, protocol string, offset, limit int) ([]service.ErrorDiagnosticRecord, error)
 	CountRecentErrorDiagnostics(ctx context.Context, protocol string) (int64, error)
 	ReadErrorDiagnosticBody(ctx context.Context, id string) ([]byte, error)
+	// ReadErrorDiagnosticHeaderValues 与正文分开：两者是不同的留存事实，
+	// 一个读取失败不得被解释成另一个的状态。
+	ReadErrorDiagnosticHeaderValues(ctx context.Context, id string) (service.ErrorDiagnosticHeaderValues, error)
 }
 
 // RequestErrorDiagnosticView 是单条诊断对外披露的完整白名单：opaque id、时间、协议、
@@ -57,6 +61,13 @@ type RequestErrorDiagnosticView struct {
 	Reason            string     `json:"reason"`
 	BodyExpiresAt     *time.Time `json:"body_expires_at,omitempty"`
 	MetadataExpiresAt time.Time  `json:"metadata_expires_at"`
+
+	// 429 头值（Claude Messages 专属）与正文同构但独立：状态、原因、条数与到期分开披露，
+	// 使运维能分辨「没有头值」与「没有正文」，也能看出头值什么时候会读不到。
+	HeaderState      string     `json:"header_state"`
+	HeaderReason     string     `json:"header_reason"`
+	HeaderEntryCount int        `json:"header_entry_count"`
+	HeaderExpiresAt  *time.Time `json:"header_expires_at,omitempty"`
 }
 
 // NewRequestErrorDiagnosticHandler 构造错误诊断只读处理器。
@@ -224,6 +235,72 @@ func (h *RequestErrorDiagnosticHandler) RevealBody(c *gin.Context) {
 	}
 }
 
+// RevealHeaderValues 仅在被管理员显式请求时返回未过期的 429 头值。
+// POST /api/v1/admin/error-diagnostics/:id/headers
+//
+// 与 RevealBody 同一约定：POST 而非 GET（显式、不可预取、进入 admin 审计中间件），
+// 响应禁止任何中间缓存，并显式披露到期时刻。头值与正文是两个独立的揭示动作：
+// 揭示正文不会顺带返回头值，反之亦然。
+func (h *RequestErrorDiagnosticHandler) RevealHeaderValues(c *gin.Context) {
+	// 任何分支（含错误）都不得被缓存。
+	c.Header("Cache-Control", "no-store, private")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
+
+	if h == nil || h.diagnostics == nil {
+		response.ErrorFrom(c, errDiagnosticUnavailable)
+		return
+	}
+	id := strings.TrimSpace(c.Param("id"))
+	if !service.ValidErrorDiagnosticID(id) {
+		response.ErrorFrom(c, errDiagnosticNotFound)
+		return
+	}
+
+	record, err := h.diagnostics.GetErrorDiagnostic(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, errorDiagnosticDisclosureError(err))
+		return
+	}
+	now := h.clockNow()
+	if record.ExpiredAt(now) {
+		response.ErrorFrom(c, errDiagnosticNotFound)
+		return
+	}
+
+	switch record.HeaderState {
+	case service.ErrorDiagnosticHeaderStateStored:
+		// 头值可能在第 7 天后的清理与本次读取之间到期，这里再判一次。
+		if !record.HeaderValuesReadableAt(now) {
+			response.ErrorFrom(c, errDiagnosticHeaderValuesGone)
+			return
+		}
+		values, readErr := h.diagnostics.ReadErrorDiagnosticHeaderValues(c.Request.Context(), id)
+		if readErr != nil {
+			// 读取期到期／密文已清除与存储不可用要分开：前者是稳定的 410，后者才是可重试的 503。
+			if errors.Is(readErr, service.ErrErrorDiagnosticUnavailable) {
+				response.ErrorFrom(c, errDiagnosticUnavailable)
+				return
+			}
+			response.ErrorFrom(c, errDiagnosticHeaderValuesGone)
+			return
+		}
+		response.Success(c, gin.H{
+			"request_headers":    values.Request,
+			"response_headers":   values.Response,
+			"header_entry_count": values.EntryCount(),
+			"header_bytes":       record.HeaderBytes,
+			"header_expires_at":  record.HeaderExpiresAt,
+		})
+	case service.ErrorDiagnosticHeaderStateExpired, service.ErrorDiagnosticHeaderStatePurged:
+		response.ErrorFrom(c, errDiagnosticHeaderValuesGone)
+	default:
+		// not_observed／skipped 以及任何未知状态：一律按「没有可揭示的头值」处理，
+		// 绝不在状态未知时声称存在头值。
+		response.ErrorFrom(c, errDiagnosticHeaderValuesNotRetained)
+	}
+}
+
 // discloseErrorDiagnosticRecord 把存储记录映射成披露白名单。
 //
 // 第二个返回值为 false 表示该记录不应披露（协议不在已覆盖的三个分支内，属于存储异常），
@@ -242,6 +319,9 @@ func discloseErrorDiagnosticRecord(record service.ErrorDiagnosticRecord) (Reques
 		BodyState:         discloseErrorDiagnosticBodyState(record.BodyState),
 		Reason:            discloseErrorDiagnosticBodyReason(record.BodyReason),
 		MetadataExpiresAt: record.MetadataExpiresAt,
+		HeaderState:       discloseErrorDiagnosticHeaderState(record.HeaderState),
+		HeaderReason:      discloseErrorDiagnosticHeaderReason(record.HeaderReason),
+		HeaderEntryCount:  record.HeaderEntryCount,
 	}
 	// HasUsage 才是「有关联使用记录」的事实，绝不从 UsageLogID == 0 反推。
 	if record.HasUsage && record.UsageLogID > 0 {
@@ -251,6 +331,11 @@ func discloseErrorDiagnosticRecord(record service.ErrorDiagnosticRecord) (Reques
 	if !record.BodyExpiresAt.IsZero() {
 		bodyExpiresAt := record.BodyExpiresAt
 		view.BodyExpiresAt = &bodyExpiresAt
+	}
+	if !record.HeaderExpiresAt.IsZero() {
+		// 头值的到期时刻同样必须披露：运维据此知道头值还剩多久可读。
+		headerExpiresAt := record.HeaderExpiresAt
+		view.HeaderExpiresAt = &headerExpiresAt
 	}
 	return view, true
 }
@@ -298,6 +383,34 @@ func discloseErrorDiagnosticBodyReason(reason string) string {
 	}
 }
 
+// discloseErrorDiagnosticHeaderState 只回声存储层的封闭集合；未知值按最保守的
+// not_observed 处理（永不暗示存在可读取的 429 头值）。
+func discloseErrorDiagnosticHeaderState(state string) string {
+	switch state {
+	case service.ErrorDiagnosticHeaderStateStored,
+		service.ErrorDiagnosticHeaderStateSkipped,
+		service.ErrorDiagnosticHeaderStateExpired,
+		service.ErrorDiagnosticHeaderStatePurged:
+		return state
+	default:
+		return service.ErrorDiagnosticHeaderStateNotObserved
+	}
+}
+
+// discloseErrorDiagnosticHeaderReason 只回声存储层的封闭原因码集合；未知值同样按
+// not_observed 处理，不回显任意存储字符串。
+func discloseErrorDiagnosticHeaderReason(reason string) string {
+	switch reason {
+	case service.ErrorDiagnosticHeaderRetained,
+		service.ErrorDiagnosticHeaderSkippedRetentionDisabled,
+		service.ErrorDiagnosticHeaderSkippedEncryptionUnavailable,
+		service.ErrorDiagnosticHeaderSkippedInvalidValues:
+		return reason
+	default:
+		return service.ErrorDiagnosticHeaderNotObserved
+	}
+}
+
 // errorDiagnosticPageSize 收敛 page_size 到本入口的上限（100，小于存储层窗口上限），
 // 避免一次拉取超过存储层的最近窗口。
 func errorDiagnosticPageSize(pageSize int) int {
@@ -342,6 +455,8 @@ func errorDiagnosticDisclosureError(err error) error {
 		return errDiagnosticNotFound
 	case errors.Is(err, service.ErrErrorDiagnosticBodyGone):
 		return errDiagnosticBodyGone
+	case errors.Is(err, service.ErrErrorDiagnosticHeaderValuesGone):
+		return errDiagnosticHeaderValuesGone
 	case errors.Is(err, service.ErrErrorDiagnosticUnavailable):
 		return errDiagnosticUnavailable
 	default:
@@ -355,8 +470,11 @@ var (
 	errDiagnosticPageOutOfRange  = infraerrors.New(http.StatusBadRequest, "ERROR_DIAGNOSTIC_PAGE_OUT_OF_RANGE", "Requested page is beyond the supported error diagnostic window")
 	errDiagnosticBodyNotRetained = infraerrors.New(http.StatusConflict, "ERROR_DIAGNOSTIC_BODY_NOT_RETAINED", "Request body was not retained for this attempt")
 	errDiagnosticBodyGone        = infraerrors.New(http.StatusGone, "ERROR_DIAGNOSTIC_BODY_GONE", "Retained request body is no longer available")
-	errDiagnosticUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "ERROR_DIAGNOSTIC_UNAVAILABLE", "Error diagnostics are temporarily unavailable")
-	errDiagnosticStorageFailure  = infraerrors.New(http.StatusInternalServerError, "ERROR_DIAGNOSTIC_STORAGE_FAILED", "Failed to read error diagnostics")
+	// 头值与正文分开成不同的错误码：客户端与运维据此能分辨「没有头值」与「没有正文」。
+	errDiagnosticHeaderValuesNotRetained = infraerrors.New(http.StatusConflict, "ERROR_DIAGNOSTIC_HEADER_VALUES_NOT_RETAINED", "429 header values were not retained for this attempt")
+	errDiagnosticHeaderValuesGone        = infraerrors.New(http.StatusGone, "ERROR_DIAGNOSTIC_HEADER_VALUES_GONE", "Retained 429 header values are no longer available")
+	errDiagnosticUnavailable             = infraerrors.New(http.StatusServiceUnavailable, "ERROR_DIAGNOSTIC_UNAVAILABLE", "Error diagnostics are temporarily unavailable")
+	errDiagnosticStorageFailure          = infraerrors.New(http.StatusInternalServerError, "ERROR_DIAGNOSTIC_STORAGE_FAILED", "Failed to read error diagnostics")
 )
 
 const (

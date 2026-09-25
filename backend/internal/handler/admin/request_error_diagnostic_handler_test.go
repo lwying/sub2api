@@ -25,6 +25,10 @@ var _ ErrorDiagnosticReader = (*service.ErrorDiagnosticService)(nil)
 
 const errorDiagnosticTestID = "0123456789abcdef0123456789abcdef"
 
+// headerValueCanary 是头值哨兵：刻意不含数字 429 这类子串，
+// 避免「错误文案里恰好包含它」把「没有回显值」的断言变成假阳性。
+const headerValueCanary = "sentinel-header-value-do-not-echo"
+
 var errorDiagnosticTestNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 const (
@@ -43,13 +47,19 @@ type errorDiagnosticReaderStub struct {
 	body    []byte
 	bodyErr error
 
-	listCalls  int
-	listLimit  int
-	listOffset int
-	listProto  string
-	countCalls int
-	getCalls   int
-	bodyCalls  int
+	// 头值与正文各有独立的替身状态：两者是不同的留存事实，替身混用会让
+	// 「正文没留但头值留了」这类正交结论在测试里失去区分度。
+	headerValues service.ErrorDiagnosticHeaderValues
+	headerErr    error
+
+	listCalls   int
+	listLimit   int
+	listOffset  int
+	listProto   string
+	countCalls  int
+	getCalls    int
+	bodyCalls   int
+	headerCalls int
 }
 
 func (s *errorDiagnosticReaderStub) GetErrorDiagnostic(context.Context, string) (service.ErrorDiagnosticRecord, error) {
@@ -96,6 +106,14 @@ func (s *errorDiagnosticReaderStub) ReadErrorDiagnosticBody(context.Context, str
 	return s.body, nil
 }
 
+func (s *errorDiagnosticReaderStub) ReadErrorDiagnosticHeaderValues(context.Context, string) (service.ErrorDiagnosticHeaderValues, error) {
+	s.headerCalls++
+	if s.headerErr != nil {
+		return service.ErrorDiagnosticHeaderValues{}, s.headerErr
+	}
+	return s.headerValues, nil
+}
+
 func errorDiagnosticRecordFixture() service.ErrorDiagnosticRecord {
 	return service.ErrorDiagnosticRecord{
 		ID:                 errorDiagnosticTestID,
@@ -113,6 +131,14 @@ func errorDiagnosticRecordFixture() service.ErrorDiagnosticRecord {
 		BodyBytes:          42,
 		BodyKeyVersion:     1,
 		BodyStored:         true,
+
+		HeaderState:      service.ErrorDiagnosticHeaderStateStored,
+		HeaderReason:     service.ErrorDiagnosticHeaderRetained,
+		HeaderEntryCount: 2,
+		HeaderBytes:      96,
+		HeaderKeyVersion: 1,
+		HeaderStored:     true,
+		HeaderExpiresAt:  errorDiagnosticTestNow.Add(7 * 24 * time.Hour),
 	}
 }
 
@@ -124,6 +150,7 @@ func newErrorDiagnosticTestRouter(reader ErrorDiagnosticReader) *gin.Engine {
 	router.GET(errorDiagnosticTestMethod, handler.List)
 	router.GET(errorDiagnosticTestMethod+"/:id", handler.Get)
 	router.POST(errorDiagnosticTestMethod+"/:id/body", handler.RevealBody)
+	router.POST(errorDiagnosticTestMethod+"/:id/headers", handler.RevealHeaderValues)
 	return router
 }
 
@@ -189,10 +216,12 @@ func TestErrorDiagnosticsListDisclosesOnlyAllowlistedFields(t *testing.T) {
 	require.Len(t, envelope.Data.Items, 1)
 	requireErrorDiagnosticKeys(t, envelope.Data.Items[0],
 		"id", "created_at", "protocol", "attempt_index", "upstream_status",
-		"usage_log_id", "body_state", "reason", "body_expires_at", "metadata_expires_at")
+		"usage_log_id", "body_state", "reason", "body_expires_at", "metadata_expires_at",
+		"header_state", "header_reason", "header_entry_count", "header_expires_at")
 
-	// 正文字段与常见身份字段一律不得出现。
-	for _, forbidden := range []string{"body_text", "body_bytes", "account_id", "user_id", "api_key_id", "model", "headers"} {
+	// 正文字段、头值内容字段与常见身份字段一律不得出现。
+	for _, forbidden := range []string{"body_text", "body_bytes", "account_id", "user_id", "api_key_id", "model", "headers",
+		"request_headers", "response_headers", "header_text", "header_ciphertext"} {
 		require.NotContains(t, recorder.Body.String(), `"`+forbidden+`"`)
 	}
 }
@@ -207,6 +236,13 @@ func TestErrorDiagnosticsListOmitsUsageAndBodyExpiryWhenAbsent(t *testing.T) {
 	record.BodyState = service.ErrorDiagnosticBodyStateNotObserved
 	record.BodyReason = service.ErrorDiagnosticBodyNotObserved
 	record.BodyStored = false
+	// 头值同理：没留过头值时到期字段整个省略，但状态／原因／条数仍然披露
+	// （否则运维无法区分「没有头值」与「接口不认识这个事实」）。
+	record.HeaderExpiresAt = time.Time{}
+	record.HeaderStored = false
+	record.HeaderState = service.ErrorDiagnosticHeaderStateNotObserved
+	record.HeaderReason = service.ErrorDiagnosticHeaderNotObserved
+	record.HeaderEntryCount = 0
 	stub := &errorDiagnosticReaderStub{records: []service.ErrorDiagnosticRecord{record}}
 	router := newErrorDiagnosticTestRouter(stub)
 
@@ -217,7 +253,8 @@ func TestErrorDiagnosticsListOmitsUsageAndBodyExpiryWhenAbsent(t *testing.T) {
 	require.Len(t, envelope.Data.Items, 1)
 	requireErrorDiagnosticKeys(t, envelope.Data.Items[0],
 		"id", "created_at", "protocol", "attempt_index", "upstream_status",
-		"body_state", "reason", "metadata_expires_at")
+		"body_state", "reason", "metadata_expires_at",
+		"header_state", "header_reason", "header_entry_count")
 }
 
 // 已过 30 天到期的元数据即使仍被存储层返回，也不得披露。
@@ -451,8 +488,12 @@ func TestErrorDiagnosticsGetReturnsMetadataOnly(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
 	requireErrorDiagnosticKeys(t, envelope.Data,
 		"id", "created_at", "protocol", "attempt_index", "upstream_status",
-		"usage_log_id", "body_state", "reason", "body_expires_at", "metadata_expires_at")
+		"usage_log_id", "body_state", "reason", "body_expires_at", "metadata_expires_at",
+		"header_state", "header_reason", "header_entry_count", "header_expires_at")
 	require.NotContains(t, recorder.Body.String(), `"body_text"`)
+	// 详情同样只披露头值状态，绝不带出任何头值内容。
+	require.NotContains(t, recorder.Body.String(), `"request_headers"`)
+	require.NotContains(t, recorder.Body.String(), `"response_headers"`)
 }
 
 func TestErrorDiagnosticsGetUnknownIDIsNotFound(t *testing.T) {
@@ -595,6 +636,7 @@ func TestErrorDiagnosticsStorageUnavailableIs503(t *testing.T) {
 		{name: "list", stub: &errorDiagnosticReaderStub{listErr: service.ErrErrorDiagnosticUnavailable}, method: http.MethodGet, path: errorDiagnosticTestMethod},
 		{name: "detail", stub: &errorDiagnosticReaderStub{recordErr: service.ErrErrorDiagnosticUnavailable}, method: http.MethodGet, path: errorDiagnosticTestMethod + "/" + errorDiagnosticTestID},
 		{name: "body", stub: &errorDiagnosticReaderStub{recordErr: service.ErrErrorDiagnosticUnavailable}, method: http.MethodPost, path: errorDiagnosticTestMethod + "/" + errorDiagnosticTestID + "/body"},
+		{name: "headers", stub: &errorDiagnosticReaderStub{recordErr: service.ErrErrorDiagnosticUnavailable}, method: http.MethodPost, path: errorDiagnosticTestMethod + "/" + errorDiagnosticTestID + "/headers"},
 	} {
 		router := newErrorDiagnosticTestRouter(tc.stub)
 		recorder := serveErrorDiagnostic(t, router, tc.method, tc.path)
@@ -622,6 +664,7 @@ func TestErrorDiagnosticsNilReaderIsUnavailable(t *testing.T) {
 		{method: http.MethodGet, path: errorDiagnosticTestMethod},
 		{method: http.MethodGet, path: errorDiagnosticTestMethod + "/" + errorDiagnosticTestID},
 		{method: http.MethodPost, path: errorDiagnosticTestMethod + "/" + errorDiagnosticTestID + "/body"},
+		{method: http.MethodPost, path: errorDiagnosticTestMethod + "/" + errorDiagnosticTestID + "/headers"},
 	} {
 		recorder := serveErrorDiagnostic(t, router, tc.method, tc.path)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code, tc.path)
@@ -636,6 +679,158 @@ func TestErrorDiagnosticsRevealBodyAlwaysNoStore(t *testing.T) {
 	recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/body")
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 	require.Contains(t, recorder.Header().Get("Cache-Control"), "no-store")
+}
+
+// 429 头值的显式揭示：成功路径返回两个方向的净化值、条目数、载荷字节与到期时刻，
+// 且与正文同样禁止任何中间缓存。
+func TestErrorDiagnosticsRevealHeaderValuesReturnsSanitizedValues(t *testing.T) {
+	stub := &errorDiagnosticReaderStub{
+		record: errorDiagnosticRecordFixture(),
+		headerValues: service.ErrorDiagnosticHeaderValues{
+			Request:  map[string]string{"Anthropic-Version": "2023-06-01", "User-Agent": "claude-cli/2.1.78"},
+			Response: map[string]string{"Retry-After": "42", "Anthropic-Ratelimit-Requests-Remaining": "0"},
+		},
+	}
+	router := newErrorDiagnosticTestRouter(stub)
+
+	recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, stub.headerCalls)
+	// 揭示头值不得顺带读取正文。
+	require.Zero(t, stub.bodyCalls)
+
+	require.Contains(t, recorder.Header().Get("Cache-Control"), "no-store")
+	require.Equal(t, "no-cache", recorder.Header().Get("Pragma"))
+	require.Equal(t, "nosniff", recorder.Header().Get("X-Content-Type-Options"))
+
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			RequestHeaders   map[string]string `json:"request_headers"`
+			ResponseHeaders  map[string]string `json:"response_headers"`
+			HeaderEntryCount int               `json:"header_entry_count"`
+			HeaderBytes      int               `json:"header_bytes"`
+			HeaderExpiresAt  time.Time         `json:"header_expires_at"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.Equal(t, "2023-06-01", envelope.Data.RequestHeaders["Anthropic-Version"])
+	require.Equal(t, "42", envelope.Data.ResponseHeaders["Retry-After"])
+	require.Equal(t, 4, envelope.Data.HeaderEntryCount)
+	require.Equal(t, 96, envelope.Data.HeaderBytes)
+	// 到期时刻必须显式披露，运维才能判断还剩多久可读。
+	require.True(t, envelope.Data.HeaderExpiresAt.After(errorDiagnosticTestNow))
+}
+
+// 未留存头值（skipped／not_observed）是稳定的 409，并且不触发解密读取。
+func TestErrorDiagnosticsRevealHeaderValuesNotRetainedIsConflict(t *testing.T) {
+	for _, state := range []string{service.ErrorDiagnosticHeaderStateSkipped, service.ErrorDiagnosticHeaderStateNotObserved} {
+		record := errorDiagnosticRecordFixture()
+		record.HeaderState = state
+		record.HeaderReason = service.ErrorDiagnosticHeaderSkippedInvalidValues
+		record.HeaderExpiresAt = time.Time{}
+		record.HeaderStored = false
+		stub := &errorDiagnosticReaderStub{record: record}
+		router := newErrorDiagnosticTestRouter(stub)
+
+		recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+		require.Equal(t, http.StatusConflict, recorder.Code, state)
+		require.Equal(t, "ERROR_DIAGNOSTIC_HEADER_VALUES_NOT_RETAINED", decodeErrorDiagnosticError(t, recorder.Body.Bytes()).Reason)
+		require.Zero(t, stub.headerCalls, "skipped header values must not be read or decrypted")
+		require.Contains(t, recorder.Header().Get("Cache-Control"), "no-store")
+	}
+}
+
+// 曾留存但已到期／已被清理是 410；状态仍为 stored 但已过第 7 天同样先拒绝，不进入解密。
+func TestErrorDiagnosticsRevealHeaderValuesExpiredOrPurgedIsGone(t *testing.T) {
+	for _, state := range []string{service.ErrorDiagnosticHeaderStateExpired, service.ErrorDiagnosticHeaderStatePurged} {
+		record := errorDiagnosticRecordFixture()
+		record.HeaderState = state
+		record.HeaderStored = state == service.ErrorDiagnosticHeaderStateExpired
+		record.HeaderExpiresAt = errorDiagnosticTestNow.Add(-time.Hour)
+		stub := &errorDiagnosticReaderStub{record: record}
+		router := newErrorDiagnosticTestRouter(stub)
+
+		recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+		require.Equal(t, http.StatusGone, recorder.Code, state)
+		require.Equal(t, "ERROR_DIAGNOSTIC_HEADER_VALUES_GONE", decodeErrorDiagnosticError(t, recorder.Body.Bytes()).Reason)
+		require.Zero(t, stub.headerCalls)
+	}
+
+	record := errorDiagnosticRecordFixture()
+	record.HeaderExpiresAt = errorDiagnosticTestNow.Add(-time.Second)
+	stub := &errorDiagnosticReaderStub{record: record, headerValues: service.ErrorDiagnosticHeaderValues{
+		Response: map[string]string{"Retry-After": headerValueCanary},
+	}}
+	router := newErrorDiagnosticTestRouter(stub)
+	recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+	require.Equal(t, http.StatusGone, recorder.Code)
+	require.Zero(t, stub.headerCalls)
+	// 用不会与状态码文本（例如 429）撞车的哨兵，证明已过期时一个值都不回显。
+	require.NotContains(t, recorder.Body.String(), headerValueCanary)
+}
+
+// 读取期的 gone 与存储不可用必须分开：410 与 503。
+func TestErrorDiagnosticsRevealHeaderValuesReadFailureMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantReason string
+	}{
+		{name: "gone", err: service.ErrErrorDiagnosticHeaderValuesGone, wantStatus: http.StatusGone, wantReason: "ERROR_DIAGNOSTIC_HEADER_VALUES_GONE"},
+		{name: "unavailable", err: service.ErrErrorDiagnosticUnavailable, wantStatus: http.StatusServiceUnavailable, wantReason: "ERROR_DIAGNOSTIC_UNAVAILABLE"},
+	} {
+		stub := &errorDiagnosticReaderStub{record: errorDiagnosticRecordFixture(), headerErr: tc.err}
+		router := newErrorDiagnosticTestRouter(stub)
+
+		recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+		require.Equal(t, tc.wantStatus, recorder.Code, tc.name)
+		require.Equal(t, tc.wantReason, decodeErrorDiagnosticError(t, recorder.Body.Bytes()).Reason, tc.name)
+	}
+}
+
+// 未知头值状态按最保守的「没有可揭示的头值」处理，绝不声称存在头值。
+func TestErrorDiagnosticsRevealHeaderValuesUnknownStateIsConflict(t *testing.T) {
+	record := errorDiagnosticRecordFixture()
+	record.HeaderState = "something_unknown"
+	stub := &errorDiagnosticReaderStub{record: record}
+	router := newErrorDiagnosticTestRouter(stub)
+
+	recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	require.Zero(t, stub.headerCalls)
+}
+
+// 形状非法的 id 在 handler 内就被拒绝，不进入存储层。
+func TestErrorDiagnosticsRevealHeaderValuesMalformedIDNeverReachesReader(t *testing.T) {
+	stub := &errorDiagnosticReaderStub{record: errorDiagnosticRecordFixture()}
+	router := newErrorDiagnosticTestRouter(stub)
+
+	recorder := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/short/headers")
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Zero(t, stub.getCalls)
+	require.Zero(t, stub.headerCalls)
+}
+
+// 两条揭示路径互不影响：揭示正文不读头值，揭示头值不读正文。
+func TestErrorDiagnosticsBodyAndHeaderRevealsAreIndependent(t *testing.T) {
+	stub := &errorDiagnosticReaderStub{
+		record:       errorDiagnosticRecordFixture(),
+		body:         []byte(`{"canary":true}`),
+		headerValues: service.ErrorDiagnosticHeaderValues{Response: map[string]string{"Retry-After": "42"}},
+	}
+	router := newErrorDiagnosticTestRouter(stub)
+
+	body := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/body")
+	require.Equal(t, http.StatusOK, body.Code)
+	require.Equal(t, 1, stub.bodyCalls)
+	require.Zero(t, stub.headerCalls)
+
+	headers := serveErrorDiagnostic(t, router, http.MethodPost, errorDiagnosticTestMethod+"/"+errorDiagnosticTestID+"/headers")
+	require.Equal(t, http.StatusOK, headers.Code)
+	require.Equal(t, 1, stub.headerCalls)
+	require.Equal(t, 1, stub.bodyCalls)
 }
 
 // page/page_size 折算出的 offset/limit 必须落在读取侧窗口内。

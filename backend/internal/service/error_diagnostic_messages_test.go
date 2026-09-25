@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -96,6 +97,19 @@ func errorDiagnosticSettingsJSON(enabled, acknowledged, bodyRetention bool) stri
 		Enabled:              enabled,
 		RiskAcknowledged:     acknowledged,
 		BodyRetentionEnabled: bodyRetention,
+	})
+	return string(payload)
+}
+
+// errorDiagnosticHeaderValuesSettingsJSON 打开 429 头值留存，并**独立**决定正文留存的开关。
+//
+// 头值留存不是正文留存的子集：相机行事地把它挂在 bodyRetention 上就没有正交点可测了。
+func errorDiagnosticHeaderValuesSettingsJSON(bodyRetention, headerValues bool) string {
+	payload, _ := json.Marshal(ErrorDiagnosticSettings{
+		Enabled:                     true,
+		RiskAcknowledged:            true,
+		BodyRetentionEnabled:        bodyRetention,
+		HeaderValueRetentionEnabled: headerValues,
 	})
 	return string(payload)
 }
@@ -952,6 +966,368 @@ func TestMessagesErrorDiagnosticCoversBedrockMessagesBranch(t *testing.T) {
 	require.Contains(t, string(sent[0]), messagesDiagnosticBodySentinel)
 	require.Equal(t, string(sent[0]), string(records[0].body),
 		"诊断正文必须等于 Bedrock 该次真实发送的字节")
+}
+
+// bedrockDiagnosticRateLimitRepo 只实现 Bedrock 429 落到限流服务时真正会被调用的两处写入，
+// 其它方法由嵌入的接口占位（本用例不会走到）。
+type bedrockDiagnosticRateLimitRepo struct {
+	AccountRepository
+	rateLimited    int
+	sessionWindows int
+}
+
+func (r *bedrockDiagnosticRateLimitRepo) SetRateLimited(_ context.Context, _ int64, _ time.Time) error {
+	r.rateLimited++
+	return nil
+}
+
+func (r *bedrockDiagnosticRateLimitRepo) UpdateSessionWindow(_ context.Context, _ int64, _, _ *time.Time, _ string) error {
+	r.sessionWindows++
+	return nil
+}
+
+// Bedrock 的真实上游形态不是 Claude Messages：它的入站路由虽是 /v1/messages、429 的响应头
+// 却是 AWS 形态（SigV4 请求头、x-amzn-* 响应头），因此这一层必须记作**未采集**，
+// 而不是按 Claude Messages 的头值契约去读一批不属于它的头。
+//
+// 元数据与正文诊断照旧：出界只影响头值这一层。
+func TestMessagesErrorDiagnosticLeavesBedrock429HeaderValuesOutOfScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(true, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusTooManyRequests,
+		body:   `{"message":"bedrock rate limited"}`,
+		header: http.Header{
+			"Content-Type":     {"application/json"},
+			"Retry-After":      {"30"},
+			"x-amzn-RequestId": {"amzn-request-canary"},
+			"x-amzn-errortype": {"TooManyRequestsException"},
+			"X-Amzn-Trace-Id":  {"Root=1-canary"},
+		},
+	})
+	cfg := rawChatCompletionsTestConfig()
+	svc := &GatewayService{
+		cfg:                  cfg,
+		responseHeaderFilter: compileResponseHeaderFilter(cfg),
+		httpUpstream:         upstream,
+		// 429 会落到限流服务：替身只需承接它真正会写的那两处。
+		rateLimitService: &RateLimitService{accountRepo: &bedrockDiagnosticRateLimitRepo{}},
+		deferredService:  &DeferredService{},
+		settingService:   settings,
+	}
+	svc.SetErrorDiagnosticRecorder(recorder)
+
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":32,"stream":false,"messages":[{"role":"user","content":"` +
+		messagesDiagnosticBodySentinel + `"}]}`)
+	parsed := &ParsedRequest{Body: NewRequestBodyRef(body), Model: "claude-sonnet-4-5"}
+	account := &Account{
+		ID:          734,
+		Name:        "bedrock-diagnostic-429",
+		Platform:    PlatformAnthropic,
+		Type:        AccountTypeBedrock,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"aws_region": "us-east-1",
+			"auth_mode":  "apikey",
+			"api_key":    "bedrock-sentinel-key",
+		},
+	}
+
+	_, _ = svc.Forward(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), account, parsed)
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, ErrorDiagnosticProtocolMessages, attempt.Protocol, "入站同样是 /v1/messages")
+	require.Equal(t, http.StatusTooManyRequests, attempt.UpstreamStatusCode)
+	require.Equal(t, ErrorDiagnosticHeaderVerdictOutOfScope, attempt.HeaderVerdict,
+		"Bedrock 上游形态不在头值能力范围内，必须记成未采集而不是采集失败")
+	require.True(t, attempt.HeaderValues.Empty(), "一个 AWS 头值都不得进入诊断")
+	require.NotContains(t, fmt.Sprint(attempt.HeaderValues), "canary")
+
+	// 出界只影响头值：正文诊断照旧等于该次真实发送的字节。
+	require.Equal(t, ErrorDiagnosticBodyVerdictComplete, attempt.BodyVerdict)
+	require.Equal(t, string(upstream.sent()[0]), string(records[0].body))
+}
+
+// 「整份或全无」针对**白名单内、有资格进快照的头**：闭集外的头名（真实 429 响应几乎总带
+// Date／Content-Length|Server 之类）是名单本身的信任边界，既不让快照作废，也不落库、不记名，
+// 更不能被读成「上游只发了这些头」。凭据类头同理（设计内排除）。
+func TestMessagesErrorDiagnosticStoresAllowlistedValuesOnlyAroundUnlistedHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":{"type":"rate_limit_error"}}`,
+		header: http.Header{
+			// 真实响应常见的闭集外头名：一律不采、不记名，也不构成「快照不完整」。
+			"Date":           {"Fri, 25 Sep 2026 00:05:49 GMT"},
+			"Content-Length": {"37"},
+			"Server":         {"envoy"},
+			"X-Unknown":      {"private-unlisted-response-value"},
+			// 凭据类头只做存在性判断（存在性本身也不落库）。
+			"Set-Cookie": {"session=secret"},
+			// 白名单内的限流事实照旧留存。
+			"Retry-After":                            {"42"},
+			"Content-Type":                           {"application/json"},
+			"Anthropic-Ratelimit-Requests-Remaining": {"0"},
+		},
+	})
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	body := messagesDiagnosticJSONBody()
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, ErrorDiagnosticHeaderVerdictCaptured, attempt.HeaderVerdict,
+		"闭集外的头名是有意排除，不得让整份快照作废")
+	require.Equal(t, "42", attempt.HeaderValues.Response["Retry-After"])
+	require.Equal(t, "0", attempt.HeaderValues.Response["Anthropic-Ratelimit-Requests-Remaining"])
+	require.Equal(t, "application/json", attempt.HeaderValues.Response["Content-Type"])
+
+	// 该结论在服务侧是「已留存」，载荷只含白名单取值。
+	decision := DecideErrorDiagnosticHeaderValues(attempt, true, true)
+	require.Equal(t, ErrorDiagnosticHeaderStateStored, decision.State)
+	require.Equal(t, ErrorDiagnosticHeaderRetained, decision.Reason)
+	require.True(t, decision.Retained())
+
+	// 解密后重新校验必须通过，且载荷里一个闭集外头名、凭据头名或它们的取值都没有。
+	decoded, err := DecodeErrorDiagnosticHeaderValues(decision.Payload)
+	require.NoError(t, err)
+	require.Equal(t, "42", decoded.Response["Retry-After"])
+	require.Equal(t, "application/json", decoded.Response["Content-Type"])
+	payload := strings.ToLower(string(decision.Payload))
+	for _, forbidden := range []string{
+		"date", "content-length", "server", "x-unknown", "set-cookie", "www-authenticate",
+		"authorization", "cookie", "api-key", "private-unlisted", "session=", "secret",
+	} {
+		require.NotContains(t, payload, forbidden, "载荷不得出现闭集外头名、凭据头名或凭据取值：%s", forbidden)
+	}
+}
+
+// 白名单内（有资格）的头只要有取值没被收下，整份快照就必须判为不合格：
+// 半份快照会被管理员读成「上游只发了这几个头」，比没有记录更危险。
+func TestMessagesErrorDiagnosticDropsTheWholeHeaderSnapshotWhenAnEligibleValueWasRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":{"type":"rate_limit_error"}}`,
+		header: http.Header{
+			"Content-Type": {"application/json"},
+			"Retry-After":  {"30"},
+			// max-age 不在净化器的闭集指令内：这个取值被拒绝，整份快照随之作废。
+			"Cache-Control": {"no-store,max-age=0"},
+		},
+	})
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	reqBody := messagesDiagnosticJSONBody()
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", reqBody), messagesDiagnosticNativeAccount(), reqBody, "", "")
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, ErrorDiagnosticHeaderVerdictInvalidValues, attempt.HeaderVerdict,
+		"被省略过的快照必须整份判为不可留存")
+	require.True(t, attempt.HeaderValues.Empty(), "绝不落半份快照")
+	require.NotContains(t, fmt.Sprint(attempt.HeaderValues), "30")
+
+	// 该结论在服务侧映射为稳定原因码 skipped_invalid_values。
+	decision := DecideErrorDiagnosticHeaderValues(attempt, true, true)
+	require.Equal(t, ErrorDiagnosticHeaderStateSkipped, decision.State)
+	require.Equal(t, ErrorDiagnosticHeaderSkippedInvalidValues, decision.Reason)
+	require.Nil(t, decision.Payload)
+}
+
+// 429 头值留存必须独立于正文留存：正文开关关着、没有 usage 记录时，头值仍然要留住。
+//
+// 这是本能力的核心不变量：它刻意与 usage-owned 请求审计和正文诊断解耦，因此这一条
+// 既断言「留住了头值」，也断言「没有因此伪造 usage 关联或带走正文」。
+func TestMessagesErrorDiagnosticKeepsHeaderValuesWithoutUsageOrBodyRetention(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":{"type":"rate_limit_error","message":"rate limited"}}`,
+		header: http.Header{
+			"Content-Type":                           {"application/json"},
+			"Retry-After":                            {"42"},
+			"Anthropic-Ratelimit-Requests-Remaining": {"0"},
+			"Anthropic-Ratelimit-Requests-Reset":     {"2026-09-24T14:01:30Z"},
+			"Request-Id":                             {"req_123-abc"},
+			// 凭据类头即使出现也不得留下值，只允许存在性判断（而存在性本身不落库）。
+			"Set-Cookie":       {"session=secret"},
+			"WWW-Authenticate": {"Bearer realm=secret"},
+		},
+	})
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	body := messagesDiagnosticJSONBody()
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, http.StatusTooManyRequests, attempt.UpstreamStatusCode)
+	require.Equal(t, int64(0), attempt.UsageLogID, "没有使用记录时必须保持 0，不得为头值伪造关联")
+
+	require.Equal(t, ErrorDiagnosticHeaderVerdictCaptured, attempt.HeaderVerdict)
+	require.Equal(t, "42", attempt.HeaderValues.Response["Retry-After"])
+	require.Equal(t, "0", attempt.HeaderValues.Response["Anthropic-Ratelimit-Requests-Remaining"])
+	require.Equal(t, "2026-09-24T14:01:30Z", attempt.HeaderValues.Response["Anthropic-Ratelimit-Requests-Reset"])
+	require.Equal(t, "req_123-abc", attempt.HeaderValues.Response["Request-Id"])
+	// 凭据类头只以存在性出现在净化器输出里，本能力只保存值，因此一条都不留。
+	for _, forbidden := range []string{"Set-Cookie", "Www-Authenticate", "Authorization", "X-Api-Key", "Cookie"} {
+		require.NotContains(t, attempt.HeaderValues.Response, forbidden)
+		require.NotContains(t, attempt.HeaderValues.Request, forbidden)
+	}
+	require.NotContains(t, fmt.Sprint(attempt.HeaderValues), "session=secret")
+	require.NotContains(t, fmt.Sprint(attempt.HeaderValues), "Bearer realm=secret")
+
+	// 正文一个字节都没带走：正文留存关着，头值不因此退化。
+	require.Empty(t, records[0].body)
+	require.Equal(t, ErrorDiagnosticBodyVerdictNotRequested, attempt.BodyVerdict)
+	require.Equal(t, []bool{false}, upstream.teedBodies(), "未开启正文留存时不得复制出站明文")
+}
+
+// A=429、B=200：只有收到 429 的那次尝试带头值，成功的那次既不产生诊断，也不把成功
+// 响应的头混进来（用不同的 Retry-After 值区分两次响应）。
+//
+// 这里刻意用两次逻辑请求来表达 A/B：单账号下令牌路径不会为 429 再发一次（没有可切换的
+// 账号），因此「同一次请求内的重试」不可依赖；两次请求同样能确定性地证明「成功的响应不采」。
+func TestMessagesErrorDiagnosticCapturesHeaderValuesOnlyForTheFailed429Attempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(
+		messagesDiagnosticUpstreamResponse{
+			status: http.StatusTooManyRequests,
+			body:   `{"error":{"type":"rate_limit_error","message":"rate limited"}}`,
+			header: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"42"}},
+		},
+		messagesDiagnosticUpstreamResponse{
+			status: http.StatusOK,
+			body:   `{"id":"msg_ok","type":"message","content":[]}`,
+			header: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"7"}},
+		},
+	)
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	body := messagesDiagnosticJSONBody()
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+
+	// 第二次逻辑请求收到 200：不得产生任何诊断，也不得把头值写进上一条记录。
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	require.Len(t, records, 1, "成功的那次尝试不得产生诊断")
+	require.Equal(t, http.StatusTooManyRequests, records[0].attempt.UpstreamStatusCode)
+	require.Equal(t, "42", records[0].attempt.HeaderValues.Response["Retry-After"],
+		"只应留下 429 那次响应的头值，不得混入后续成功响应的头")
+	require.NotContains(t, fmt.Sprint(records[0].attempt.HeaderValues), "7")
+}
+
+// 其余 4xx/5xx 不采头值：范围是 Messages + 恰好 429，其它状态按「未采集」记录，
+// 且正文元数据照旧（两者互不影响）。
+func TestMessagesErrorDiagnosticLeavesHeaderValuesUnobservedOutside429(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusInternalServerError,
+		body:   `{"error":{"message":"upstream failed"}}`,
+		header: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"42"}},
+	})
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	body := messagesDiagnosticJSONBody()
+	_, err := svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+	require.Error(t, err)
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, http.StatusInternalServerError, attempt.UpstreamStatusCode)
+	require.Equal(t, ErrorDiagnosticHeaderVerdictNotApplicable, attempt.HeaderVerdict)
+	require.True(t, attempt.HeaderValues.Empty(), "非 429 不得留下任何头值")
+	require.NotContains(t, fmt.Sprint(attempt.HeaderValues), "42")
+}
+
+// 未开启头值留存时（正文留存也关着）必须显式报告「没要求」，而不是悄悄不留。
+func TestMessagesErrorDiagnosticReportsHeaderValuesRetentionDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, false), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":{"type":"rate_limit_error"}}`,
+		header: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"42"}},
+	})
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	body := messagesDiagnosticJSONBody()
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, ErrorDiagnosticHeaderVerdictNotRequested, attempt.HeaderVerdict)
+	require.True(t, attempt.HeaderValues.Empty())
+	// 传输层连净化器都不该调用：没有 opt-in 就没有取值动作。
+	require.NotContains(t, fmt.Sprint(attempt.HeaderValues), "42")
+}
+
+// 多行同名头（同一头名多行）必须保住所有安全取值：按 HTTP 列表语义合并成一个取值，
+// 绝不静默只留第一行。这条端到端跑通「净化器 → 服务 → 尝试快照」的整条链。
+func TestMessagesErrorDiagnosticKeepsAllValuesOfAMultiLineHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	settings := newMessagesDiagnosticSettingService(
+		errorDiagnosticHeaderValuesSettingsJSON(false, true), nil,
+	)
+	recorder := &errorDiagnosticRecorderStub{}
+	upstream := newMessagesDiagnosticUpstreamStub(messagesDiagnosticUpstreamResponse{
+		status: http.StatusTooManyRequests,
+		body:   `{"error":{"type":"rate_limit_error"}}`,
+		header: http.Header{
+			"Content-Type":  {"application/json"},
+			"Retry-After":   {"42"},
+			"Cache-Control": {"no-store", "private"},
+		},
+	})
+	svc := messagesDiagnosticNativeService(t, settings, recorder, upstream)
+
+	body := messagesDiagnosticJSONBody()
+	_, _ = svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), messagesDiagnosticNativeAccount(), body, "", "")
+
+	records := requireMessagesDiagnosticRecords(t, recorder, 1)
+	attempt := records[0].attempt
+	require.Equal(t, ErrorDiagnosticHeaderVerdictCaptured, attempt.HeaderVerdict)
+	require.Equal(t, "no-store, private", attempt.HeaderValues.Response["Cache-Control"],
+		"多行同名头必须合并保留全部安全取值，而不是只留第一行")
+	require.Equal(t, "42", attempt.HeaderValues.Response["Retry-After"])
 }
 
 // messagesDiagnosticObserverBound 报告请求上下文里是否存在诊断观察者。

@@ -205,7 +205,9 @@ func (s *GatewayService) executeBedrockUpstream(
 		)
 		// 真实发送接缝：Bedrock 分支在 Forward 里提前返回，早于通用绑定点，
 		// 因此这里按入站 /v1/messages 的 messages 协议逐次绑定（每次重试各绑一次）。
-		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
+		// 元数据与正文诊断照旧；429 头值这一层按上游形态出界（真实上游是 AWS），
+		// 否则 AWS 形态的头会被当成 Claude Messages 的限流事实采集。
+		upstreamReq = s.bindBedrockMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
 		if err != nil {
 			if resp != nil && resp.Body != nil {

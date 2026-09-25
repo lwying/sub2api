@@ -21,6 +21,8 @@ const {
   updateRateLimit429AccountLimit,
   getKeyBillingSnapshotSettings,
   updateKeyBillingSnapshotSettings,
+  getRequestAuditValueDetailOperatorSettings,
+  updateRequestAuditValueDetailOperatorSettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,
@@ -53,6 +55,17 @@ const {
   updateRateLimit429AccountLimit: vi.fn(),
   getKeyBillingSnapshotSettings: vi.fn().mockResolvedValue({ enabled: false, max_stale_hours: 72 }),
   updateKeyBillingSnapshotSettings: vi.fn(),
+  getRequestAuditValueDetailOperatorSettings: vi.fn().mockResolvedValue({
+    enabled: false,
+    risk_acknowledged: false,
+    capture_allowed: false,
+    encryption_key_available: false,
+    risk_version: "v2026.09.24",
+    risk_phrase_en: "EN STATEMENT",
+    risk_phrase_zh: "中文确认语句",
+    risk_acknowledgement_current: false,
+  }),
+  updateRequestAuditValueDetailOperatorSettings: vi.fn(),
   getPanelRateLimitSettings: vi.fn().mockResolvedValue({
     enabled: true,
     user_rpm: 240,
@@ -104,6 +117,8 @@ vi.mock("@/api", () => ({
       updateRateLimit429AccountLimit,
       getKeyBillingSnapshotSettings,
       updateKeyBillingSnapshotSettings,
+      getRequestAuditValueDetailOperatorSettings,
+      updateRequestAuditValueDetailOperatorSettings,
       getPanelRateLimitSettings,
       updatePanelRateLimitSettings,
       getStreamTimeoutSettings,
@@ -2173,5 +2188,282 @@ describe("admin SettingsView platform quota matrix", () => {
     const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
     // 不管输入是什么，提交值应为 null（而非 "" 或 NaN）
     expect(quotas["anthropic"]?.["daily"]).toBe(null);
+  });
+});
+
+/**
+ * Operator gate seam for the Claude request-audit value details (ADR 0006).
+ *
+ * The panel is where an operator turns a default-off, encrypted, 7-day bypass on,
+ * so the tests pin the safety properties rather than the layout:
+ *
+ *   - the stored switch and the verified `capture_allowed` verdict are shown as two
+ *     separate facts, and the server is the only authority for both;
+ *   - enabling is deliberate every single time: the statement comes from the server
+ *     for the selected language, must be typed verbatim, and is discarded afterwards;
+ *   - disabling never needs a phrase, a language or a key, so it can never be blocked;
+ *   - a rejection is reported with mapped copy (400 / 403 / 503), never with the raw
+ *     server message, and nothing is optimistically flipped on.
+ */
+const REQUEST_AUDIT_VALUE_DETAIL_PHRASE_EN = "EN STATEMENT";
+const REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH = "中文确认语句";
+
+function requestAuditValueDetailStatus(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    enabled: false,
+    risk_acknowledged: false,
+    capture_allowed: false,
+    encryption_key_available: true,
+    risk_version: "v2026.09.24",
+    risk_phrase_en: REQUEST_AUDIT_VALUE_DETAIL_PHRASE_EN,
+    risk_phrase_zh: REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH,
+    risk_acknowledgement_current: false,
+    ...overrides,
+  };
+}
+
+describe("admin SettingsView request-audit value detail operator gate", () => {
+  beforeEach(() => {
+    getSettings.mockReset();
+    getRequestAuditValueDetailOperatorSettings.mockReset();
+    updateRequestAuditValueDetailOperatorSettings.mockReset();
+    fetchPublicSettings.mockReset();
+    adminSettingsFetch.mockReset();
+    showError.mockReset();
+    showSuccess.mockReset();
+    localeRef.value = "zh-CN";
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+
+    getSettings.mockResolvedValue({ ...baseSettingsResponse });
+    getRequestAuditValueDetailOperatorSettings.mockResolvedValue(
+      requestAuditValueDetailStatus(),
+    );
+  });
+
+  async function mountGatewayTab() {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    return wrapper;
+  }
+
+  it("shows the stored switch and the effective capture verdict as separate facts", async () => {
+    // Stored on, but the acknowledgement does not cover the current statement:
+    // the server reports this deliberately and neither side may be derived locally.
+    getRequestAuditValueDetailOperatorSettings.mockResolvedValue(
+      requestAuditValueDetailStatus({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: false,
+        encryption_key_available: true,
+        risk_acknowledgement_current: false,
+        risk_acknowledgement: {
+          version: "v2025.01.01",
+          phrase: REQUEST_AUDIT_VALUE_DETAIL_PHRASE_EN,
+          admin_user_id: 7,
+          accepted_at: "2025-01-01T00:00:00Z",
+        },
+      }),
+    );
+
+    const wrapper = await mountGatewayTab();
+
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-stored"]').attributes("data-state"),
+    ).toBe("on");
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-capture"]').attributes("data-state"),
+    ).toBe("off");
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-key"]').attributes("data-state"),
+    ).toBe("on");
+
+    // The mismatch is explained as "stored on, nothing runs", with the reason.
+    expect(wrapper.find('[data-testid="request-audit-value-detail-mismatch"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="request-audit-value-detail-ack-stale"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="request-audit-value-detail-ack"]').text()).toContain(
+      "v2025.01.01",
+    );
+  });
+
+  it("says nothing about an unreadable status except that it is unreadable", async () => {
+    getRequestAuditValueDetailOperatorSettings.mockRejectedValue({
+      status: 503,
+      reason: "REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_UNAVAILABLE",
+    });
+
+    const wrapper = await mountGatewayTab();
+
+    expect(wrapper.find('[data-testid="request-audit-value-detail-unavailable"]').exists()).toBe(
+      true,
+    );
+    // "Could not be read" is never rendered as "off".
+    expect(wrapper.find('[data-testid="request-audit-value-detail-stored"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="request-audit-value-detail-capture"]').exists()).toBe(false);
+    // Loading a panel must never be an enabling action.
+    expect(updateRequestAuditValueDetailOperatorSettings).not.toHaveBeenCalled();
+  });
+
+  it("requires the selected language statement verbatim before it enables", async () => {
+    updateRequestAuditValueDetailOperatorSettings.mockImplementation(async () =>
+      requestAuditValueDetailStatus({ enabled: true, capture_allowed: true }),
+    );
+
+    const wrapper = await mountGatewayTab();
+
+    // Load alone never enables anything.
+    expect(updateRequestAuditValueDetailOperatorSettings).not.toHaveBeenCalled();
+
+    const required = wrapper.get('[data-testid="request-audit-value-detail-required-phrase"]');
+    const input = wrapper.get('[data-testid="request-audit-value-detail-phrase-input"]');
+    const enable = wrapper.get('[data-testid="request-audit-value-detail-enable"]');
+
+    // The UI shows the server's own text for the selected locale, not its own copy.
+    expect(required.text()).toBe(REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH);
+    expect((enable.element as HTMLButtonElement).disabled).toBe(true);
+
+    // The other language's statement is not the one being acknowledged.
+    await input.setValue(REQUEST_AUDIT_VALUE_DETAIL_PHRASE_EN);
+    expect((enable.element as HTMLButtonElement).disabled).toBe(true);
+
+    await input.setValue(`  ${REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH}  `);
+    expect((enable.element as HTMLButtonElement).disabled).toBe(false);
+    await enable.trigger("click");
+    await flushPromises();
+
+    expect(updateRequestAuditValueDetailOperatorSettings).toHaveBeenCalledTimes(1);
+    expect(updateRequestAuditValueDetailOperatorSettings).toHaveBeenCalledWith({
+      enabled: true,
+      language: "zh",
+      phrase: REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH,
+    });
+    // The statement is not kept: the next enable has to be given again.
+    expect((input.element as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("never writes the typed statement to browser storage", async () => {
+    const wrapper = await mountGatewayTab();
+
+    await wrapper
+      .get('[data-testid="request-audit-value-detail-phrase-input"]')
+      .setValue(REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH);
+
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("switches the visible statement with the language and discards what was typed", async () => {
+    const wrapper = await mountGatewayTab();
+    const input = wrapper.get('[data-testid="request-audit-value-detail-phrase-input"]');
+
+    await input.setValue(REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH);
+    await wrapper.get('[data-testid="request-audit-value-detail-language-en"]').setValue(true);
+
+    expect(wrapper.get('[data-testid="request-audit-value-detail-required-phrase"]').text()).toBe(
+      REQUEST_AUDIT_VALUE_DETAIL_PHRASE_EN,
+    );
+    // A statement typed for one language is not a statement for the other.
+    expect((input.element as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("keeps disabling available with no key and no acknowledgement on record", async () => {
+    getRequestAuditValueDetailOperatorSettings.mockResolvedValue(
+      requestAuditValueDetailStatus({
+        enabled: true,
+        risk_acknowledged: false,
+        capture_allowed: false,
+        encryption_key_available: false,
+      }),
+    );
+    updateRequestAuditValueDetailOperatorSettings.mockImplementation(async () =>
+      requestAuditValueDetailStatus(),
+    );
+
+    const wrapper = await mountGatewayTab();
+
+    expect(wrapper.find('[data-testid="request-audit-value-detail-ack-none"]').exists()).toBe(true);
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-key"]').attributes("data-state"),
+    ).toBe("off");
+
+    // The direction that must always work: no statement, no language, no prerequisite.
+    const disable = wrapper.get('[data-testid="request-audit-value-detail-disable"]');
+    expect((disable.element as HTMLButtonElement).disabled).toBe(false);
+    await disable.trigger("click");
+    await flushPromises();
+
+    expect(updateRequestAuditValueDetailOperatorSettings).toHaveBeenCalledWith({
+      enabled: false,
+      language: "zh",
+      phrase: "",
+    });
+  });
+
+  it("reports 400 / 403 / 503 with mapped copy and never echoes the server message", async () => {
+    const cases: Array<{ status: number; reason?: string; key: string }> = [
+      { status: 400, reason: "REQUEST_AUDIT_VALUE_DETAIL_RISK_ACK_REQUIRED", key: "phraseRequired" },
+      { status: 400, reason: "REQUEST_AUDIT_VALUE_DETAIL_RISK_ACK_INVALID", key: "phraseInvalid" },
+      { status: 400, reason: "REQUEST_AUDIT_VALUE_DETAIL_KEY_UNAVAILABLE", key: "keyUnavailable" },
+      { status: 400, key: "rejected" },
+      {
+        status: 403,
+        reason: "REQUEST_AUDIT_VALUE_DETAIL_OPERATOR_SESSION_REQUIRED",
+        key: "sessionRequired",
+      },
+      {
+        status: 403,
+        reason: "REQUEST_AUDIT_VALUE_DETAIL_ADMIN_API_KEY_FORBIDDEN",
+        key: "adminApiKeyForbidden",
+      },
+      { status: 403, key: "forbidden" },
+      { status: 503, reason: "REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_UNAVAILABLE", key: "unavailable" },
+      { status: 503, key: "unavailable" },
+    ];
+
+    for (const testCase of cases) {
+      // A fresh spy per case, so the call count below is this attempt's alone.
+      updateRequestAuditValueDetailOperatorSettings.mockReset();
+      updateRequestAuditValueDetailOperatorSettings.mockRejectedValueOnce({
+        status: testCase.status,
+        reason: testCase.reason,
+        message: "<img src=x onerror=alert(1)>",
+      });
+
+      const wrapper = await mountGatewayTab();
+      await wrapper
+        .get('[data-testid="request-audit-value-detail-phrase-input"]')
+        .setValue(REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH);
+      await wrapper.get('[data-testid="request-audit-value-detail-enable"]').trigger("click");
+      await flushPromises();
+
+      // One deliberate click is exactly one request: no implicit second attempt.
+      expect(updateRequestAuditValueDetailOperatorSettings).toHaveBeenCalledTimes(1);
+
+      const error = wrapper.get('[data-testid="request-audit-value-detail-error"]');
+      expect(error.text()).toContain(
+        `admin.settings.requestAuditValueDetail.errors.${testCase.key}`,
+      );
+      expect(error.text()).not.toContain("<img");
+      // A rejection is never shown as an optimistic "on".
+      expect(
+        wrapper.get('[data-testid="request-audit-value-detail-stored"]').attributes("data-state"),
+      ).toBe("off");
+    }
+  });
+
+  it("keeps the operator copy in both locales", () => {
+    const en = enSettings.settings.requestAuditValueDetail;
+    const zh = zhSettings.settings.requestAuditValueDetail;
+
+    expect(en.title.length).toBeGreaterThan(0);
+    expect(zh.title.length).toBeGreaterThan(0);
+    // Enabling is a verbatim act in either language.
+    expect(en.enable.notice).toContain("exactly");
+    expect(zh.enable.notice).toContain("逐字");
+    expect(en.errors.phraseInvalid.length).toBeGreaterThan(0);
+    expect(zh.errors.phraseInvalid.length).toBeGreaterThan(0);
   });
 });

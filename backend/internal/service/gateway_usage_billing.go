@@ -58,8 +58,9 @@ type RecordUsageInput struct {
 	RequestAuditAttempts    []RequestAuditAttempt // 上游尝试时间线；不含模型正文
 	RequestAuditFingerprint *RequestAuditFingerprintInput
 	RequestAuditMetadata    RequestAuditMetadata
-	NotCapturedReason       string // 未采集原因；空值表示本路径已纳入采集
-	AuditLogicalKey         string // forced reservation logical key；空值表示普通审计
+	RequestAuditValueDetail RequestAuditValueDetailInput // 默认关闭的 Claude 值快照，只在审计行落库后加密存储
+	NotCapturedReason       string                       // 未采集原因；空值表示本路径已纳入采集
+	AuditLogicalKey         string                       // forced reservation logical key；空值表示普通审计
 
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
 }
@@ -744,6 +745,7 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		RequestAuditAttempts:    input.RequestAuditAttempts,
 		RequestAuditFingerprint: input.RequestAuditFingerprint,
 		RequestAuditMetadata:    input.RequestAuditMetadata,
+		RequestAuditValueDetail: input.RequestAuditValueDetail,
 		NotCapturedReason:       input.NotCapturedReason,
 		AuditLogicalKey:         input.AuditLogicalKey,
 		ChannelUsageFields:      input.ChannelUsageFields,
@@ -771,6 +773,7 @@ type recordUsageCoreInput struct {
 	RequestAuditAttempts    []RequestAuditAttempt
 	RequestAuditFingerprint *RequestAuditFingerprintInput
 	RequestAuditMetadata    RequestAuditMetadata
+	RequestAuditValueDetail RequestAuditValueDetailInput
 	NotCapturedReason       string
 	AuditLogicalKey         string
 	ChannelUsageFields
@@ -984,6 +987,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			Fingerprint:      input.RequestAuditFingerprint,
 			Metadata:         input.RequestAuditMetadata,
 		})
+		if input.RequestAuditValueDetail.Route != "" {
+			s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
+		}
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -1025,6 +1031,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			Fingerprint:      input.RequestAuditFingerprint,
 			Metadata:         input.RequestAuditMetadata,
 		})
+		if input.RequestAuditValueDetail.Route != "" {
+			s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
+		}
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
@@ -1036,6 +1045,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		Fingerprint:      input.RequestAuditFingerprint,
 		Metadata:         input.RequestAuditMetadata,
 	})
+	if input.RequestAuditValueDetail.Route != "" {
+		s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
+	}
 
 	return nil
 }

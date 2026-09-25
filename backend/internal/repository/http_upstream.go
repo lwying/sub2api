@@ -460,7 +460,14 @@ func (t *grokAccessDeniedFallbackTransport) roundTripAttempt(req *http.Request) 
 			Capture:    capture,
 		}
 	}
+	roundTripStartedAt := time.Now()
 	resp, err := t.base.RoundTrip(request)
+	if attempt != nil {
+		// 尝试级耗时只记录在内存中的尝试元数据上（默认关闭的值明细旁路才会消费它，
+		// 并且只在加密载荷里落库）。连接失败也照样记录：耗时是测量的结果，
+		// 不是成功／失败的判据。
+		attempt.SetLatencyMillis(time.Since(roundTripStartedAt).Milliseconds())
+	}
 	if resp != nil {
 		if attempt != nil {
 			attempt.SetResponse(resp.StatusCode, resp.Header, resp.Body != nil && resp.Body != http.NoBody)

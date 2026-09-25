@@ -58,6 +58,8 @@ func errorDiagnosticSelectColumns() *sqlmock.Rows {
 		"diagnostic_id", "usage_log_id", "protocol", "attempt_index", "stage", "upstream_status",
 		"body_state", "body_reason", "body_stored", "body_bytes", "body_key_version",
 		"created_at", "metadata_expires_at", "body_expires_at",
+		"header_state", "header_reason", "header_stored", "header_bytes", "header_key_version",
+		"header_entry_count", "header_expires_at",
 	})
 }
 
@@ -137,6 +139,8 @@ func TestErrorDiagnosticRepository_CreateMetadataOnlyBindsNoBody(t *testing.T) {
 			service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
 			nil, 0, 0,
 			now, now.Add(service.ErrorDiagnosticMetadataRetention), nil,
+			service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+			nil, 0, 0, 0, nil,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 
@@ -179,6 +183,8 @@ func TestErrorDiagnosticRepository_CreateRetainedBodyBindsCiphertext(t *testing.
 			service.ErrorDiagnosticBodyStateStored, service.ErrorDiagnosticBodyRetained,
 			ciphertext, 2, len(plaintext),
 			now, now.Add(service.ErrorDiagnosticMetadataRetention), now.Add(service.ErrorDiagnosticBodyRetention),
+			service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+			nil, 0, 0, 0, nil,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 
@@ -212,6 +218,8 @@ func TestErrorDiagnosticRepository_ClaimedStoredWithoutCiphertextIsDowngraded(t 
 			service.ErrorDiagnosticBodyStateSkipped, service.ErrorDiagnosticBodySkippedEncryptionUnavailable,
 			nil, 0, 0,
 			now, now.Add(service.ErrorDiagnosticMetadataRetention), nil,
+			service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+			nil, 0, 0, 0, nil,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 
@@ -240,6 +248,8 @@ func TestErrorDiagnosticRepository_ReadMapsNullableColumns(t *testing.T) {
 			service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
 			false, 0, 0,
 			created, created.Add(service.ErrorDiagnosticMetadataRetention), nil,
+			service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+			false, 0, 0, 0, nil,
 		))
 
 	record, err := repo.GetErrorDiagnostic(ctx, id)
@@ -363,10 +373,14 @@ func TestErrorDiagnosticRepository_ListsAreBoundedAndOrdered(t *testing.T) {
 		WillReturnRows(errorDiagnosticSelectColumns().
 			AddRow(firstID, nil, service.ErrorDiagnosticProtocolMessages, 0, service.ErrorDiagnosticStageWire, 500,
 				service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
-				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil).
+				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil,
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				false, 0, 0, 0, nil).
 			AddRow(secondID, int64(9), service.ErrorDiagnosticProtocolMessages, 1, service.ErrorDiagnosticStageWire, 502,
 				service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
-				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil))
+				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil,
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				false, 0, 0, 0, nil))
 
 	records, err := repo.ListRecentErrorDiagnostics(ctx, service.ErrorDiagnosticProtocolMessages, 25)
 	require.NoError(t, err)
@@ -382,7 +396,9 @@ func TestErrorDiagnosticRepository_ListsAreBoundedAndOrdered(t *testing.T) {
 		WillReturnRows(errorDiagnosticSelectColumns().
 			AddRow(secondID, int64(9), service.ErrorDiagnosticProtocolMessages, 1, service.ErrorDiagnosticStageWire, 502,
 				service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
-				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil))
+				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil,
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				false, 0, 0, 0, nil))
 
 	linked, err := repo.ListErrorDiagnosticsByUsageLog(ctx, 9, 10)
 	require.NoError(t, err)
@@ -428,6 +444,247 @@ func TestErrorDiagnosticRepository_CleanupTargetsOnlyExpiredRows(t *testing.T) {
 	_, err = repo.DeleteExpiredErrorDiagnostics(ctx, now, 100)
 	require.ErrorIs(t, err, cleanupErr)
 
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestErrorDiagnosticRepository_HeaderValuesAreStoredIndependentlyOfBody 覆盖二者的正交性：
+// 正文不留存而 429 头值留存必须同时成立——这正是「头值与正文互不影响」在存储层的体现。
+func TestErrorDiagnosticRepository_HeaderValuesAreStoredIndependentlyOfBody(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cipher := newErrorDiagnosticSQLMock(t)
+	repo := NewErrorDiagnosticRepository(db, cipher)
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+
+	payload, err := service.EncodeErrorDiagnosticHeaderValues(service.ErrorDiagnosticHeaderValues{
+		Response: map[string]string{"Retry-After": "42"},
+	})
+	require.NoError(t, err)
+	ciphertext, err := cipher.Encrypt(payload)
+	require.NoError(t, err)
+
+	write := errorDiagnosticWriteFixture(t)
+	write.Attempt.Protocol = service.ErrorDiagnosticProtocolMessages
+	write.Attempt.UpstreamStatusCode = 429
+	write.Attempt.HeaderValues = service.ErrorDiagnosticHeaderValues{
+		Response: map[string]string{"Retry-After": "42"},
+	}
+	write.BodyState = service.ErrorDiagnosticBodyStateSkipped
+	write.BodyReason = service.ErrorDiagnosticBodySkippedRetentionDisabled
+	write.HeaderState = service.ErrorDiagnosticHeaderStateStored
+	write.HeaderReason = service.ErrorDiagnosticHeaderRetained
+	write.HeaderCiphertext = ciphertext
+	write.HeaderKeyVersion = 2
+	write.HeaderEntryCount = 1
+	write.HeaderPayloadBytes = len(payload)
+
+	mock.ExpectQuery(`(?s)INSERT INTO error_diagnostic_records.*RETURNING created_at`).
+		WithArgs(
+			write.ID, nil, service.ErrorDiagnosticProtocolMessages, 1, service.ErrorDiagnosticStageWire, 429,
+			service.ErrorDiagnosticBodyStateSkipped, service.ErrorDiagnosticBodySkippedRetentionDisabled,
+			nil, 0, 0,
+			now, now.Add(service.ErrorDiagnosticMetadataRetention), nil,
+			service.ErrorDiagnosticHeaderStateStored, service.ErrorDiagnosticHeaderRetained,
+			ciphertext, 2, len(payload), 1, now.Add(service.ErrorDiagnosticHeaderRetention),
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
+
+	record, err := repo.CreateErrorDiagnostic(ctx, write, now)
+	require.NoError(t, err)
+	require.False(t, record.BodyStored, "正文未留存")
+	require.True(t, record.BodyExpiresAt.IsZero())
+	require.True(t, record.HeaderStored, "头值必须留存")
+	require.Equal(t, now.Add(service.ErrorDiagnosticHeaderRetention), record.HeaderExpiresAt)
+	require.Equal(t, len(payload), record.HeaderBytes)
+	require.Equal(t, 1, record.HeaderEntryCount)
+	require.Equal(t, 2, record.HeaderKeyVersion)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestErrorDiagnosticRepository_ClaimedStoredHeaderValuesWithoutCiphertextAreDowngraded 覆盖
+// 「自称已留存头值却没有密文」的写入被降级为未留存，绝不在库里留下自相矛盾的行。
+func TestErrorDiagnosticRepository_ClaimedStoredHeaderValuesWithoutCiphertextAreDowngraded(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cipher := newErrorDiagnosticSQLMock(t)
+	repo := NewErrorDiagnosticRepository(db, cipher)
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+
+	write := errorDiagnosticWriteFixture(t)
+	write.Attempt.Protocol = service.ErrorDiagnosticProtocolMessages
+	write.Attempt.UpstreamStatusCode = 429
+	write.HeaderState = service.ErrorDiagnosticHeaderStateStored
+	write.HeaderReason = service.ErrorDiagnosticHeaderRetained
+	write.HeaderEntryCount = 3
+
+	mock.ExpectQuery(`(?s)INSERT INTO error_diagnostic_records.*RETURNING created_at`).
+		WithArgs(
+			write.ID, nil, service.ErrorDiagnosticProtocolMessages, 1, service.ErrorDiagnosticStageWire, 429,
+			service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
+			nil, 0, 0,
+			now, now.Add(service.ErrorDiagnosticMetadataRetention), nil,
+			service.ErrorDiagnosticHeaderStateSkipped, service.ErrorDiagnosticHeaderSkippedEncryptionUnavailable,
+			nil, 0, 0, 0, nil,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
+
+	record, err := repo.CreateErrorDiagnostic(ctx, write, now)
+	require.NoError(t, err)
+	require.False(t, record.HeaderStored)
+	require.Equal(t, service.ErrorDiagnosticHeaderStateSkipped, record.HeaderState)
+	require.Equal(t, service.ErrorDiagnosticHeaderSkippedEncryptionUnavailable, record.HeaderReason)
+	require.Zero(t, record.HeaderEntryCount)
+	require.True(t, record.HeaderExpiresAt.IsZero())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestErrorDiagnosticRepository_ReadHeaderValuesRefusesGoneWithoutLeaking 覆盖读取路径：
+// 未到期才解密，且解密结果必须重新通过白名单校验；其余情形一律收敛成同一个「不可用」。
+func TestErrorDiagnosticRepository_ReadHeaderValuesRefusesGoneWithoutLeaking(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cipher := newErrorDiagnosticSQLMock(t)
+	repo := NewErrorDiagnosticRepository(db, cipher)
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	id := validErrorDiagnosticID(t)
+
+	payload, err := service.EncodeErrorDiagnosticHeaderValues(service.ErrorDiagnosticHeaderValues{
+		Request: map[string]string{"Anthropic-Version": "2023-06-01"},
+	})
+	require.NoError(t, err)
+	ciphertext, err := cipher.Encrypt(payload)
+	require.NoError(t, err)
+
+	expect := func() *sqlmock.ExpectedQuery {
+		return mock.ExpectQuery(`(?s)SELECT header_ciphertext, header_expires_at, metadata_expires_at`).WithArgs(id)
+	}
+
+	// 头值已过第 7 天：即使密文还在也拒绝。
+	expect().WillReturnRows(sqlmock.NewRows([]string{"header_ciphertext", "header_expires_at", "metadata_expires_at"}).
+		AddRow(ciphertext, now.Add(-time.Minute), now.Add(20*24*time.Hour)))
+	_, err = repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	// 元数据已过第 30 天。
+	expect().WillReturnRows(sqlmock.NewRows([]string{"header_ciphertext", "header_expires_at", "metadata_expires_at"}).
+		AddRow(ciphertext, now.Add(time.Hour), now.Add(-time.Minute)))
+	_, err = repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	// 密文已被第 7 天清理置空。
+	expect().WillReturnRows(sqlmock.NewRows([]string{"header_ciphertext", "header_expires_at", "metadata_expires_at"}).
+		AddRow(nil, now.Add(time.Hour), now.Add(20*24*time.Hour)))
+	_, err = repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	// 行已删除。
+	expect().WillReturnError(sql.ErrNoRows)
+	_, err = repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	// 未到期：解密后逐条一致。
+	expect().WillReturnRows(sqlmock.NewRows([]string{"header_ciphertext", "header_expires_at", "metadata_expires_at"}).
+		AddRow(ciphertext, now.Add(time.Hour), now.Add(20*24*time.Hour)))
+	values, err := repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"Anthropic-Version": "2023-06-01"}, values.Request)
+
+	// 密文被篡改：认证失败必须收敛成不可用，不返回任何内容。
+	tampered := append([]byte(nil), ciphertext...)
+	tampered[len(tampered)-1] ^= 0xFF
+	expect().WillReturnRows(sqlmock.NewRows([]string{"header_ciphertext", "header_expires_at", "metadata_expires_at"}).
+		AddRow(tampered, now.Add(time.Hour), now.Add(20*24*time.Hour)))
+	_, err = repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	// 解密成功但内容不合格（未知头名）：同样不可用，绝不把越界内容当结果返回。
+	invalid, err := cipher.Encrypt([]byte(`{"request":{"x-custom-prompt":"private"}}`))
+	require.NoError(t, err)
+	expect().WillReturnRows(sqlmock.NewRows([]string{"header_ciphertext", "header_expires_at", "metadata_expires_at"}).
+		AddRow(invalid, now.Add(time.Hour), now.Add(20*24*time.Hour)))
+	_, err = repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestErrorDiagnosticRepository_HeaderValuesNeedCipherAndValidID 覆盖缺密钥与非法 ID：
+// 连查询都不发起，头值一律不可读。
+func TestErrorDiagnosticRepository_HeaderValuesNeedCipherAndValidID(t *testing.T) {
+	ctx := context.Background()
+	// 固定 UTC 时刻：仓储会把入参规范化成 UTC，带单调时钟的 time.Now() 与之不可比。
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+
+	// 缺密钥：读取不查询（无密钥就解密不了），但**清理必须照常执行**——
+	// 否则一旦稳定密钥丢失，已到期的头值密文就再也清不掉了。
+	db, mock, _ := newErrorDiagnosticSQLMock(t)
+	repo := NewErrorDiagnosticRepository(db, nil)
+	_, err := repo.ReadErrorDiagnosticHeaderValues(ctx, validErrorDiagnosticID(t), now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+
+	mock.ExpectExec(`(?s)UPDATE error_diagnostic_records`).WithArgs(now, 10).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	cleared, err := repo.ClearExpiredErrorDiagnosticHeaderValues(ctx, now, 10)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, cleared)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// 非法 ID：不查询。
+	db2, mock2, cipher2 := newErrorDiagnosticSQLMock(t)
+	repo2 := NewErrorDiagnosticRepository(db2, cipher2)
+	_, err = repo2.ReadErrorDiagnosticHeaderValues(ctx, "'; DROP TABLE error_diagnostic_records; --", now)
+	require.ErrorIs(t, err, service.ErrErrorDiagnosticHeaderValuesGone)
+	require.NoError(t, mock2.ExpectationsWereMet())
+}
+
+// TestErrorDiagnosticRepository_ClearExpiredHeaderValuesOnlyTouchesCiphertext 覆盖头值清理：
+// 只置空密文列与密钥代并记 purged，保留整行元数据与到期时刻。
+func TestErrorDiagnosticRepository_ClearExpiredHeaderValuesOnlyTouchesCiphertext(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cipher := newErrorDiagnosticSQLMock(t)
+	repo := NewErrorDiagnosticRepository(db, cipher)
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec(`(?s)UPDATE error_diagnostic_records\s+SET header_ciphertext = NULL, header_key_version = 0, header_state = 'purged'.*header_expires_at <= \$1`).
+		WithArgs(now, 100).
+		WillReturnResult(sqlmock.NewResult(0, 5))
+	cleared, err := repo.ClearExpiredErrorDiagnosticHeaderValues(ctx, now, 100)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, cleared)
+
+	// 清理失败必须冒泡，不能伪称已清理。
+	cleanupErr := errors.New("deadlock detected")
+	mock.ExpectExec(`(?s)UPDATE error_diagnostic_records`).WithArgs(now, 100).WillReturnError(cleanupErr)
+	_, err = repo.ClearExpiredErrorDiagnosticHeaderValues(ctx, now, 100)
+	require.ErrorIs(t, err, cleanupErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestErrorDiagnosticRepository_BacklogReportsHeaderValues 覆盖积压观测扩展到头值列：
+// 「这一层是否落后」必须可见，否则 7 天头值的物理残留无从发现。
+func TestErrorDiagnosticRepository_BacklogReportsHeaderValues(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cipher := newErrorDiagnosticSQLMock(t)
+	repo := NewErrorDiagnosticRepository(db, cipher)
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	oldest := now.Add(-90 * time.Minute)
+
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\), MIN\(body_expires_at\).*body_ciphertext IS NOT NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"count", "min"}).AddRow(int64(2), now.Add(-time.Hour)))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\), MIN\(metadata_expires_at\).*metadata_expires_at <= \$1`).
+		WithArgs(now).
+		WillReturnRows(sqlmock.NewRows([]string{"count", "min"}).AddRow(int64(1), now.Add(-30*time.Minute)))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\), MIN\(header_expires_at\).*header_ciphertext IS NOT NULL`).
+		WithArgs(now).
+		WillReturnRows(sqlmock.NewRows([]string{"count", "min"}).AddRow(int64(4), oldest))
+
+	backlogReader, ok := repo.(service.ErrorDiagnosticCleanupBacklogReader)
+	require.True(t, ok, "真实仓储必须提供积压观测能力")
+	backlog, err := backlogReader.ReadErrorDiagnosticCleanupBacklog(ctx, now)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, backlog.BodiesOverdue)
+	require.EqualValues(t, 1, backlog.RecordsOverdue)
+	require.EqualValues(t, 4, backlog.HeaderValuesOverdue)
+	require.Equal(t, oldest, backlog.OldestHeaderOverdueAt)
+	// 最老超期时长必须把三段一起看，否则头值卡住时监控仍显示「没有落后」。
+	require.EqualValues(t, 5400, backlog.OldestOverdueSeconds(now))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -550,7 +807,9 @@ func TestErrorDiagnosticRepository_PageUsesBoundedWindow(t *testing.T) {
 		WillReturnRows(errorDiagnosticSelectColumns().
 			AddRow(id, nil, service.ErrorDiagnosticProtocolMessages, 0, service.ErrorDiagnosticStageWire, 500,
 				service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved,
-				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil))
+				false, 0, 0, created, created.Add(service.ErrorDiagnosticMetadataRetention), nil,
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				false, 0, 0, 0, nil))
 
 	page, err := repo.ListRecentErrorDiagnosticPage(ctx, service.ErrorDiagnosticProtocolMessages, now, 40, 20)
 	require.NoError(t, err)
@@ -689,6 +948,8 @@ func TestErrorDiagnosticRepository_BodyExpiryIsBoundOnlyWithCiphertext(t *testin
 				service.ErrorDiagnosticBodyStateStored, service.ErrorDiagnosticBodyRetained,
 				ciphertext, 2, len(plaintext),
 				now, now.Add(service.ErrorDiagnosticMetadataRetention), sql.NullTime{Time: wantExpiry, Valid: true},
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				nil, 0, 0, 0, nil,
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 
@@ -714,6 +975,8 @@ func TestErrorDiagnosticRepository_BodyExpiryIsBoundOnlyWithCiphertext(t *testin
 				service.ErrorDiagnosticBodyStateSkipped, service.ErrorDiagnosticBodySkippedTooLarge,
 				nil, 0, 0,
 				now, now.Add(service.ErrorDiagnosticMetadataRetention), sql.NullTime{},
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				nil, 0, 0, 0, nil,
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 
@@ -739,6 +1002,8 @@ func TestErrorDiagnosticRepository_BodyExpiryIsBoundOnlyWithCiphertext(t *testin
 				service.ErrorDiagnosticBodyStateSkipped, service.ErrorDiagnosticBodySkippedEncryptionUnavailable,
 				nil, 0, 0,
 				now, now.Add(service.ErrorDiagnosticMetadataRetention), sql.NullTime{},
+				service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved,
+				nil, 0, 0, 0, nil,
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 

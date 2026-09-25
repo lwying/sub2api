@@ -30,6 +30,7 @@ type Application struct {
 	PluginManager                  *service.PluginManager
 	RequestAuditReservationCleanup *service.RequestAuditReservationCleanupService
 	ErrorDiagnosticCleanup         *service.ErrorDiagnosticCleanupService
+	RequestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService
 	Cleanup                        func()
 }
 
@@ -60,7 +61,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "RequestAuditReservationCleanup", "ErrorDiagnosticCleanup", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "RequestAuditReservationCleanup", "ErrorDiagnosticCleanup", "RequestAuditValueDetailCleanup", "Cleanup"),
 	)
 	return nil, nil
 }
@@ -109,6 +110,7 @@ func provideCleanup(
 	idempotencyCleanup *service.IdempotencyCleanupService,
 	requestAuditReservationCleanup *service.RequestAuditReservationCleanupService,
 	errorDiagnosticCleanup *service.ErrorDiagnosticCleanupService,
+	requestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -258,6 +260,12 @@ func provideCleanup(
 			{"ErrorDiagnosticCleanupService", func() error {
 				if errorDiagnosticCleanup != nil {
 					errorDiagnosticCleanup.Stop()
+				}
+				return nil
+			}},
+			{"RequestAuditValueDetailCleanupService", func() error {
+				if requestAuditValueDetailCleanup != nil {
+					requestAuditValueDetailCleanup.Stop()
 				}
 				return nil
 			}},
