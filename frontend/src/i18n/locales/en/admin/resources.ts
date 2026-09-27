@@ -640,14 +640,16 @@ export default {
           expiresAt: 'Values readable until',
           disabled: 'Short-term value capture is off for this instance, so values are not being collected.',
           notice:
-            'Header values, parsed client identifiers and the model name below are decrypted only when requested, are readable for a few days, and are never cached. Credentials, cookies and request bodies are never collected here.',
+            'Legacy encrypted header and identifier values are decrypted only on explicit reveal, readable for seven days, and never cached.',
+          plaintextUsageNotice:
+            'New allowlisted header values, bounded identifiers and caller-controlled model aliases are stored in plaintext for as long as the usage record exists. With usage cleanup disabled they can remain readable indefinitely. The same upstream 429 header may also be retained independently in error diagnostics under its own consent and validation outcome. Values may contain unrecognized secrets. Reveals are not cached; credentials, cookies and full request bodies are excluded.',
           reveal: 'Reveal short-term values',
           revealing: 'Revealing…',
           revealFailed: 'The short-term values could not be revealed',
           truncated:
             'Some submitted entries were not accepted, so this view may not list everything the client sent.',
           validationDropped:
-            "Some retained values did not pass this view's validation, so it may not list everything the record holds.",
+            'Some retained values did not pass read-side validation (on the server or in this view), so it may not list everything the record holds.',
           model: 'Model',
           inbound: 'Inbound values',
           deviceId: 'Device ID',
@@ -673,6 +675,7 @@ export default {
             skippedEncryptionUnavailable: 'Encryption was unavailable',
             skippedInvalidValues: 'The collected values did not pass validation',
             skippedTooManyAttempts: 'The request had more upstream attempts than can be recorded',
+            skippedUnsupportedProtocol: 'This wire protocol is not supported for value capture',
             unknown: 'Unknown retention outcome',
           },
         },

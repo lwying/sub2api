@@ -630,6 +630,84 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 	}
 }
 
+func TestAccountRepository_ListAccountOptionsCombinesInactiveAndDisabled(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
+	legacy := mustCreateAccount(t, client, &service.Account{Name: "grant-option-disabled", Status: service.StatusDisabled})
+	current := mustCreateAccount(t, client, &service.Account{Name: "grant-option-inactive", Status: service.StatusInactive})
+	other := mustCreateAccount(t, client, &service.Account{Name: "grant-option-active", Status: service.StatusActive})
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM accounts WHERE id IN ($1, $2, $3)`, legacy.ID, current.ID, other.ID)
+	})
+
+	rows, result, err := repo.ListAccountOptions(ctx, pagination.PaginationParams{Page: 1, PageSize: 1, SortBy: "name", SortOrder: "asc"}, "", "", service.StatusInactive, "grant-option", 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.EqualValues(t, 2, result.Total)
+	first := rows[0].ID
+	rows, result, err = repo.ListAccountOptions(ctx, pagination.PaginationParams{Page: 2, PageSize: 1, SortBy: "name", SortOrder: "asc"}, "", "", service.StatusInactive, "grant-option", 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.EqualValues(t, 2, result.Total)
+	require.ElementsMatch(t, []int64{legacy.ID, current.ID}, []int64{first, rows[0].ID})
+
+	_, err = client.Account.UpdateOneID(legacy.ID).SetStatus(" \tDiSaBlEd \t").Save(ctx)
+	require.NoError(t, err)
+	rows, result, err = repo.ListAccountOptions(ctx, pagination.PaginationParams{Page: 1, PageSize: 20, SortBy: "name", SortOrder: "asc"}, "", "", " InActive ", "grant-option", 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, result.Total)
+	require.ElementsMatch(t, []int64{legacy.ID, current.ID}, []int64{rows[0].ID, rows[1].ID})
+}
+
+// TestAccountRepository_ListAccountOptionsNarrowProjection 固定候选接口的窄投影：
+// 授权弹窗只需要 id/name/platform/type/status，因此即使账号带凭据、extra 与代理绑定，
+// 候选页也不得把这些内容读进返回的 service.Account（更不加载代理/分组），
+// 否则每次候选筛选都会把整页凭据与 extra 复制进内存。
+func TestAccountRepository_ListAccountOptionsNarrowProjection(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
+	proxy := mustCreateProxy(t, client, &service.Proxy{
+		Name:     "grant-option-narrow-proxy",
+		Username: "proxy-user",
+		Password: "sentinel-proxy-secret",
+	})
+	account := mustCreateAccount(t, client, &service.Account{
+		Name:        "grant-option-narrow",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Credentials: map[string]any{"access_token": "sentinel-credential"},
+		Extra:       map[string]any{"private": "sentinel-extra"},
+		ProxyID:     &proxy.ID,
+	})
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM account_groups WHERE account_id = $1`, account.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, account.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM proxies WHERE id = $1`, proxy.ID)
+	})
+
+	rows, result, err := repo.ListAccountOptions(ctx, pagination.PaginationParams{Page: 1, PageSize: 20, SortBy: "name", SortOrder: "asc"}, "", "", "", "grant-option-narrow", 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.Total)
+	require.Len(t, rows, 1)
+
+	// 需要的五个字段必须仍然正确。
+	require.Equal(t, account.ID, rows[0].ID)
+	require.Equal(t, "grant-option-narrow", rows[0].Name)
+	require.Equal(t, service.PlatformOpenAI, rows[0].Platform)
+	require.Equal(t, service.AccountTypeOAuth, rows[0].Type)
+	require.Equal(t, service.StatusActive, rows[0].Status)
+
+	// 凭据、extra 与代理不得进入候选结果。
+	require.Nil(t, rows[0].Credentials, "candidate options must not materialize credentials")
+	require.Nil(t, rows[0].Extra, "candidate options must not materialize extra")
+	require.Nil(t, rows[0].Proxy)
+	require.Nil(t, rows[0].Groups)
+	require.Nil(t, rows[0].AccountGroups)
+}
+
 // --- ListByGroup / ListActive / ListByPlatform ---
 
 func (s *AccountRepoSuite) TestListByGroup() {

@@ -178,6 +178,12 @@ func (s *OpenAIGatewayService) resolveCCFallbackTarget(account *Account) (apiKey
 // /v1/responses 的 raw-chat 回退），从路径或 ctx 反推协议会把三条路由写成同一个协议，
 // 因此不做任何推断。绑定只作用于本次出站请求（请求级），不进入调用方的 ctx，
 // 因此同一分支的辅助发送不会被观察。
+//
+// 本发送点的真实上游形态恒为 OpenAI Chat Completions，**不是** Claude Messages，
+// 因此诊断绑定走 bindOpenAICompatWireErrorDiagnosticObserver：429 头值这一层（Claude
+// Messages 专属）对整个发送点出界。尤其是 /v1/messages 的 raw-chat 兜底：它的入站路由
+// 是 Messages，若按 Messages 绑定，OpenAI 上游的 429 头会被套上 Claude Messages 的闭集
+// 白名单（Retry-After／X-Request-Id 两边同名，不会报错，只会留下错误的协议标签）。
 func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	ctx context.Context,
 	c *gin.Context,
@@ -249,8 +255,9 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, gjson.GetBytes(body, "model").String(), RequestAuditProtocolOpenAIChat,
 	)
-	// 请求级绑定：只把本次真实发送纳入上游错误诊断，协议取调用方给出的客户端入口协议。
-	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, diagnosticProtocol)
+	// 请求级绑定：只把本次真实发送纳入上游错误诊断，协议取调用方给出的客户端入口协议，
+	// 同时声明头值这一层出界（真实上游形态是 OpenAI Chat Completions）。
+	upstreamReq = s.bindOpenAICompatWireErrorDiagnosticObserver(upstreamReq, c, diagnosticProtocol)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

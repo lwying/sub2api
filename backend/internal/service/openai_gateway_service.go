@@ -446,36 +446,38 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	accountRepo               AccountRepository
-	usageLogRepo              UsageLogRepository
-	requestAuditRepo          RequestAuditRepository
-	usageBillingRepo          UsageBillingRepository
-	userRepo                  UserRepository
-	userSubRepo               UserSubscriptionRepository
-	cache                     GatewayCache
-	cfg                       *config.Config
-	codexDetector             CodexClientRestrictionDetector
-	schedulerSnapshot         *SchedulerSnapshotService
-	concurrencyService        *ConcurrencyService
-	billingService            *BillingService
-	rateLimitService          *RateLimitService
-	billingCacheService       *BillingCacheService
-	userGroupRateResolver     *userGroupRateResolver
-	httpUpstream              HTTPUpstream
-	pluginManager             *PluginManager
-	deferredService           *DeferredService
-	openAITokenProvider       *OpenAITokenProvider
-	grokTokenProvider         *GrokTokenProvider
-	toolCorrector             *CodexToolCorrector
-	openaiWSResolver          OpenAIWSProtocolResolver
-	resolver                  *ModelPricingResolver
-	channelService            *ChannelService
-	balanceNotifyService      *BalanceNotifyService
-	settingService            *SettingService
-	userPlatformQuotaRepo     UserPlatformQuotaRepository
-	requestAuditFingerprinter RequestAuditFingerprinter
-	liveAttestation           liveattestation.Provider
-	liveAttestationCipher     SecretEncryptor
+	accountRepo                    AccountRepository
+	usageLogRepo                   UsageLogRepository
+	requestAuditRepo               RequestAuditRepository
+	errorDiagnosticUsageAttacher   ErrorDiagnosticUsageAttacher
+	requestAuditValueDetailCapture *RequestAuditValueDetailCapture
+	usageBillingRepo               UsageBillingRepository
+	userRepo                       UserRepository
+	userSubRepo                    UserSubscriptionRepository
+	cache                          GatewayCache
+	cfg                            *config.Config
+	codexDetector                  CodexClientRestrictionDetector
+	schedulerSnapshot              *SchedulerSnapshotService
+	concurrencyService             *ConcurrencyService
+	billingService                 *BillingService
+	rateLimitService               *RateLimitService
+	billingCacheService            *BillingCacheService
+	userGroupRateResolver          *userGroupRateResolver
+	httpUpstream                   HTTPUpstream
+	pluginManager                  *PluginManager
+	deferredService                *DeferredService
+	openAITokenProvider            *OpenAITokenProvider
+	grokTokenProvider              *GrokTokenProvider
+	toolCorrector                  *CodexToolCorrector
+	openaiWSResolver               OpenAIWSProtocolResolver
+	resolver                       *ModelPricingResolver
+	channelService                 *ChannelService
+	balanceNotifyService           *BalanceNotifyService
+	settingService                 *SettingService
+	userPlatformQuotaRepo          UserPlatformQuotaRepository
+	requestAuditFingerprinter      RequestAuditFingerprinter
+	liveAttestation                liveattestation.Provider
+	liveAttestationCipher          SecretEncryptor
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
@@ -612,6 +614,22 @@ func (s *OpenAIGatewayService) SetRequestAuditRepository(repo RequestAuditReposi
 		return
 	}
 	s.requestAuditRepo = repo
+}
+
+func (s *OpenAIGatewayService) SetRequestAuditValueDetailCapture(capture *RequestAuditValueDetailCapture) {
+	if s != nil {
+		s.requestAuditValueDetailCapture = capture
+	}
+}
+
+func (s *OpenAIGatewayService) SetErrorDiagnosticUsageAttacher(attacher ErrorDiagnosticUsageAttacher) {
+	if s != nil {
+		s.errorDiagnosticUsageAttacher = attacher
+	}
+}
+
+func (s *OpenAIGatewayService) RequestAuditValueCaptureEnabled(ctx context.Context) bool {
+	return s != nil && s.requestAuditValueDetailCapture.Enabled(ctx)
 }
 
 func (s *OpenAIGatewayService) SetRequestAuditFingerprinter(f RequestAuditFingerprinter) {

@@ -364,6 +364,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/options", h.Admin.Account.ListOptions)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)
 		accounts.PUT("/upstream-billing-probe/settings", h.Admin.Account.UpdateUpstreamBillingProbeSettings)
@@ -721,8 +722,8 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
 		usage.GET("/:id/request-audit", h.Admin.Usage.GetRequestAudit)
-		// Claude /v1/messages 请求审计的**值**明细旁路（默认关闭，ADR 0006）：
-		// GET 只返回信封（状态、原因、标量、计数、到期时刻），真实值必须由管理员
+		// 已审计 Messages／Chat Completions／Responses HTTP 尝试的值明细旁路（默认关闭，ADR 0007）：
+		// GET 只返回信封（状态、原因、标量、计数和适用的到期时刻），真实值必须由管理员
 		// 显式 POST 揭示——默认视图不含值，是类型保证而非调用约定。
 		usage.GET("/:id/request-audit/value-detail", h.Admin.Usage.GetRequestAuditValueDetail)
 		usage.POST("/:id/request-audit/value-detail", gin.HandlerFunc(stepUpAuth), h.Admin.Usage.RevealRequestAuditValueDetail)

@@ -146,6 +146,8 @@ func TestRequestAuditValueDetailRiskAcknowledgementRejectsArbitraryPhrase(t *tes
 func TestUpdateRequestAuditValueDetailOperatorSettings(t *testing.T) {
 	repo := &valueDetailSettingRepoStub{}
 	svc := NewSettingService(repo, valueDetailConfigWithStableKey(t))
+	// 本用例验证的是书面确认门槛；部署前提必须显式成立，否则新明文会先被部署前提关掉。
+	svc.SetPlaintextCaptureSupportProbe(supportedPlaintextCaptureProbe())
 	ctx := context.Background()
 
 	// 没有管理员身份：不能退化成匿名开启。
@@ -183,20 +185,22 @@ func TestUpdateRequestAuditValueDetailOperatorSettings(t *testing.T) {
 	require.False(t, svc.RequestAuditValueDetailGate(ctx).CaptureAllowed)
 }
 
-// 没有稳定配置密钥时不允许打开：每次采集都注定被判为缺密钥，那是把配置故障显示成正常运行。
+// 新明文采集在操作员逐字确认后可在没有旧解密密钥时启用。
 func TestUpdateRequestAuditValueDetailOperatorSettingsRequiresStableKey(t *testing.T) {
 	svc := NewSettingService(&valueDetailSettingRepoStub{}, &config.Config{})
-	_, err := svc.UpdateRequestAuditValueDetailOperatorSettings(context.Background(), RequestAuditValueDetailOperatorUpdateInput{
+	svc.SetPlaintextCaptureSupportProbe(supportedPlaintextCaptureProbe())
+	status, err := svc.UpdateRequestAuditValueDetailOperatorSettings(context.Background(), RequestAuditValueDetailOperatorUpdateInput{
 		Enabled: true, AdminUserID: 7, Phrase: RequestAuditValueDetailRiskAcknowledgementPhraseEN,
 	})
-	require.ErrorIs(t, err, ErrRequestAuditValueDetailKeyUnavailable)
+	require.NoError(t, err)
+	require.True(t, status.CaptureAllowed)
+	require.False(t, status.EncryptionKeyAvailable, "legacy encrypted details need a key to read")
 
-	// 自动生成的进程级密钥同样不可用：换进程即变，密文会永久不可解。
+	// 自动生成的进程级密钥仍不可用于解密旧记录，但不阻断新明文。
 	auto := &config.Config{Totp: config.TotpConfig{EncryptionKey: hex.EncodeToString(make([]byte, 32))}}
 	svc = NewSettingService(&valueDetailSettingRepoStub{}, auto)
 	require.False(t, svc.RequestAuditValueDetailEncryptionKeyAvailable())
 
-	// 长度不对的密钥也不可用。
 	short := &config.Config{Totp: config.TotpConfig{EncryptionKey: "abcd", EncryptionKeyConfigured: true}}
 	svc = NewSettingService(&valueDetailSettingRepoStub{}, short)
 	require.False(t, svc.RequestAuditValueDetailEncryptionKeyAvailable())
@@ -205,6 +209,7 @@ func TestUpdateRequestAuditValueDetailOperatorSettingsRequiresStableKey(t *testi
 // 中文语句按 zh* 归一确认：两种语言各自按自己的原文确认。
 func TestUpdateRequestAuditValueDetailOperatorSettingsAcceptsChinesePhrase(t *testing.T) {
 	svc := NewSettingService(&valueDetailSettingRepoStub{}, valueDetailConfigWithStableKey(t))
+	svc.SetPlaintextCaptureSupportProbe(supportedPlaintextCaptureProbe())
 	status, err := svc.UpdateRequestAuditValueDetailOperatorSettings(context.Background(), RequestAuditValueDetailOperatorUpdateInput{
 		Enabled: true, AdminUserID: 9, Language: "zh-CN", Phrase: RequestAuditValueDetailRiskAcknowledgementPhraseZH,
 	})

@@ -6090,12 +6090,23 @@
           </div>
 
           <!--
-            Claude request-audit value details (ADR 0006).
+            Claude request-audit value details (ADR 0007; the encrypted seven-day
+            variant it replaces is ADR 0006). New values are plaintext and live with
+            the usage record they belong to, so three facts are kept apart and shown
+            as such:
 
-            The stored switch and the verified `capture_allowed` verdict are two
-            different facts and are shown as such: a stored switch that is not backed
-            by a current acknowledgement is a state the server reports deliberately
-            ("stored on, nothing runs"), not an inconsistency to be smoothed over.
+              - the stored switch and the verified `capture_allowed` verdict: a
+                stored switch that is not backed by a current acknowledgement is a
+                state the server reports deliberately ("stored on, nothing runs"),
+                not an inconsistency to be smoothed over;
+              - the deployment premise (`plaintext_capture_supported`): whether this
+                database can make plaintext disappear with its usage record at all.
+                It is not an acknowledgement problem, so its reason code is shown
+                instead of a "re-acknowledge the statement" hint, which would point
+                the operator at a button that can never turn capture on;
+              - legacy ciphertext: its original seven-day window and its decryption
+                key are unaffected by any of this, and are reported separately.
+
             Enabling is an explicit verbatim acknowledgement given every time;
             disabling needs no statement and can never be blocked.
           -->
@@ -6349,7 +6360,7 @@
                     data-testid="request-audit-value-detail-key-required"
                     class="text-xs text-amber-700 dark:text-amber-300"
                   >
-                    {{ t("admin.settings.requestAuditValueDetail.state.keyRequired") }}
+                    {{ t("admin.settings.requestAuditValueDetail.state.legacyKeyOnly") }}
                   </p>
 
                   <!--
@@ -9464,6 +9475,7 @@ import {
   requestAuditValueDetailErrorKey,
   requestAuditValueDetailPhraseMatches,
   requestAuditValueDetailRequiredPhrase,
+  requestAuditValueDetailSupportReasonKey,
 } from "@/api/admin/settings";
 import type {
   AuthSourceDefaultsState,
@@ -9729,8 +9741,13 @@ const requestAuditValueDetailStatement = computed(() => {
 const requestAuditValueDetailMismatchKey = computed(() => {
   const status = requestAuditValueDetailStatus.value;
   if (!status || !status.enabled || status.capture_allowed) return "";
-  if (!status.encryption_key_available) {
-    return "admin.settings.requestAuditValueDetail.state.captureMismatchKey";
+  // 部署前提排在书面确认之前：新值明细一律明文，数据库不能保证明文随 usage 消失时，
+  // 无论确认记录是什么状态都不会采集。把它显示成「没有确认」会把操作员引向一个
+  // 永远开不了采集的按钮。
+  if (!status.plaintext_capture_supported) {
+    return `admin.settings.requestAuditValueDetail.state.${requestAuditValueDetailSupportReasonKey(
+      status.plaintext_capture_support_reason,
+    )}`;
   }
   return status.risk_acknowledged && !status.risk_acknowledgement_current
     ? "admin.settings.requestAuditValueDetail.state.captureMismatchStaleAck"

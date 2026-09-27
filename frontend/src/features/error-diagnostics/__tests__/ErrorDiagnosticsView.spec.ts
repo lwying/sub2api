@@ -44,6 +44,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
     'admin.errorDiagnostics.list.refresh': 'Refresh',
     'admin.errorDiagnostics.list.usageAbsent': 'No usage record',
     'admin.errorDiagnostics.list.expiresAt': 'Expires',
+    'admin.errorDiagnostics.formats.encrypted': 'encrypted',
+    'admin.errorDiagnostics.formats.plaintext': 'plaintext',
+    'admin.errorDiagnostics.rules.plaintextLinked': 'Follows usage record',
     'admin.errorDiagnostics.list.captureOffNotice':
       'Failed upstream attempts are not being recorded while capture is off, so nothing here does not mean nothing failed.',
     'admin.errorDiagnostics.list.capturePaused':
@@ -160,6 +163,19 @@ describe('ErrorDiagnosticsView', () => {
     expect(mocks.revealDiagnosticBody).not.toHaveBeenCalled()
     // The detail drawer stays closed until the admin picks a row.
     expect(wrapper.find('[data-testid="detail-stub"]').attributes('data-show')).toBe('false')
+  })
+
+  it('never presents the unlinked 30-day deadline as a linked plaintext expiry', async () => {
+    mocks.listDiagnostics.mockResolvedValue(page_([row({
+      body_format: 'plaintext', body_expires_at: undefined,
+      metadata_expires_at: '2026-10-27T00:00:00Z', usage_linked: true,
+    })]))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="error-diagnostic-row-expiry"]').text()).toBe('Follows usage record')
+    expect(wrapper.find('[data-testid="error-diagnostic-row-format"]').text()).toBe('plaintext')
+    expect(wrapper.find('[data-testid="error-diagnostic-row"]').text()).not.toContain('2026-10-27')
   })
 
   it('renders only the column allowlist even if a row carries extra sensitive keys', async () => {

@@ -131,8 +131,15 @@ export async function updateOperatorSettings(
       enabled: input.enabled,
       body_retention_enabled: input.body_retention_enabled,
       header_values_enabled: input.header_values_enabled,
+      // The two plaintext layers travel with their own statements: the server
+      // refuses either of them without the statement that covers it, and one
+      // layer's statement never opens the other.
+      plain_body_enabled: input.plain_body_enabled,
+      plain_header_values_enabled: input.plain_header_values_enabled,
       language: input.language,
       phrase: input.phrase,
+      plain_body_phrase: input.plain_body_phrase,
+      plain_header_values_phrase: input.plain_header_values_phrase,
     },
     { headers: NO_STORE_HEADERS },
   )

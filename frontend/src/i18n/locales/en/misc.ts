@@ -652,6 +652,16 @@ export default {
     empty: 'No accounts available',
     emptyHint: 'No account has been assigned to you yet, or the assigned accounts are currently unavailable.',
     viewDetail: 'Details',
+    filters: {
+      search: 'Search platform, type or account ID',
+      allPlatforms: 'All Platforms',
+      allTypes: 'All Types',
+    },
+    types: {
+      upstream: 'Upstream',
+      bedrock: 'AWS Bedrock',
+      serviceAccount: 'Service Account',
+    },
     columns: {
       platform: 'Platform',
       accountType: 'Account Type',

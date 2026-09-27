@@ -110,44 +110,54 @@ func (gatewayAuditValueGate) RequestAuditValueDetailGate(context.Context) servic
 	return service.RequestAuditValueDetailGate{CaptureAllowed: true, EncryptionAvailable: true}
 }
 
+// Message 入口的采集判定按**规范化后的入站路由**：/antigravity/v1/messages 与 /v1/messages
+// 是同一个 Messages 入口（Antigravity 平台的 API-key 账号同样产生真实逐次上游尝试），
+// 只比原始 URL path 会让这些请求「有逐次审计尝试、却没有值明细行」。
 func TestGatewayMessagesA429BSuccessCapturesWireValueDetails(t *testing.T) {
-	groupID := int64(7999)
-	group := &service.Group{ID: groupID, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive}
-	accounts := gateway429TestAccounts(groupID, 2)
-	upstream := &gatewayAuditValueUpstream{}
-	auditRepo := &gatewayAuditValueAuditRepo{}
-	valueRepo := &gatewayAuditValueRepo{audit: auditRepo}
-	base := newGateway429TestHandler(t, upstream, accounts, group)
-	cfg := &config.Config{RunMode: config.RunModeSimple}
-	accountRepo := openAIImagesFailoverAccountRepo{accounts: []service.Account{*accounts[0], *accounts[1]}}
-	rateLimit := service.NewRateLimitService(gateway429NoCooldownRepo{accountRepo}, nil, cfg, nil, nil)
-	gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, gatewayAuditValueUsageRepo{}, auditRepo, nil, nil, nil, nil, nil,
-		cfg, service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: accounts}, nil, nil, nil, nil), nil, service.NewBillingService(cfg, nil), rateLimit, nil, nil, upstream,
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
-	gw.SetRequestAuditValueDetailCapture(service.NewRequestAuditValueDetailCapture(valueRepo, gatewayAuditValueGate{}))
-	base.gatewayService = gw
-	c, rec := newGateway429TestContext(t, group)
-	const userID = `{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","account_uuid":"","session_id":"123e4567-e89b-12d3-a456-426614174000"}`
-	body := `{"model":"claude-sonnet-4-5","max_tokens":32,"metadata":{"user_id":` + strconv.Quote(userID) + `},"messages":[{"role":"user","content":"do not store this prompt"}]}`
-	c.Request.Body = io.NopCloser(bytes.NewBufferString(body))
-	c.Request.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
-	base.Messages(c)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, []int64{1, 2}, upstream.hits)
-	audit, err := auditRepo.GetByUsageLogID(context.Background(), 9001)
-	require.NoError(t, err)
-	require.NotNil(t, audit, "the usage-owned audit must be written before its value detail")
-	require.Equal(t, map[string]any{"present": true}, audit.Headers["User-Agent"])
-	writes := valueRepo.snapshot()
-	require.Len(t, writes, 1, "usage-owned audit value detail must be attached after A429/B200")
-	require.Equal(t, int64(9001), writes[0].UsageLogID)
-	require.Equal(t, service.RequestAuditValueDetailStateStored, writes[0].State)
-	values, err := service.DecodeRequestAuditValueDetailValues(writes[0].Payload)
-	require.NoError(t, err)
-	require.Len(t, values.Attempts, 2)
-	require.Equal(t, int64(1), values.Attempts[0].AccountID)
-	require.Equal(t, []string{"42"}, values.Attempts[0].ResponseHeaders["Retry-After"])
-	require.Equal(t, int64(2), values.Attempts[1].AccountID)
-	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", values.Inbound.DeviceID)
-	require.NotContains(t, string(writes[0].Payload), "do not store this prompt")
+	for _, inboundPath := range []string{"/v1/messages", "/antigravity/v1/messages"} {
+		t.Run(inboundPath, func(t *testing.T) {
+			groupID := int64(7999)
+			group := &service.Group{ID: groupID, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive}
+			accounts := gateway429TestAccounts(groupID, 2)
+			upstream := &gatewayAuditValueUpstream{}
+			auditRepo := &gatewayAuditValueAuditRepo{}
+			valueRepo := &gatewayAuditValueRepo{audit: auditRepo}
+			base := newGateway429TestHandler(t, upstream, accounts, group)
+			cfg := &config.Config{RunMode: config.RunModeSimple}
+			accountRepo := openAIImagesFailoverAccountRepo{accounts: []service.Account{*accounts[0], *accounts[1]}}
+			rateLimit := service.NewRateLimitService(gateway429NoCooldownRepo{accountRepo}, nil, cfg, nil, nil)
+			gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, gatewayAuditValueUsageRepo{}, auditRepo, nil, nil, nil, nil, nil,
+				cfg, service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: accounts}, nil, nil, nil, nil), nil, service.NewBillingService(cfg, nil), rateLimit, nil, nil, upstream,
+				&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			gw.SetRequestAuditValueDetailCapture(service.NewRequestAuditValueDetailCapture(valueRepo, gatewayAuditValueGate{}))
+			base.gatewayService = gw
+			c, rec := newGateway429TestContext(t, group)
+			c.Request.URL.Path = inboundPath
+			const userID = `{"device_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","account_uuid":"","session_id":"123e4567-e89b-12d3-a456-426614174000"}`
+			body := `{"model":"claude-sonnet-4-5","max_tokens":32,"metadata":{"user_id":` + strconv.Quote(userID) + `},"messages":[{"role":"user","content":"do not store this prompt"}]}`
+			c.Request.Body = io.NopCloser(bytes.NewBufferString(body))
+			c.Request.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+			base.Messages(c)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, []int64{1, 2}, upstream.hits)
+			audit, err := auditRepo.GetByUsageLogID(context.Background(), 9001)
+			require.NoError(t, err)
+			require.NotNil(t, audit, "the usage-owned audit must be written before its value detail")
+			require.Equal(t, map[string]any{"present": true}, audit.Headers["User-Agent"])
+			writes := valueRepo.snapshot()
+			require.Len(t, writes, 1, "usage-owned audit value detail must be attached after A429/B200")
+			require.Equal(t, int64(9001), writes[0].UsageLogID)
+			require.Equal(t, service.RequestAuditValueDetailStateStored, writes[0].State)
+			require.Equal(t, service.RequestAuditValueDetailRouteMessages, writes[0].Fields.Route,
+				"入站路由按规范化结果记录，原始 path 的前缀不影响采集入口判定")
+			values, err := service.DecodeRequestAuditValueDetailValues(writes[0].Payload)
+			require.NoError(t, err)
+			require.Len(t, values.Attempts, 2)
+			require.Equal(t, int64(1), values.Attempts[0].AccountID)
+			require.Equal(t, []string{"42"}, values.Attempts[0].ResponseHeaders["Retry-After"])
+			require.Equal(t, int64(2), values.Attempts[1].AccountID)
+			require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", values.Inbound.DeviceID)
+			require.NotContains(t, string(writes[0].Payload), "do not store this prompt")
+		})
+	}
 }

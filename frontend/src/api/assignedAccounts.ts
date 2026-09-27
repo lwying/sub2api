@@ -34,10 +34,11 @@ export interface AssignedAccount {
 export async function list(
   page: number = 1,
   pageSize: number = 20,
+  filters: { platform?: string; account_type?: string; search?: string } = {},
   options?: { signal?: AbortSignal }
 ): Promise<PaginatedResponse<AssignedAccount>> {
   const { data } = await apiClient.get<PaginatedResponse<AssignedAccount>>('/accounts', {
-    params: { page, page_size: pageSize },
+    params: { page, page_size: pageSize, ...filters },
     signal: options?.signal
   })
   return data

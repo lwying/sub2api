@@ -1119,6 +1119,66 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 	return q
 }
 
+// ListAccountOptions applies the admin candidate filters in one query for both count and pagination.
+func (r *accountRepository) ListAccountOptions(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64) ([]service.Account, *pagination.PaginationResult, error) {
+	filterStatus := strings.TrimSpace(status)
+	if strings.EqualFold(filterStatus, service.StatusInactive) || strings.EqualFold(filterStatus, service.StatusDisabled) {
+		filterStatus = ""
+	}
+	q := r.accountListFilteredQuery(platform, accountType, filterStatus, search, groupID, "")
+	if filterStatus == "" && strings.TrimSpace(status) != "" {
+		q = q.Where(dbpredicate.Account(func(s *entsql.Selector) {
+			col := s.C(dbaccount.FieldStatus)
+			s.Where(entsql.P(func(b *entsql.Builder) {
+				b.WriteString("LOWER(BTRIM(COALESCE(").
+					WriteString(col).
+					WriteString(", ''), ").
+					WriteString(postgresTrimSpaceChars).
+					WriteString(")) IN (").
+					Arg(service.StatusInactive).
+					WriteString(", ").
+					Arg(service.StatusDisabled).
+					WriteString(")")
+			}))
+		}))
+	}
+	total, err := q.Clone().Count(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, order := range accountListOrder(params) {
+		q = q.Order(order)
+	}
+	// 候选投影只取 id/name/platform/type/status：不把 credentials/extra 读进内存，
+	// 也不为候选页加载代理（含代理凭据）与分组。这几个字段是 handler 唯一消费的内容，
+	// 因此不经过 accountsToService（它会复制完整凭据/extra 并额外查询代理与分组）。
+	accounts, err := q.
+		Select(
+			dbaccount.FieldID,
+			dbaccount.FieldName,
+			dbaccount.FieldPlatform,
+			dbaccount.FieldType,
+			dbaccount.FieldStatus,
+		).
+		Offset(params.Offset()).
+		Limit(params.Limit()).
+		All(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]service.Account, 0, len(accounts))
+	for _, acc := range accounts {
+		out = append(out, service.Account{
+			ID:       acc.ID,
+			Name:     acc.Name,
+			Platform: acc.Platform,
+			Type:     acc.Type,
+			Status:   acc.Status,
+		})
+	}
+	return out, paginationResultFromTotal(int64(total), params), nil
+}
+
 func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
 	q := r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode)
 	// Clone before Count so interceptor-appended predicates (SoftDeleteMixin's

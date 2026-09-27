@@ -138,7 +138,35 @@ func bindRequestAuditHTTPAttempt(
 		return nil
 	}
 	metadata := httpattempt.Metadata{AccountID: accountID, Model: model, Protocol: protocol}
+	if httpattempt.ClaudeHeaderValueCaptureEnabled(req.Context()) {
+		metadata.ValueProtocol = RequestAuditValueWireProtocol(req.Context(), protocol)
+	}
 	return req.WithContext(httpattempt.WithMetadata(req.Context(), metadata))
+}
+
+// WithRequestAuditValueWireProtocolOverride changes only the value-snapshot
+// protocol, leaving the long-lived audit metadata protocol unchanged. Bedrock
+// uses an AWS-authenticated wire request despite its Messages audit family.
+func WithRequestAuditValueWireProtocolOverride(ctx context.Context, protocol string) context.Context {
+	return context.WithValue(ctx, requestAuditValueWireProtocolContextKey{}, protocol)
+}
+
+type requestAuditValueWireProtocolContextKey struct{}
+
+func RequestAuditValueWireProtocolForMetadata(metadata httpattempt.Metadata) string {
+	if metadata.ValueProtocol != "" {
+		return metadata.ValueProtocol
+	}
+	return metadata.Protocol
+}
+
+func RequestAuditValueWireProtocol(ctx context.Context, auditProtocol string) string {
+	if ctx != nil {
+		if override, ok := ctx.Value(requestAuditValueWireProtocolContextKey{}).(string); ok {
+			return override
+		}
+	}
+	return auditProtocol
 }
 
 func bindClaudeRequestAuditValueDetail(req *http.Request, wireBody []byte, proxyID *int64) *http.Request {

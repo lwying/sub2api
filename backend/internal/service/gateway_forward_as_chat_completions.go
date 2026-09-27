@@ -123,6 +123,11 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	// 上游错误诊断按客户端入口协议归属：本分支的入站是 Chat Completions，
 	// 即使出站是原生 Messages，诊断协议也不能跟着 wire 形态漂移。
 	// 绑定在请求上（而不是整条链路的 ctx 上），使分支内的辅助发送不被观察。
+	//
+	// 反方向不成立：ADR 0005 的 429 头值例外是「Claude Messages 上游 + /v1/messages
+	// 路由 + 恰好 429」三个条件缺一不可，出站是原生 Messages **不会**让本分支获得头值能力
+	// ——入站路由这一条不满足，因此这里刻意不声明头值层，也不得为了「wire 相符」而放宽
+	// （范围收口见 error_diagnostic_observer.go）。
 	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolChatCompletions)
 	// Bill the final Anthropic effort after conversion and account normalization.
 	// For example, OpenAI xhigh is forwarded as output_config.effort=max.

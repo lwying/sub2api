@@ -122,6 +122,7 @@ func ProvideGatewayHandler(
 	errorDiagnosticService *service.ErrorDiagnosticService,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
 	requestAuditValueDetailCapture *service.RequestAuditValueDetailCapture,
+	errorDiagnosticAttacher service.ErrorDiagnosticUsageAttacher,
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
@@ -129,6 +130,7 @@ func ProvideGatewayHandler(
 	h.securityAuditCoordinator = coordinator
 	h.SetKeyBillingSnapshotService(keyBillingSnapshot)
 	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
+	gatewayService.SetErrorDiagnosticUsageAttacher(errorDiagnosticAttacher)
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	// 值明细采集接缝（默认关闭）：绑定阶段用它决定是否复制值快照，
 	// 审计行落库后由它写入。未注入时一个字节的值都不会被采集。
@@ -152,9 +154,13 @@ func ProvideOpenAIGatewayHandler(
 	errorDiagnosticService *service.ErrorDiagnosticService,
 	requestAuditRepo service.RequestAuditRepository,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
+	valueDetailCapture *service.RequestAuditValueDetailCapture,
+	errorDiagnosticAttacher service.ErrorDiagnosticUsageAttacher,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
+	gatewayService.SetRequestAuditValueDetailCapture(valueDetailCapture)
 	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
+	gatewayService.SetErrorDiagnosticUsageAttacher(errorDiagnosticAttacher)
 	gatewayService.SetRequestAuditRepository(requestAuditRepo)
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,

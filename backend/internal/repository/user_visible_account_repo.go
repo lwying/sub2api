@@ -408,6 +408,9 @@ func (r *userVisibleAccountRepository) visibleAccountsQuery(
 	if filter.Platform != "" {
 		query = query.Where(dbaccount.PlatformEQ(filter.Platform))
 	}
+	if filter.AccountType != "" {
+		query = query.Where(dbaccount.TypeEQ(filter.AccountType))
+	}
 	if filter.Search != "" {
 		if numeric, err := strconv.ParseInt(filter.Search, 10, 64); err == nil {
 			query = query.Where(dbaccount.IDEQ(numeric))

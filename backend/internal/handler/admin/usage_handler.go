@@ -182,7 +182,14 @@ func (h *UsageHandler) RevealRequestAuditValueDetail(c *gin.Context) {
 		response.ErrorFrom(c, requestAuditValueDetailDisclosureError(err))
 		return
 	}
-	response.Success(c, service.RequestAuditValueDetailReveal{UsageLogID: id, Values: values})
+	// 读侧复核的结论与值本身分开：Values 只含通过白名单的条目，读侧丢过条目这一事实由
+	// 传输专用的 ValidationDropped 表达，使它与 values.truncated（采集侧）在响应里各自
+	// 独立，管理员不会把「读侧没收下」读成「客户端只发了这些」（ADR 0006）。
+	response.Success(c, service.RequestAuditValueDetailReveal{
+		UsageLogID:        id,
+		Values:            values,
+		ValidationDropped: values.ValidationDropped,
+	})
 }
 
 // GetRequestAuditValueDetailSettings 读取值明细的运维开关状态（存量值与校验结论）。

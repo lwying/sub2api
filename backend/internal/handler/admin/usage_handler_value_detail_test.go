@@ -117,6 +117,7 @@ func newValueDetailRouter(t *testing.T, repo service.RequestAuditValueDetailRepo
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	settings := service.NewSettingService(settingsRepo, valueDetailConfig(t))
+	settings.SetPlaintextCaptureSupportProbe(supportedPlaintextCaptureProbe{})
 	handler := &UsageHandler{}
 	handler.SetRequestAuditValueDetailService(service.NewRequestAuditValueDetailService(repo, settings))
 
@@ -203,6 +204,56 @@ func TestRevealRequestAuditValueDetailReturnsValuesOnlyOnExplicitPost(t *testing
 	require.Equal(t, int64(123), envelope.Data.UsageLogID)
 	require.Equal(t, "claude-sonnet-4-5", envelope.Data.Values.Model)
 	require.Equal(t, []string{"api.anthropic.com"}, envelope.Data.Values.Inbound.RequestHeaders["Host"])
+}
+
+// 读侧复核的结论必须与值本身分开：读侧丢过条目时，响应带上传输专用的
+// validation_dropped，同时 values.truncated（采集侧）保持载荷自己的说法。两条事实
+// 各说各的，谁也不能冒充谁（ADR 0006）。
+func TestRevealRequestAuditValueDetailReportsReadSideDropSeparately(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &valueDetailRepoStub{
+		detail: valueDetailStoredDetail(now),
+		// 读侧解码带出来的值：采集侧与读侧各有一条事实。
+		values: service.RequestAuditValueDetailValues{
+			Inbound: service.RequestAuditValueDetailInboundValues{
+				RequestHeaders: map[string][]string{"Host": {"api.anthropic.com"}},
+			},
+			Truncated:         true,
+			ValidationDropped: true,
+		},
+	}
+	router := newValueDetailRouter(t, repo, &valueDetailSettingRepoStub{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/usage/123/request-audit/value-detail", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var envelope struct {
+		Data *service.RequestAuditValueDetailReveal `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.NotNil(t, envelope.Data)
+	require.True(t, envelope.Data.ValidationDropped, "读侧事实必须单独出现")
+	require.True(t, envelope.Data.Values.Truncated, "采集侧事实保持载荷自己的说法")
+}
+
+// 没有读侧丢弃时，响应形状与此前完全一致：不出现 validation_dropped 键。
+func TestRevealRequestAuditValueDetailOmitsReadSideDropWhenNothingWasRefused(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &valueDetailRepoStub{
+		detail: valueDetailStoredDetail(now),
+		values: service.RequestAuditValueDetailValues{
+			Inbound: service.RequestAuditValueDetailInboundValues{
+				RequestHeaders: map[string][]string{"Host": {"api.anthropic.com"}},
+			},
+		},
+	}
+	router := newValueDetailRouter(t, repo, &valueDetailSettingRepoStub{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/usage/123/request-audit/value-detail", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "validation_dropped")
 }
 
 // 四种「读不到值」必须是不同的 HTTP 结论。
@@ -359,7 +410,7 @@ func TestValueDetailOperatorSettingsEndpoints(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"capture_allowed":true`)
-	require.True(t, service.NewSettingService(settingsRepo, valueDetailConfig(t)).
+	require.True(t, valueDetailSettingsService(t, settingsRepo).
 		RequestAuditValueDetailGate(context.Background()).CaptureAllowed)
 
 	// 关闭不需要确认或身份。
@@ -370,6 +421,15 @@ func TestValueDetailOperatorSettingsEndpoints(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.False(t, service.NewSettingService(settingsRepo, valueDetailConfig(t)).
+	require.False(t, valueDetailSettingsService(t, settingsRepo).
 		RequestAuditValueDetailGate(context.Background()).CaptureAllowed)
+}
+
+// valueDetailSettingsService 构造一个「部署前提成立」的设置服务：handler 用例验证的是管理员
+// 身份 / 机器凭证 / 逐字确认这些门槛，部署前提必须显式成立（探针缺失一律 fail closed）。
+func valueDetailSettingsService(t *testing.T, settingsRepo *valueDetailSettingRepoStub) *service.SettingService {
+	t.Helper()
+	settings := service.NewSettingService(settingsRepo, valueDetailConfig(t))
+	settings.SetPlaintextCaptureSupportProbe(supportedPlaintextCaptureProbe{})
+	return settings
 }

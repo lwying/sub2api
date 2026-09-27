@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -117,6 +118,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteChatCompletions, false) {
 		return
+	}
+	valueCapture := h.gatewayService.ClaudeRequestAuditValueCaptureEnabled(c.Request.Context())
+	if valueCapture {
+		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
 	}
 
 	// Error passthrough binding
@@ -394,6 +399,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if notCapturedReason == "" {
 			requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
 		}
+		valueDetail := requestAuditValueInputFromTransport(c, valueCapture && notCapturedReason == "", inboundEndpoint,
+			service.RequestAuditProtocolAnthropic, reqModel, pricingAt, requestAuditMetadata)
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:                  result,
@@ -414,6 +421,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				RequestAuditAttempts:    requestAuditAttemptsForRecord,
 				RequestAuditFingerprint: requestAuditFingerprint,
 				RequestAuditMetadata:    requestAuditMetadata,
+				RequestAuditValueDetail: valueDetail,
 				NotCapturedReason:       notCapturedReason,
 				AuditLogicalKey:         auditLogicalKey,
 				ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),

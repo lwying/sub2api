@@ -89,6 +89,23 @@ func (f *errorDiagnosticRepoFake) CreateErrorDiagnostic(_ context.Context, write
 	record.HeaderState = write.HeaderState
 	record.HeaderReason = write.HeaderReason
 	record.HeaderEntryCount = write.HeaderEntryCount
+	// 新明文列与密文列一样如实镜像写入决定：替身若把明文层抹平，
+	// 「明文留存了多少条」这类计数在服务层就永远断言不到。
+	record.PlainRecord = write.PlainRecord
+	if write.PlainRecord {
+		// 新明文行的所有者只在**验证过的关联**之后才写入，因此插入当时它必然是空的：
+		// 替身也照此镜像，免得「插入即已关联」这种生产中不存在的状态被测试当真。
+		record.PlainLinked = false
+		record.PlainBodyState = write.PlainBodyState
+		record.PlainBodyReason = write.PlainBodyReason
+		record.PlainBodyStored = len(write.PlainBodyPayload) > 0
+		record.PlainBodyBytes = len(write.PlainBodyPayload)
+		record.PlainHeaderState = write.PlainHeaderState
+		record.PlainHeaderReason = write.PlainHeaderReason
+		record.PlainHeaderStored = len(write.PlainHeaderPayload) > 0
+		record.PlainHeaderBytes = len(write.PlainHeaderPayload)
+		record.PlainHeaderEntryCount = write.PlainHeaderEntryCount
+	}
 	if len(write.HeaderCiphertext) > 0 {
 		record.HeaderExpiresAt = now.Add(ErrorDiagnosticHeaderRetention)
 		record.HeaderBytes = write.HeaderPayloadBytes

@@ -562,6 +562,7 @@ func TestResponseBodyReadToEOFMarksReadComplete(t *testing.T) {
 func TestClaudeValueSnapshotOmissionIsCarriedByAttemptMetadata(t *testing.T) {
 	counter := NewCounter()
 	ctx := WithClaudeHeaderValueCapture(WithCounter(context.Background(), counter), true)
+	ctx = WithMetadata(ctx, Metadata{Protocol: "anthropic.messages"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
 	require.NoError(t, err)
 	req.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")

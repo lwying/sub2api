@@ -90,10 +90,11 @@ type VisibleAccountRepository interface {
 // Search 只匹配对用户已公开的字段（平台、类型与数字账号 ID），
 // 不会匹配管理员专有的账号名称，避免形成额外的信息探知通道。
 type VisibleAccountFilter struct {
-	Platform string
-	Search   string
-	Page     int
-	PageSize int
+	Platform    string
+	AccountType string
+	Search      string
+	Page        int
+	PageSize    int
 }
 
 // VisibleAccountView 是普通用户看到的账号安全视图（纯白名单）。
@@ -297,6 +298,7 @@ func normalizeVisibleAccountFilter(filter VisibleAccountFilter) VisibleAccountFi
 		filter.PageSize = maxVisibleAccountPageSize
 	}
 	filter.Platform = strings.ToLower(strings.TrimSpace(filter.Platform))
+	filter.AccountType = strings.ToLower(strings.TrimSpace(filter.AccountType))
 	filter.Search = strings.TrimSpace(filter.Search)
 	return filter
 }

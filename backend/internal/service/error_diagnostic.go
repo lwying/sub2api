@@ -93,6 +93,11 @@ const (
 	ErrorDiagnosticIDLength = ErrorDiagnosticIDBytes * 2
 	// ErrorDiagnosticMaxBodyReadBytes 是解密后允许返回的正文上限，超出即视为异常。
 	ErrorDiagnosticMaxBodyReadBytes = ErrorDiagnosticMaxBodyBytes
+
+	// 留存格式（body_format／header_format）：管理端据此说清这一行是哪种留存，
+	// 而不是让管理员从原因码反推。两者都是闭集枚举。
+	ErrorDiagnosticFormatEncrypted = "encrypted"
+	ErrorDiagnosticFormatPlaintext = "plaintext"
 )
 
 var (
@@ -141,6 +146,41 @@ type ErrorDiagnosticSettings struct {
 	// 用途只有一个——让采集接缝能把「要求过、但没有稳定密钥」这一状态显式表达为封闭抑制，
 	// 而不是让它退化成 not_observed（见 BodyRetentionSuppressedByMissingKey）。
 	BodyRetentionRequested bool `json:"-"`
+
+	// PlainBodyRetentionEnabled 是**新明文正文**层的独立开关（票据 08，默认关闭）。
+	//
+	// 它与 BodyRetentionEnabled（旧密文层）是两个开关，不是同一件事的两种读法：
+	// 旧层写密文列、七天自有到期、缺稳定密钥即不可写；新层写明文列、随 usage 或三十天、
+	// 不需要任何密钥。旧层的开关一个字都不影响新层，反之亦然。
+	//
+	// 存量布尔值只代表「运维要求过」：有效结论还要求一条覆盖当前语句版本的逐字确认
+	// （见 ApplyErrorDiagnosticPlaintextRiskAcknowledgement），旧共享确认不覆盖它。
+	PlainBodyRetentionEnabled bool `json:"plain_body_enabled"`
+	// PlainHeaderValueRetentionEnabled 是**新明文 429 头值**层的独立开关（票据 09，默认关闭）。
+	//
+	// 与旧密文头值层、与新明文正文层各自独立：任何一层的开关都不打开另一层。
+	PlainHeaderValueRetentionEnabled bool `json:"plain_header_values_enabled"`
+}
+
+// PlainBodyCaptureAllowed 报告是否允许留存**新明文**正文。
+//
+// 只看采集门控与新层自己的开关；有效结论里的这个布尔值已经并入过新层的逐字风险确认
+// （见 ApplyErrorDiagnosticPlaintextRiskAcknowledgement），因此这里不再重复校验确认。
+// 它**不**要求任何加密密钥：新格式本来就以明文落库。
+func (s ErrorDiagnosticSettings) PlainBodyCaptureAllowed() bool {
+	return s.CaptureAllowed() && s.PlainBodyRetentionEnabled
+}
+
+// PlainHeaderValuesCaptureAllowed 报告是否允许留存**新明文** 429 头值（与其它三层互不影响）。
+func (s ErrorDiagnosticSettings) PlainHeaderValuesCaptureAllowed() bool {
+	return s.CaptureAllowed() && s.PlainHeaderValueRetentionEnabled
+}
+
+// PlaintextCaptureAllowed 报告本次尝试是否需要按新明文格式落库。
+//
+// 任一新层开启即成立：新格式是**行级**的（plain_record），不是「正文一个格式、头值另一个格式」。
+func (s ErrorDiagnosticSettings) PlaintextCaptureAllowed() bool {
+	return s.PlainBodyCaptureAllowed() || s.PlainHeaderValuesCaptureAllowed()
 }
 
 // CaptureAllowed 报告是否允许写入诊断元数据（采集开关 + 显式风险确认）。
@@ -654,10 +694,105 @@ type ErrorDiagnosticRecord struct {
 	HeaderEntryCount int
 	// HeaderStored 报告头值密文当前是否仍物理存在于在线主库。
 	HeaderStored bool
+
+	// 以下字段属于**新明文格式**（票据 08／09）。旧行全为零值，因此新旧两套事实可以同时
+	// 出现在同一个记录上而互不冒充：PlainRecord 是格式判别式，Plain* 只在新格式下有意义。
+	//
+	// PlainRecord 报告该行使用新明文格式（明文列 + 随 usage 或三十天的生命周期）。
+	PlainRecord bool
+	// PlainLinked 报告该行的明文是否已可靠关联到一条使用记录（plain_owner_usage_log_id 非空）。
+	//
+	// 关联后就**没有**自有到期窗口：整行随使用记录删除。未关联的行在 metadata_expires_at
+	// 整点立即不可读。
+	PlainLinked bool
+	// PlainOwnerUsageLogID 是明文行的所有者使用记录 ID（未关联时为 0）。
+	PlainOwnerUsageLogID int64
+	// PlainBodyState／Reason／Bytes／Stored 是新明文正文层的事实。
+	PlainBodyState  string
+	PlainBodyReason string
+	PlainBodyBytes  int
+	PlainBodyStored bool
+	// PlainHeaderState／Reason／Bytes／EntryCount／Stored 是新明文 429 头值层的事实。
+	PlainHeaderState      string
+	PlainHeaderReason     string
+	PlainHeaderBytes      int
+	PlainHeaderEntryCount int
+	PlainHeaderStored     bool
+}
+
+// BodyFormat 报告正文层实际留存的格式；它独立于头值层。
+//
+// 这是格式判别式而不是状态：管理端据此说清「这份正文是明文留在库里」还是
+// 「这份正文是旧密文、需要旧密钥」，两者不能只靠 reason 区分。
+//
+// 判据是这一层的**来源事实**，而不是「有没有载荷」，也不是原因码字面量：
+//   - 把「载荷还在」当判据，会让明文层整份跳过（skipped_too_large／
+//     skipped_invalid_values…，本来就没有载荷）的新行被说成 encrypted，
+//     于是它自己的原因码被换成旧列的 not_observed——「本次跳过」显示成「从未采集」；
+//   - 新旧两层共用同一份稳定跳过原因码，字面量完全相同（例如两层都会写
+//     skipped_not_text_json），因此按原因码猜格式必然把其中一类错报成另一类。
+//
+// 可区分的来源只有一个：**哪一列写下了这一层的结论**。新格式行（plain_record）的正文
+// 默认由新明文列回答——绝不能把新行当密文；只有旧密文层为这一层留下了结论
+// （密文仍存活，或原因码不是 not_observed）时正文格式才是 encrypted，这正是一行里
+// 新明文头值层与旧密文正文层并存的那种混合情形。
+//
+// 空原因码与 not_observed 等价：读路径会把空原因推导成 not_observed（见
+// DescribeBodyState），因此两者都表示「旧密文层没有为这一层写过结论」。
+func (r ErrorDiagnosticRecord) BodyFormat() string {
+	if r.PlainRecord && !r.BodyStored &&
+		(r.BodyReason == "" || r.BodyReason == ErrorDiagnosticBodyNotObserved) {
+		return ErrorDiagnosticFormatPlaintext
+	}
+	return ErrorDiagnosticFormatEncrypted
+}
+
+// HeaderFormat 报告该行的 429 头值留存使用哪种格式。
+//
+// 判据与 BodyFormat 同构且互相独立：一层是明文不改变另一层的格式，反之亦然。
+func (r ErrorDiagnosticRecord) HeaderFormat() string {
+	if r.PlainRecord && !r.HeaderStored &&
+		(r.HeaderReason == "" || r.HeaderReason == ErrorDiagnosticHeaderNotObserved) {
+		return ErrorDiagnosticFormatPlaintext
+	}
+	return ErrorDiagnosticFormatEncrypted
+}
+
+// PlainBodyReadableAt 报告新明文正文在 now 时刻是否仍可读取。
+//
+// 与旧密文层不同，这里**不看**七天窗口，也不看任何密钥：
+//   - 已关联 usage：只要载荷还在就成立（行会随 usage 一起消失）；
+//   - 未关联：过 metadata_expires_at 即为不可读，即使清理还没跑。
+func (r ErrorDiagnosticRecord) PlainBodyReadableAt(now time.Time) bool {
+	if !r.PlainBodyStored {
+		return false
+	}
+	if r.PlainLinked {
+		return true
+	}
+	return !r.ExpiredAt(now)
+}
+
+// PlainHeaderValuesReadableAt 报告新明文 429 头值在 now 时刻是否仍可读取（规则同上）。
+func (r ErrorDiagnosticRecord) PlainHeaderValuesReadableAt(now time.Time) bool {
+	if !r.PlainHeaderStored {
+		return false
+	}
+	if r.PlainLinked {
+		return true
+	}
+	return !r.ExpiredAt(now)
 }
 
 // ExpiredAt 报告元数据在 now 时刻是否已到期（应用层拒绝读取）。
+//
+// 已可靠关联到使用记录的新明文行**不受**这个窗口约束：它们的所有者是使用记录，整行随 usage
+// 删除（ADR 0007 决定 3）。把三十天当作它们的上限，会让「随时用随删」的明文在第三十天
+// 悄悄消失，而使用记录还在——那正是把「已关联」显示成「已到期」。
 func (r ErrorDiagnosticRecord) ExpiredAt(now time.Time) bool {
+	if r.PlainLinked {
+		return false
+	}
 	return !r.MetadataExpiresAt.After(now)
 }
 
@@ -676,6 +811,10 @@ func (r ErrorDiagnosticRecord) HeaderValuesReadableAt(now time.Time) bool {
 func normalizeErrorDiagnosticRecord(record ErrorDiagnosticRecord, now time.Time) ErrorDiagnosticRecord {
 	record.BodyState = DescribeBodyState(record.BodyReason, record.BodyStored, record.BodyExpiresAt, now)
 	record.HeaderState = DescribeHeaderState(record.HeaderReason, record.HeaderStored, record.HeaderExpiresAt, now)
+	// 新明文层各自推导自己的状态：旧列的推导不会、也不能替它回答，
+	// 因为「七天密文窗口」与「随 usage／三十天」是两条不同的规则。
+	record.PlainBodyState = DescribePlainBodyState(record.PlainBodyReason, record.PlainBodyStored, record.PlainLinked, record.MetadataExpiresAt, now)
+	record.PlainHeaderState = DescribePlainHeaderState(record.PlainHeaderReason, record.PlainHeaderStored, record.PlainLinked, record.MetadataExpiresAt, now)
 	return record
 }
 
@@ -718,6 +857,30 @@ type ErrorDiagnosticWrite struct {
 	HeaderEntryCount int
 	// HeaderPayloadBytes 是加密前 JSON 载荷的字节数（不是密文长度）。
 	HeaderPayloadBytes int
+
+	// 以下字段属于**新明文格式**（票据 08／09）。PlainRecord 为真时该行以明文列落库：
+	// 旧的密文列必须保持空，反过来也一样（存储层的互斥约束会拒绝两者同时出现）。
+	//
+	// PlainRecord 由服务侧按门控决定：任一新明文层开启即为真。它同时决定这一行是否带
+	// 可验证的关联摘要——新格式的明文必须能被可靠关联或按三十天截止，二者必居其一。
+	PlainRecord bool
+	// PlainLinkDigest 是「同一逻辑请求」的可验证关联摘要；为空表示本次无法可靠关联，
+	// 于是这一行永远不会被绑定到使用记录，只能在三十天内读取。
+	PlainLinkDigest string
+	// PlainLinkAttemptIndex／PlainLinkWireStatus 是关联时必须逐项吻合的真实传输层事实。
+	// 存储层的关联语句会拿它们与诊断行自身的尝试序号／上游状态比对，兜底推断一律拒绝。
+	PlainLinkAttemptIndex int
+	PlainLinkWireStatus   int
+
+	// 新明文正文层（票据 08）。
+	PlainBodyState   string
+	PlainBodyReason  string
+	PlainBodyPayload []byte
+	// 新明文 429 头值层（票据 09）。
+	PlainHeaderState      string
+	PlainHeaderReason     string
+	PlainHeaderPayload    []byte
+	PlainHeaderEntryCount int
 }
 
 // ErrorDiagnosticRepository 是诊断存储的持久化契约。
@@ -749,6 +912,36 @@ type ErrorDiagnosticRepository interface {
 	DeleteExpiredErrorDiagnostics(ctx context.Context, now time.Time, batch int) (int64, error)
 }
 
+// ErrorDiagnosticPlaintextReader 是存储层的**可选**能力：读取新明文格式的载荷与清理它们。
+//
+// 单独成接口而不是并入 ErrorDiagnosticRepository（与 ErrorDiagnosticCleanupBacklogReader
+// 同一理由）：旧格式的存储实现与既有测试替身不该被迫长出明文层的方法。真实仓储实现它；
+// 未实现时新明文层的读取与清理都不可用，调用方必须把它当作明确的不可用，而不是
+// 悄悄退化成「从未留存」——两者对管理员与运维的含义完全不同。
+type ErrorDiagnosticPlaintextReader interface {
+	// ReadErrorDiagnosticPlainBody 返回未加密的明文出站正文。
+	// 未留存、已到期、未关联且已过三十天、或已清理，一律返回 ErrErrorDiagnosticBodyGone。
+	ReadErrorDiagnosticPlainBody(ctx context.Context, id string, now time.Time) ([]byte, error)
+	// ReadErrorDiagnosticPlainHeaderValues 返回重新校验后的明文 429 头值。
+	ReadErrorDiagnosticPlainHeaderValues(ctx context.Context, id string, now time.Time) (ErrorDiagnosticHeaderValues, error)
+	// ClearExpiredErrorDiagnosticPlainBodies 在在线主库物理清除已过三十天的未关联明文正文。
+	ClearExpiredErrorDiagnosticPlainBodies(ctx context.Context, now time.Time, batch int) (int64, error)
+	// ClearExpiredErrorDiagnosticPlainHeaderValues 同形，属 429 头值层。
+	ClearExpiredErrorDiagnosticPlainHeaderValues(ctx context.Context, now time.Time, batch int) (int64, error)
+}
+
+// ErrorDiagnosticLinkReconciler 是存储层的**可选**能力：把随后才形成使用记录的诊断补关联。
+//
+// 诊断通常在上游 RoundTrip 之后写入，usage 却在逻辑请求结束后才生成；两者顺序不固定。
+// 无法在写入当时关联的行必须有一条**有界批量**的补偿路径，否则它们只能按三十天截止，
+// 使用记录删除时也不会带走它们——那就等于「关联成功」这件事只取决于写入顺序。
+//
+// 实现必须自己验证「同一逻辑请求 + 真实尝试序号 + 上游状态」三项，绝不能用时间、账号或
+// 客户端可控的原始请求 ID 兜底猜测。
+type ErrorDiagnosticLinkReconciler interface {
+	ReconcilePlainErrorDiagnosticLinks(ctx context.Context, now time.Time, batch int) (int64, error)
+}
+
 // ErrorDiagnosticCleanupBacklogReader 是存储层的**可选**能力：读取清理积压。
 //
 // 单独成接口而不是并入 ErrorDiagnosticRepository：监控探针不该强迫每个存储实现
@@ -769,6 +962,16 @@ type ErrorDiagnosticCleanupBacklog struct {
 	OldestBodyOverdueAt   time.Time
 	OldestRecordOverdueAt time.Time
 	OldestHeaderOverdueAt time.Time
+
+	// 新明文层（票据 08／09）的积压单独计：它们是**明文**残留，与旧密文残留的处置与风险
+	// 都不同，合并成一个数会让运维看不出哪一层在落后。
+	//
+	// 只统计「未关联且已过 metadata_expires_at」的行：已关联的明文随使用记录存在，
+	// 没有自有到期时刻，不构成清理积压。
+	PlainBodiesOverdue         int64
+	PlainHeaderValuesOverdue   int64
+	OldestPlainBodyOverdueAt   time.Time
+	OldestPlainHeaderOverdueAt time.Time
 }
 
 // OldestOverdueSeconds 返回最老的超期时长（秒），供监控直接上报。
@@ -781,6 +984,8 @@ func (b ErrorDiagnosticCleanupBacklog) OldestOverdueSeconds(now time.Time) int64
 		b.OldestBodyOverdueAt,
 		b.OldestRecordOverdueAt,
 		b.OldestHeaderOverdueAt,
+		b.OldestPlainBodyOverdueAt,
+		b.OldestPlainHeaderOverdueAt,
 	} {
 		if !candidate.IsZero() && (oldest.IsZero() || candidate.Before(oldest)) {
 			oldest = candidate
@@ -833,6 +1038,26 @@ type ErrorDiagnosticMetricsSnapshot struct {
 	OverdueHeaderValues int64
 	// OldestOverdueSeconds 是最近一次观测到的最老超期时长。
 	OldestOverdueSeconds int64
+
+	// 新明文层（票据 08／09）的计数与旧层分开：两层可以各自单独在跑，
+	// 合并成一个数就再也说明不了「哪一层没在采」。全部只累加离散事件，不含任何载荷。
+	PlainBodyStored     int64
+	PlainBodySkipped    int64
+	PlainBodyReads      int64
+	PlainBodyReadDenied int64
+	// PlainBodiesCleared 是已被物理清除的未关联明文正文列数。
+	PlainBodiesCleared int64
+	// PlainHeaderValues* 是 429 头值明文层的同形计数。
+	PlainHeaderValuesStored     int64
+	PlainHeaderValuesSkipped    int64
+	PlainHeaderValuesReads      int64
+	PlainHeaderValuesReadDenied int64
+	PlainHeaderValuesCleared    int64
+	// LinksReconciled 是补上的 usage 关联数（迟到的使用记录被逐项验证后绑定）。
+	LinksReconciled int64
+	// OverduePlainBodies／OverduePlainHeaderValues 是最近一次观测到的明文层清理积压量。
+	OverduePlainBodies       int64
+	OverduePlainHeaderValues int64
 }
 
 // ErrorDiagnosticMetrics 是进程级计数，只累加离散事件，不记录正文、凭据或标识。
@@ -859,6 +1084,19 @@ type ErrorDiagnosticMetrics struct {
 	overdueRecords         atomic.Int64
 	overdueHeaders         atomic.Int64
 	oldestOverdue          atomic.Int64
+	plainBodyStored        atomic.Int64
+	plainBodySkipped       atomic.Int64
+	plainBodyReads         atomic.Int64
+	plainBodyReadDenied    atomic.Int64
+	plainBodiesCleared     atomic.Int64
+	plainHeaderStored      atomic.Int64
+	plainHeaderSkipped     atomic.Int64
+	plainHeaderReads       atomic.Int64
+	plainHeaderReadDenied  atomic.Int64
+	plainHeaderCleared     atomic.Int64
+	plainBodiesOverdue     atomic.Int64
+	plainHeadersOverdue    atomic.Int64
+	linksReconciled        atomic.Int64
 }
 
 // NewErrorDiagnosticMetrics 创建一个进程级计数集。
@@ -892,6 +1130,20 @@ func (m *ErrorDiagnosticMetrics) Snapshot() ErrorDiagnosticMetricsSnapshot {
 		OverdueRecords:         m.overdueRecords.Load(),
 		OverdueHeaderValues:    m.overdueHeaders.Load(),
 		OldestOverdueSeconds:   m.oldestOverdue.Load(),
+
+		PlainBodyStored:             m.plainBodyStored.Load(),
+		PlainBodySkipped:            m.plainBodySkipped.Load(),
+		PlainBodyReads:              m.plainBodyReads.Load(),
+		PlainBodyReadDenied:         m.plainBodyReadDenied.Load(),
+		PlainBodiesCleared:          m.plainBodiesCleared.Load(),
+		PlainHeaderValuesStored:     m.plainHeaderStored.Load(),
+		PlainHeaderValuesSkipped:    m.plainHeaderSkipped.Load(),
+		PlainHeaderValuesReads:      m.plainHeaderReads.Load(),
+		PlainHeaderValuesReadDenied: m.plainHeaderReadDenied.Load(),
+		PlainHeaderValuesCleared:    m.plainHeaderCleared.Load(),
+		LinksReconciled:             m.linksReconciled.Load(),
+		OverduePlainBodies:          m.plainBodiesOverdue.Load(),
+		OverduePlainHeaderValues:    m.plainHeadersOverdue.Load(),
 	}
 }
 
@@ -934,9 +1186,16 @@ const (
 	// ErrorDiagnosticAlertCodeHeaderValueClearFailed 与正文清除失败分开成不同的原因码：
 	// 两段卡住的处置不同（一个是模型正文，一个是 429 头值），合并会让运维看不出是哪一段。
 	ErrorDiagnosticAlertCodeHeaderValueClearFailed = "header_value_clear_failed"
-	ErrorDiagnosticAlertCodeRecordDeleteFailed     = "record_delete_failed"
-	ErrorDiagnosticAlertCodeBacklog                = "cleanup_backlog"
-	ErrorDiagnosticAlertCodeBacklogProbeFailed     = "backlog_probe_failed"
+	// 新明文层的清除失败同样是独立原因码：明文残留与密文残留不是同一件事，
+	// 而两段可以各自单独卡住。
+	ErrorDiagnosticAlertCodePlainBodyClearFailed        = "plain_body_clear_failed"
+	ErrorDiagnosticAlertCodePlainHeaderValueClearFailed = "plain_header_value_clear_failed"
+	// ErrorDiagnosticAlertCodeLinkReconcileFailed 是补关联失败的独立原因码：
+	// 关联卡住与清理卡住的后果不同（前者会让明文失去 owner，后者只影响物理残留）。
+	ErrorDiagnosticAlertCodeLinkReconcileFailed = "link_reconcile_failed"
+	ErrorDiagnosticAlertCodeRecordDeleteFailed  = "record_delete_failed"
+	ErrorDiagnosticAlertCodeBacklog             = "cleanup_backlog"
+	ErrorDiagnosticAlertCodeBacklogProbeFailed  = "backlog_probe_failed"
 )
 
 // ErrorDiagnosticAlertCleanupBacklog 是清理积压的稳定事件名。
@@ -1199,6 +1458,11 @@ func (s *ErrorDiagnosticService) RecordErrorDiagnostic(ctx context.Context, atte
 		}
 		return ErrorDiagnosticRecord{}, ErrErrorDiagnosticDisabled
 	}
+	// 新明文正文和头值分别选择格式；一个明文层开启不能悄悄停掉另一层
+	// 已启用的旧密文留存。存储和揭示按正文/头值各自的实际格式判定。
+	if settings.PlaintextCaptureAllowed() {
+		return s.recordPlaintextDiagnostic(ctx, attempt, settings)
+	}
 	state, reason, retain := DecideErrorDiagnosticBody(attempt, settings.BodyCaptureAllowed(), s.cipher != nil)
 	write := ErrorDiagnosticWrite{
 		Attempt:    attempt,
@@ -1270,6 +1534,113 @@ func (s *ErrorDiagnosticService) RecordErrorDiagnostic(ctx context.Context, atte
 			s.metrics.headerValuesStored.Add(1)
 		case strings.HasPrefix(record.HeaderReason, "skipped_"):
 			s.metrics.headerValuesSkipped.Add(1)
+		}
+	}
+	return record, nil
+}
+
+// recordPlaintextDiagnostic 写出一条**新明文格式**的诊断行（票据 08／09）。
+//
+// 与旧密文路径的三点差别：
+//   - 正文与头值都进明文列，不经过任何加密器；缺密钥不影响它，也不产生加密相关的原因码。
+//   - 旧密文列保持空（互斥）。
+//   - 这一行带上可验证的关联摘要（同一逻辑请求、按用户加盐的审计关联摘要）与真实尝试序号／
+//     上游状态；拿不到摘要时三者一并留空，这一行因此永远不可关联，只能按三十天截止读取——
+//     绝不用时间、账号或客户端可控的原始请求 ID 兜底猜一个关联。
+//
+// 写入失败仍然 fail-open：调用方（网关接缝）忽略错误并继续原本的上游／客户端流程。
+func (s *ErrorDiagnosticService) recordPlaintextDiagnostic(ctx context.Context, attempt ErrorDiagnosticAttempt, settings ErrorDiagnosticSettings) (ErrorDiagnosticRecord, error) {
+	bodyDecision := DecideErrorDiagnosticPlainBody(attempt, settings.PlainBodyCaptureAllowed())
+	headerDecision := DecideErrorDiagnosticPlainHeaderValues(attempt, settings.PlainHeaderValuesCaptureAllowed())
+
+	write := ErrorDiagnosticWrite{
+		Attempt:               attempt,
+		PlainRecord:           true,
+		PlainBodyState:        bodyDecision.State,
+		PlainBodyReason:       bodyDecision.Reason,
+		PlainBodyPayload:      bodyDecision.Payload,
+		PlainHeaderState:      headerDecision.State,
+		PlainHeaderReason:     headerDecision.Reason,
+		PlainHeaderPayload:    headerDecision.Payload,
+		PlainHeaderEntryCount: headerDecision.EntryCount,
+	}
+	// Only the *same* layer's new format supersedes its legacy encryption.
+	// A plaintext header toggle must not disable a separately enabled legacy
+	// body toggle, and the mirror combination has the same guarantee.
+	if !settings.PlainBodyCaptureAllowed() && settings.BodyCaptureAllowed() {
+		state, reason, retain := DecideErrorDiagnosticBody(attempt, true, s.cipher != nil)
+		write.BodyState, write.BodyReason = state, reason
+		if retain {
+			ciphertext, err := s.cipher.Encrypt(attempt.Body)
+			if err != nil || len(ciphertext) == 0 {
+				write.BodyState = ErrorDiagnosticBodyStateSkipped
+				write.BodyReason = ErrorDiagnosticBodySkippedEncryptionUnavailable
+			} else {
+				write.BodyCiphertext = ciphertext
+				write.BodyKeyVersion = s.cipher.KeyVersion()
+			}
+		}
+	}
+	if !settings.PlainHeaderValuesCaptureAllowed() && settings.HeaderValuesCaptureAllowed() {
+		legacy := DecideErrorDiagnosticHeaderValues(attempt, true, s.cipher != nil)
+		write.HeaderState, write.HeaderReason, write.HeaderEntryCount = legacy.State, legacy.Reason, legacy.EntryCount
+		if legacy.Retained() {
+			ciphertext, err := s.cipher.Encrypt(legacy.Payload)
+			if err != nil || len(ciphertext) == 0 {
+				write.HeaderState = ErrorDiagnosticHeaderStateSkipped
+				write.HeaderReason = ErrorDiagnosticHeaderSkippedEncryptionUnavailable
+				write.HeaderEntryCount = 0
+			} else {
+				write.HeaderCiphertext = ciphertext
+				write.HeaderKeyVersion = s.cipher.KeyVersion()
+				write.HeaderPayloadBytes = len(legacy.Payload)
+			}
+		}
+	}
+	if digest := ErrorDiagnosticLinkDigest(ctx); digest != "" {
+		write.PlainLinkDigest = digest
+		write.PlainLinkAttemptIndex = attempt.AttemptIndex
+		write.PlainLinkWireStatus = attempt.UpstreamStatusCode
+	}
+
+	id, err := s.newID()
+	if err != nil || !ValidErrorDiagnosticID(id) {
+		if s.metrics != nil {
+			s.metrics.writeFailures.Add(1)
+		}
+		return ErrorDiagnosticRecord{}, ErrErrorDiagnosticUnavailable
+	}
+	write.ID = id
+
+	record, err := s.repo.CreateErrorDiagnostic(ctx, write, s.now())
+	if err != nil {
+		failures := int64(1)
+		if s.metrics != nil {
+			failures = s.metrics.writeFailures.Add(1)
+		}
+		s.alerts.warn(ErrorDiagnosticAlertWriteFailed, classifyErrorDiagnosticWriteFailure(err), failures)
+		return ErrorDiagnosticRecord{}, err
+	}
+	record = normalizeErrorDiagnosticRecord(record, s.now())
+	if s.metrics != nil {
+		s.metrics.storedRecords.Add(1)
+		switch {
+		case record.BodyFormat() == ErrorDiagnosticFormatPlaintext && record.PlainBodyState == ErrorDiagnosticBodyStateStored:
+			s.metrics.plainBodyStored.Add(1)
+		case record.BodyFormat() == ErrorDiagnosticFormatEncrypted && record.BodyState == ErrorDiagnosticBodyStateStored:
+			s.metrics.bodyStored.Add(1)
+		case strings.HasPrefix(record.PlainBodyReason, "skipped_"):
+			s.metrics.plainBodySkipped.Add(1)
+		}
+		// Count each layer by its actual storage format; an out-of-scope layer
+		// is not a failed capture and must not inflate skipped metrics.
+		switch {
+		case record.HeaderFormat() == ErrorDiagnosticFormatPlaintext && record.PlainHeaderState == ErrorDiagnosticHeaderStateStored:
+			s.metrics.plainHeaderStored.Add(1)
+		case record.HeaderFormat() == ErrorDiagnosticFormatEncrypted && record.HeaderState == ErrorDiagnosticHeaderStateStored:
+			s.metrics.headerValuesStored.Add(1)
+		case strings.HasPrefix(record.PlainHeaderReason, "skipped_"):
+			s.metrics.plainHeaderSkipped.Add(1)
 		}
 	}
 	return record, nil
@@ -1415,13 +1786,46 @@ func classifyErrorDiagnosticWriteFailure(err error) string {
 // 这是显式动作：默认列表与普通用户永远拿不到正文，只有管理端显式请求且未到期才返回内容。
 // 未留存、已物理清除、已到期或 ID 不合法都返回 ErrErrorDiagnosticBodyGone。
 func (s *ErrorDiagnosticService) ReadErrorDiagnosticBody(ctx context.Context, id string) ([]byte, error) {
-	if s == nil || s.repo == nil || s.cipher == nil || !ValidErrorDiagnosticID(id) {
+	if s == nil || s.repo == nil || !ValidErrorDiagnosticID(id) {
 		if s != nil && s.metrics != nil {
 			s.metrics.bodyReadDenied.Add(1)
 		}
 		return nil, ErrErrorDiagnosticBodyGone
 	}
-	body, err := s.repo.ReadErrorDiagnosticBody(ctx, id, s.now())
+	now := s.now()
+	// 新旧格式的读取路径不同（旧的需要密钥，新的不需要），因此先读一次元数据判断格式：
+	// 不能拿「有没有密钥」当格式判别式，否则配了密钥的部署会读不到明文行，
+	// 而没配密钥的部署又会把旧密文行误报成可读。这是管理员显式动作的路径，
+	// 多一次元数据读可以接受，也不构成可按请求放大的探针。
+	record, lookupErr := s.repo.GetErrorDiagnostic(ctx, id)
+	if lookupErr != nil {
+		if !errors.Is(lookupErr, ErrErrorDiagnosticNotFound) {
+			// 存储故障必须如实回传：把「问不出来」显示成「正文已消失」是两件不同的事。
+			return nil, lookupErr
+		}
+		if s.metrics != nil {
+			s.metrics.bodyReadDenied.Add(1)
+		}
+		return nil, ErrErrorDiagnosticBodyGone
+	}
+	if record.BodyFormat() == ErrorDiagnosticFormatPlaintext {
+		body, err := s.readPlainBody(ctx, id, record, now)
+		if s.metrics != nil {
+			if err == nil {
+				s.metrics.plainBodyReads.Add(1)
+			} else if errors.Is(err, ErrErrorDiagnosticBodyGone) {
+				s.metrics.plainBodyReadDenied.Add(1)
+			}
+		}
+		return body, err
+	}
+	if s.cipher == nil {
+		if s.metrics != nil {
+			s.metrics.bodyReadDenied.Add(1)
+		}
+		return nil, ErrErrorDiagnosticBodyGone
+	}
+	body, err := s.repo.ReadErrorDiagnosticBody(ctx, id, now)
 	if err != nil {
 		if s.metrics != nil && errors.Is(err, ErrErrorDiagnosticBodyGone) {
 			s.metrics.bodyReadDenied.Add(1)
@@ -1441,6 +1845,30 @@ func (s *ErrorDiagnosticService) ReadErrorDiagnosticBody(ctx context.Context, id
 	return body, nil
 }
 
+// readPlainBody 读取一条新明文格式记录的正文。
+//
+// 到期规则由服务侧判定（关联则随 usage，未关联则三十天整点拒绝），但存储层同样会再判一次：
+// 两边都是 fail-closed，绝不是「服务说行就行」。存储层不支持明文读取时返回
+// ErrErrorDiagnosticUnavailable，而不是把「这一层不可用」显示成「正文已消失」。
+func (s *ErrorDiagnosticService) readPlainBody(ctx context.Context, id string, record ErrorDiagnosticRecord, now time.Time) ([]byte, error) {
+	if !record.PlainBodyReadableAt(now) {
+		return nil, ErrErrorDiagnosticBodyGone
+	}
+	reader, ok := s.repo.(ErrorDiagnosticPlaintextReader)
+	if !ok {
+		return nil, ErrErrorDiagnosticUnavailable
+	}
+	body, err := reader.ReadErrorDiagnosticPlainBody(ctx, id, now)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 || len(body) > ErrorDiagnosticMaxBodyReadBytes {
+		// 空载荷与越界载荷都不是可披露的正文：前者说明行与载荷不一致，后者说明存储被篡改。
+		return nil, ErrErrorDiagnosticBodyGone
+	}
+	return body, nil
+}
+
 // Counters 返回当前计数快照。
 func (s *ErrorDiagnosticService) Counters() ErrorDiagnosticMetricsSnapshot {
 	if s == nil {
@@ -1455,13 +1883,43 @@ func (s *ErrorDiagnosticService) Counters() ErrorDiagnosticMetricsSnapshot {
 // 已物理清除、已按 7 天到期、ID 不合法、密钥缺失或解密结果不合格，一律返回
 // ErrErrorDiagnosticHeaderValuesGone——使读取结果不能作为「这条尝试留过什么」的探针。
 func (s *ErrorDiagnosticService) ReadErrorDiagnosticHeaderValues(ctx context.Context, id string) (ErrorDiagnosticHeaderValues, error) {
-	if s == nil || s.repo == nil || s.cipher == nil || !ValidErrorDiagnosticID(id) {
+	if s == nil || s.repo == nil || !ValidErrorDiagnosticID(id) {
 		if s != nil && s.metrics != nil {
 			s.metrics.headerValuesReadDenied.Add(1)
 		}
 		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
 	}
-	values, err := s.repo.ReadErrorDiagnosticHeaderValues(ctx, id, s.now())
+	now := s.now()
+	// 与正文同一约定：先按元数据判断格式，再走对应的读取路径。头值的新旧两层同样各自
+	// 有独立的到期规则，不能用「有没有密钥」当格式判别式。
+	record, lookupErr := s.repo.GetErrorDiagnostic(ctx, id)
+	if lookupErr != nil {
+		if !errors.Is(lookupErr, ErrErrorDiagnosticNotFound) {
+			return ErrorDiagnosticHeaderValues{}, lookupErr
+		}
+		if s.metrics != nil {
+			s.metrics.headerValuesReadDenied.Add(1)
+		}
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	if record.HeaderFormat() == ErrorDiagnosticFormatPlaintext {
+		values, err := s.readPlainHeaderValues(ctx, id, record, now)
+		if s.metrics != nil {
+			if err == nil {
+				s.metrics.plainHeaderReads.Add(1)
+			} else if errors.Is(err, ErrErrorDiagnosticHeaderValuesGone) {
+				s.metrics.plainHeaderReadDenied.Add(1)
+			}
+		}
+		return values, err
+	}
+	if s.cipher == nil {
+		if s.metrics != nil {
+			s.metrics.headerValuesReadDenied.Add(1)
+		}
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	values, err := s.repo.ReadErrorDiagnosticHeaderValues(ctx, id, now)
 	if err != nil {
 		if s.metrics != nil && errors.Is(err, ErrErrorDiagnosticHeaderValuesGone) {
 			s.metrics.headerValuesReadDenied.Add(1)
@@ -1472,4 +1930,19 @@ func (s *ErrorDiagnosticService) ReadErrorDiagnosticHeaderValues(ctx context.Con
 		s.metrics.headerValuesReads.Add(1)
 	}
 	return values, nil
+}
+
+// readPlainHeaderValues 读取一条新明文格式记录的 429 头值。
+//
+// 存储层返回的载荷同样要重新过一遍白名单与有界校验（见 DecodeErrorDiagnosticHeaderValues），
+// 因为「已经解密」（这里是「已经在库里」）不等于内容可信。
+func (s *ErrorDiagnosticService) readPlainHeaderValues(ctx context.Context, id string, record ErrorDiagnosticRecord, now time.Time) (ErrorDiagnosticHeaderValues, error) {
+	if !record.PlainHeaderValuesReadableAt(now) {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticHeaderValuesGone
+	}
+	reader, ok := s.repo.(ErrorDiagnosticPlaintextReader)
+	if !ok {
+		return ErrorDiagnosticHeaderValues{}, ErrErrorDiagnosticUnavailable
+	}
+	return reader.ReadErrorDiagnosticPlainHeaderValues(ctx, id, now)
 }

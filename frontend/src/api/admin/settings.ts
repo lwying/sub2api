@@ -1695,6 +1695,22 @@ export interface RequestAuditValueDetailOperatorStatus {
   risk_acknowledgement?: RequestAuditValueDetailRiskAcknowledgementView;
   /** False both when no record exists and when the record covers an older statement. */
   risk_acknowledgement_current: boolean;
+  /**
+   * Deployment premise (ADR 0007): whether this database can guarantee that
+   * plaintext rows disappear together with the usage record they belong to.
+   *
+   * New value details are plaintext and usage-owned, so a deployment whose database
+   * cannot promise that ownership is refused: `capture_allowed` stays off no matter
+   * what the stored switch and the acknowledgement say. This is a different fact
+   * from "not acknowledged", and the UI has to say which one it is.
+   */
+  plaintext_capture_supported: boolean;
+  /**
+   * Closed reason code behind `plaintext_capture_supported`: partitioned
+   * `usage_logs`, a dropped ownership foreign key, or a probe that could not answer.
+   * It never carries a database error, and unknown codes are shown as "unknown".
+   */
+  plaintext_capture_support_reason: string;
 }
 
 /** One whole-state update. The server treats an omitted field as off. */
@@ -1730,7 +1746,29 @@ const REQUEST_AUDIT_VALUE_DETAIL_GATE_FLAGS = [
   "risk_acknowledged",
   "capture_allowed",
   "encryption_key_available",
+  "plaintext_capture_supported",
 ] as const;
+
+/**
+ * The closed set of deployment premise reasons, as stable i18n key suffixes.
+ *
+ * The server sends a closed enum; anything unrecognised is shown as "unknown"
+ * rather than echoed, so a future or malformed code cannot turn into free text on
+ * the panel. The reason is what lets the operator tell "the acknowledgement is
+ * missing" from "this database cannot own plaintext at all".
+ */
+const REQUEST_AUDIT_VALUE_DETAIL_SUPPORT_REASON_KEYS: Record<string, string> = {
+  supported: "deploymentSupported",
+  unsupported_partitioned_usage_logs: "deploymentPartitioned",
+  unsupported_missing_ownership_foreign_key: "deploymentMissingOwnership",
+  unsupported_unknown_deployment: "deploymentUnknown",
+  probe_failed: "deploymentProbeFailed",
+  probe_unavailable: "deploymentProbeUnavailable",
+};
+
+export function requestAuditValueDetailSupportReasonKey(reason: string): string {
+  return REQUEST_AUDIT_VALUE_DETAIL_SUPPORT_REASON_KEYS[reason] ?? "deploymentUnknown";
+}
 
 function normalizeRiskAcknowledgement(
   raw: unknown,
@@ -1790,6 +1828,13 @@ export function normalizeRequestAuditValueDetailOperatorStatus(
       "value detail operator status risk statement is missing",
     );
   }
+  if (!isNonEmptyString(raw.plaintext_capture_support_reason)) {
+    // "No reason" must not be rendered as "supported": the reason is the whole
+    // explanation for a stored switch that is not collecting.
+    throw new RequestAuditValueDetailOperatorPayloadError(
+      "value detail operator status plaintext_capture_support_reason is missing",
+    );
+  }
 
   const status: RequestAuditValueDetailOperatorStatus = {
     enabled: raw.enabled as boolean,
@@ -1800,6 +1845,8 @@ export function normalizeRequestAuditValueDetailOperatorStatus(
     risk_phrase_en: raw.risk_phrase_en as string,
     risk_phrase_zh: raw.risk_phrase_zh as string,
     risk_acknowledgement_current: raw.risk_acknowledgement_current === true,
+    plaintext_capture_supported: raw.plaintext_capture_supported as boolean,
+    plaintext_capture_support_reason: raw.plaintext_capture_support_reason as string,
   };
 
   const acknowledgement = normalizeRiskAcknowledgement(raw.risk_acknowledgement);
@@ -1845,6 +1892,10 @@ const REQUEST_AUDIT_VALUE_DETAIL_ERROR_KEYS: Record<string, string> = {
   REQUEST_AUDIT_VALUE_DETAIL_OPERATOR_SESSION_REQUIRED: "sessionRequired",
   REQUEST_AUDIT_VALUE_DETAIL_ADMIN_API_KEY_FORBIDDEN: "adminApiKeyForbidden",
   REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_UNAVAILABLE: "unavailable",
+  // The deployment premise refusals: enabling is refused on a database that cannot
+  // make plaintext disappear with its usage record. The copy names the check; the
+  // status panel carries the specific reason code.
+  REQUEST_AUDIT_VALUE_DETAIL_DEPLOYMENT_UNSUPPORTED: "deploymentUnsupported",
 };
 
 export function requestAuditValueDetailErrorKey(error: unknown): string {

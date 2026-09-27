@@ -54,6 +54,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
     'admin.errorDiagnostics.detail.usageLink': 'Related usage record',
     'admin.errorDiagnostics.detail.usageAbsent': 'No usage record',
     'admin.errorDiagnostics.detail.notice': 'The body is decrypted only on request and is never cached.',
+    'admin.errorDiagnostics.detail.plaintextNotice': 'The body is stored as plaintext and shown only on request.',
+    'admin.errorDiagnostics.detail.plaintextHeaderNotice': 'Header values are stored as plaintext and shown only on request.',
     'admin.errorDiagnostics.protocols.messages': 'Messages',
     'admin.errorDiagnostics.protocols.chat_completions': 'Chat Completions',
     'admin.errorDiagnostics.protocols.responses': 'Responses',
@@ -100,6 +102,12 @@ vi.mock('vue-i18n', async (importOriginal) => {
     'admin.errorDiagnostics.detail.headerEntryCount': '{count} header values stored',
     'admin.errorDiagnostics.detail.requestHeaders': 'Request header values',
     'admin.errorDiagnostics.detail.responseHeaders': 'Response header values',
+    'admin.errorDiagnostics.formats.encrypted': 'encrypted',
+    'admin.errorDiagnostics.formats.plaintext': 'plaintext',
+    'admin.errorDiagnostics.rules.encrypted': 'ENCRYPTED-RULE',
+    'admin.errorDiagnostics.rules.plaintextLinked': 'PLAINTEXT-LINKED-RULE',
+    'admin.errorDiagnostics.rules.plaintextUnlinked': 'PLAINTEXT-UNLINKED-RULE',
+    'admin.errorDiagnostics.reasons.plain_body_retained': 'Request body retained as plaintext',
     'stepUp.notEnabled': 'Enable two-factor authentication on your profile first',
     'stepUp.adminApiKeyForbidden': 'Admin API keys cannot perform this operation',
   }
@@ -870,5 +878,71 @@ describe('ErrorDiagnosticDetailDrawer 429 header values', () => {
     await wrapper.get(HEADER_REVEAL_SELECTOR).trigger('click')
     await flushPromises()
     expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(true)
+  })
+
+  // -------------------------------------------------------------------------
+  // Retention format (tickets 08/09)
+  // -------------------------------------------------------------------------
+
+  it('says a plaintext body is plaintext and that it follows its usage', async () => {
+    mocks.getDiagnostic.mockResolvedValue(
+      attempt({
+        // A plaintext row carries the new format and, when linked, has no window
+        // of its own — its metadata expiry is deliberately in the past.
+        body_format: 'plaintext',
+        header_format: 'plaintext',
+        header_state: 'stored',
+        header_reason: 'plain_header_retained',
+        usage_linked: true,
+        reason: 'plain_body_retained',
+        body_expires_at: undefined,
+        metadata_expires_at: '2020-01-01T00:00:00Z',
+      }),
+    )
+    mocks.revealDiagnosticBody.mockResolvedValue({
+      body_text: '{"messages":[]}',
+      body_bytes: 15,
+      body_format: 'plaintext',
+      usage_linked: true,
+    })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="error-diagnostic-body-format"]').text()).toBe('plaintext')
+    expect(wrapper.get('[data-testid="error-diagnostic-body-rule"]').text()).toBe('PLAINTEXT-LINKED-RULE')
+    expect(wrapper.get('[data-testid="error-diagnostic-metadata-expiry"]').text()).toBe('PLAINTEXT-LINKED-RULE')
+    expect(wrapper.text()).toContain('The body is stored as plaintext and shown only on request.')
+    expect(wrapper.text()).not.toContain('The body is decrypted only on request')
+    expect(wrapper.text()).toContain('Header values are stored as plaintext and shown only on request.')
+    expect(wrapper.text()).not.toContain('Header values are decrypted only on request')
+    // Plaintext is stored unencrypted, so the reveal needs no key and no step-up.
+    expect(wrapper.find('[data-testid="error-diagnostic-reveal"]').exists()).toBe(true)
+    expect(wrapper.find(TOTP_DIALOG_SELECTOR).exists()).toBe(false)
+
+    await wrapper.get('[data-testid="error-diagnostic-reveal"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="error-diagnostic-body"]').text()).toContain('{"messages":[]}')
+  })
+
+  it('stops offering an unlinked plaintext body once its window has closed', async () => {
+    mocks.getDiagnostic.mockResolvedValue(
+      attempt({
+        body_format: 'plaintext',
+        usage_linked: false,
+        reason: 'plain_body_retained',
+        body_expires_at: undefined,
+        // 未关联的行在 metadata_expires_at 整点起就不可读；界面的动作必须同时关闭，
+        // 否则会邀请管理员去点一个服务端必然拒绝的读取。
+        metadata_expires_at: '2020-01-01T00:00:00Z',
+      }),
+    )
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="error-diagnostic-body-rule"]').text()).toBe('PLAINTEXT-UNLINKED-RULE')
+    expect(wrapper.find('[data-testid="error-diagnostic-reveal"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="error-diagnostic-body-state"]').text()).toBe('Body expired')
   })
 })

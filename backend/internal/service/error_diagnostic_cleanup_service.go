@@ -15,22 +15,31 @@ const ErrorDiagnosticCleanupBatch = 500
 // ErrorDiagnosticCleanupInterval 是后台清理的默认间隔。
 const ErrorDiagnosticCleanupInterval = 10 * time.Minute
 
-// ErrorDiagnosticCleanupResult 是一轮清理的三段结果。
+// ErrorDiagnosticCleanupResult 是一轮清理的结果。
 //
-// 三段都是「在线主库上的物理动作」计数，不是「到期即可读」的声明：应用读取在到期时刻
+// 每一段都是「在线主库上的物理动作」计数，不是「到期即可读」的声明：应用读取在到期时刻
 // 就已经拒绝，这里只说明这一轮真的清掉了多少。
 type ErrorDiagnosticCleanupResult struct {
 	BodiesCleared       int64
 	HeaderValuesCleared int64
 	RecordsDeleted      int64
+	// 新明文层（票据 08／09）的清除数单独计：明文残留与密文残留是两件事，
+	// 合并成一个数就无法判断「哪一层没有在清」。
+	PlainBodiesCleared       int64
+	PlainHeaderValuesCleared int64
+	// LinksReconciled 是本轮补上的 usage 关联数（迟到的使用记录被验证后绑定）。
+	LinksReconciled int64
 }
 
 // ErrorDiagnosticCleanupService 按保留期清理错误诊断的在线主库副本。
 //
-// 三件事分开做，因为期限不同（按 created_at 计算）：
+// 每一段分开做，因为期限与归属都不同（都按 created_at 计算）：
 //   - 第 7 天起：把 body_ciphertext 置空，物理清除在线主库上的正文密文列，保留整行元数据；
 //   - 第 7 天起：把 header_ciphertext 置空，物理清除在线主库上的 429 头值密文列；
-//   - 第 30 天起：物理删除整行元数据。
+//   - 每轮先补 usage 关联：把随后才形成使用记录的**新明文**诊断绑定到它（有界批量）；
+//   - 第 30 天起（仅未关联的新明文行）：置空 plain_*_payload 并记 purged；
+//   - 第 30 天起（未关联的行）：物理删除整行元数据；已关联的新明文行**不在**其中，
+//     它们的所有者是使用记录，随 usage 删除。
 //
 // 这是**周期批量**作业：默认每 10 分钟一轮、每轮最多 ErrorDiagnosticCleanupBatch 行，
 // 停机、积压或单轮未取完都会推迟物理清除，因此没有「到期即删」的确切保证。
@@ -82,6 +91,7 @@ func (s *ErrorDiagnosticCleanupService) RunOnce(ctx context.Context) (ErrorDiagn
 	}
 	now := s.now()
 	var result ErrorDiagnosticCleanupResult
+	var linkErr, plainBodyErr, plainHeaderErr error
 
 	bodiesCleared, bodyErr := s.repo.ClearExpiredErrorDiagnosticBodies(ctx, now, s.batch)
 	result.BodiesCleared = bodiesCleared
@@ -102,6 +112,52 @@ func (s *ErrorDiagnosticCleanupService) RunOnce(ctx context.Context) (ErrorDiagn
 		s.alerts.warn(ErrorDiagnosticAlertCleanupFailed, ErrorDiagnosticAlertCodeHeaderValueClearFailed, s.recordCleanupFailure())
 	}
 
+	// 先补关联、再清载荷、最后删行。顺序有实质意义：
+	//   - 补关联必须在清载荷与删行之前跑，否则「这次失败属于哪条使用记录」可能在下一轮之前
+	//     就被三十天清理带走；
+	//   - 补偿是有界批量，且只做「已能逐项验证」的绑定，绝不猜测。
+	//
+	// 存储层没有这个能力时静默跳过：旧实现没有明文列，也就没有迟关联这回事。
+	if reconciler, ok := s.repo.(ErrorDiagnosticLinkReconciler); ok {
+		reconciled, err := reconciler.ReconcilePlainErrorDiagnosticLinks(ctx, now, s.batch)
+		result.LinksReconciled = reconciled
+		if s.metrics != nil {
+			s.metrics.linksReconciled.Add(reconciled)
+		}
+		if err != nil {
+			s.alerts.warn(ErrorDiagnosticAlertCleanupFailed, ErrorDiagnosticAlertCodeLinkReconcileFailed, s.recordCleanupFailure())
+			linkErr = err
+		}
+	}
+
+	// 新明文层的载荷清除与旧密文层分开成两段，且**在整行删除之前**执行：
+	// 未关联的明文行到第三十天就已经拒绝读取，清列的时机只影响在线主库上的物理残留，
+	// 但它必须发生，否则「到期」只落在 API 上，明文本身还留在表里。
+	//
+	// 存储层没有这一层能力时不假装清过、也不报错：它是装配选择（旧实现没有明文列），
+	// 与「清理失败」不同。真正的风险由运维状态与部署说明暴露。
+	if plaintextRepo, ok := s.repo.(ErrorDiagnosticPlaintextReader); ok {
+		plainBodiesCleared, err := plaintextRepo.ClearExpiredErrorDiagnosticPlainBodies(ctx, now, s.batch)
+		result.PlainBodiesCleared = plainBodiesCleared
+		if s.metrics != nil {
+			s.metrics.plainBodiesCleared.Add(plainBodiesCleared)
+		}
+		if err != nil {
+			s.alerts.warn(ErrorDiagnosticAlertCleanupFailed, ErrorDiagnosticAlertCodePlainBodyClearFailed, s.recordCleanupFailure())
+			plainBodyErr = err
+		}
+
+		plainHeaderValuesCleared, err := plaintextRepo.ClearExpiredErrorDiagnosticPlainHeaderValues(ctx, now, s.batch)
+		result.PlainHeaderValuesCleared = plainHeaderValuesCleared
+		if s.metrics != nil {
+			s.metrics.plainHeaderCleared.Add(plainHeaderValuesCleared)
+		}
+		if err != nil {
+			s.alerts.warn(ErrorDiagnosticAlertCleanupFailed, ErrorDiagnosticAlertCodePlainHeaderValueClearFailed, s.recordCleanupFailure())
+			plainHeaderErr = err
+		}
+	}
+
 	recordsDeleted, deleteErr := s.repo.DeleteExpiredErrorDiagnostics(ctx, now, s.batch)
 	result.RecordsDeleted = recordsDeleted
 	if s.metrics != nil {
@@ -114,7 +170,7 @@ func (s *ErrorDiagnosticCleanupService) RunOnce(ctx context.Context) (ErrorDiagn
 	// 积压观测：批量与间隔都不保证「到期即删」，因此必须能看出清理是否落后。
 	// 探针失败只告警，不改变清理结果，也不影响返回值。
 	s.observeBacklog(ctx, now)
-	return result, errors.Join(bodyErr, headerErr, deleteErr)
+	return result, errors.Join(linkErr, bodyErr, headerErr, plainBodyErr, plainHeaderErr, deleteErr)
 }
 
 // observeBacklog 读取并上报清理积压；积压只代表在线主库上的物理残留，
@@ -130,21 +186,27 @@ func (s *ErrorDiagnosticCleanupService) observeBacklog(ctx context.Context, now 
 		s.alerts.warn(ErrorDiagnosticAlertCleanupFailed, ErrorDiagnosticAlertCodeBacklogProbeFailed, s.recordCleanupFailure())
 		return
 	}
-	overdue := backlog.BodiesOverdue + backlog.RecordsOverdue + backlog.HeaderValuesOverdue
+	overdue := backlog.BodiesOverdue + backlog.RecordsOverdue + backlog.HeaderValuesOverdue +
+		backlog.PlainBodiesOverdue + backlog.PlainHeaderValuesOverdue
 	oldestSeconds := backlog.OldestOverdueSeconds(now)
 	if s.metrics != nil {
 		s.metrics.overdueBodies.Store(backlog.BodiesOverdue)
 		s.metrics.overdueRecords.Store(backlog.RecordsOverdue)
 		s.metrics.overdueHeaders.Store(backlog.HeaderValuesOverdue)
+		s.metrics.plainBodiesOverdue.Store(backlog.PlainBodiesOverdue)
+		s.metrics.plainHeadersOverdue.Store(backlog.PlainHeaderValuesOverdue)
 		s.metrics.oldestOverdue.Store(oldestSeconds)
 	}
 	if overdue == 0 {
 		return
 	}
+	// 只报计数与时长：绝不含正文、头值、头名或凭据。
 	s.alerts.warnBacklog(ErrorDiagnosticAlertCleanupBacklog, ErrorDiagnosticAlertCodeBacklog, overdue,
 		zap.Int64("bodies_overdue", backlog.BodiesOverdue),
 		zap.Int64("records_overdue", backlog.RecordsOverdue),
 		zap.Int64("header_values_overdue", backlog.HeaderValuesOverdue),
+		zap.Int64("plain_bodies_overdue", backlog.PlainBodiesOverdue),
+		zap.Int64("plain_header_values_overdue", backlog.PlainHeaderValuesOverdue),
 		zap.Int64("oldest_overdue_seconds", oldestSeconds),
 	)
 }

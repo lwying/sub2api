@@ -235,7 +235,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
-	claudeValueCapture := c.Request.URL.Path == "/v1/messages" &&
+	claudeValueCapture := requestAuditValueDetailInboundRouteMatches(c) &&
 		h.gatewayService.ClaudeRequestAuditValueCaptureEnabled(c.Request.Context())
 	if claudeValueCapture {
 		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
@@ -921,11 +921,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			c.Set("parsed_request", attemptParsedReq)
 			var result *service.ForwardResult
 			requestCtx := c.Request.Context()
-			// Bedrock 的最终协议会移除 metadata，不可把入站身份误认为
-			// 实际发往 Anthropic Messages 的身份。429 诊断仍使用自己的开关。
-			if account.IsBedrock() {
-				requestCtx = httpattempt.WithClaudeHeaderValueCapture(requestCtx, false)
-			}
+			// Bedrock binds a distinct unsupported value protocol at its wire seam;
+			// its existing audit and independent 429 diagnostic semantics stay intact.
 			if fs.SwitchCount > 0 {
 				requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
 			}
@@ -1012,11 +1009,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
 				valueDetail := service.RequestAuditValueDetailInput{}
 				if claudeValueCapture && notCapturedReason == "" {
-					inboundValues, inboundOmission := service.RequestAuditValueDetailInboundHeaders(c.Request.Header)
-					protocol := service.RequestAuditProtocolAnthropic
-					if account.IsBedrock() {
-						protocol = "bedrock"
+					attempts := service.RequestAuditValueDetailAttemptsFromHTTPMetadata(service.RequestAuditHTTPAttemptMetadata(c))
+					protocol := requestAuditValueDetailWireProtocol(attempts, account.IsBedrock())
+					// 入站头值按**入站路由**的协议评审；protocol（含 bedrock）只描述出站 wire，
+					// 不用来解释入站 wire。
+					inboundProtocol, inboundSupported := service.RequestAuditValueDetailInboundProtocolForRoute(inboundEndpoint)
+					if !inboundSupported {
+						inboundProtocol = protocol
 					}
+					inboundValues, inboundOmission, _ := service.RequestAuditValueDetailInboundHeadersForProtocol(c.Request.Header, inboundProtocol)
 					valueDetail = service.RequestAuditValueDetailInput{
 						Route:                 inboundEndpoint,
 						Protocol:              protocol,
@@ -1026,7 +1027,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						Model:                 reqModel,
 						StartedAt:             pricingAt,
 						CompletedAt:           time.Now(),
-						Attempts:              service.RequestAuditValueDetailAttemptsFromHTTPMetadata(service.RequestAuditHTTPAttemptMetadata(c)),
+						Attempts:              attempts,
 					}
 				}
 				// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。

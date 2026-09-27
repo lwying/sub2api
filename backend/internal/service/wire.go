@@ -792,11 +792,19 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 	return aggregator
 }
 
-// ProvideSettingService wires SettingService with group reader and proxy repo.
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+// ProvideSettingService wires SettingService with group reader, proxy repo and the
+// plaintext-capture deployment probe.
+//
+// plaintextProbe 是**必填参数**而不是可选 setter：三类新明文采集（值明细、独立诊断正文、
+// 独立诊断 429 头值）只有在「明文能随 usage 消失」得到证明时才允许开启，而唯一能给出这个
+// 证明的就是探针。做成必填参数后，漏注入会在编译期暴露，不会退化成「线上永远开启不了」，
+// 也不会退化成某个忘记注入的调用点悄悄把明文打开。离线的单元测试可以显式传 nil
+// （等价于「探针不可用」，三类新明文采集一律关闭）。
+func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, plaintextProbe PlaintextCaptureSupportProbe, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
+	svc.SetPlaintextCaptureSupportProbe(plaintextProbe)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
 	}

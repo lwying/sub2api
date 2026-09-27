@@ -4,11 +4,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { AdminUser } from '@/types'
 import UserAssignedAccountsModal from '../UserAssignedAccountsModal.vue'
 
-const { getAccountView, updateAccountView, listAccounts, showError, showSuccess } = vi.hoisted(
+const { getAccountView, updateAccountView, listAccounts, getGroups, showError, showSuccess } = vi.hoisted(
   () => ({
     getAccountView: vi.fn(),
     updateAccountView: vi.fn(),
     listAccounts: vi.fn(),
+    getGroups: vi.fn(),
     showError: vi.fn(),
     showSuccess: vi.fn()
   })
@@ -21,7 +22,10 @@ vi.mock('@/api/admin', () => ({
       updateAccountView
     },
     accounts: {
-      list: listAccounts
+      listOptions: listAccounts
+    },
+    groups: {
+      getAll: getGroups
     }
   }
 }))
@@ -108,6 +112,8 @@ describe('UserAssignedAccountsModal', () => {
     getAccountView.mockReset()
     updateAccountView.mockReset()
     listAccounts.mockReset()
+    getGroups.mockReset()
+    getGroups.mockResolvedValue([{ id: 21, name: 'test-group' }])
     showError.mockReset()
     showSuccess.mockReset()
 
@@ -442,13 +448,73 @@ describe('UserAssignedAccountsModal', () => {
 
   // --- 候选账号：远端搜索 + 服务端分页 ---
 
+  it('applies platform, type, status and group filters without losing assigned IDs', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(wrapper.find('[data-test="candidate-platform"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="candidate-type"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="candidate-status"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="candidate-group"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="candidate-platform"]').setValue('openai')
+    await wrapper.get('[data-test="candidate-type"]').setValue('upstream')
+    await wrapper.get('[data-test="candidate-status"]').setValue('inactive')
+    await wrapper.get('[data-test="candidate-group"]').setValue('21')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, {
+      platform: 'openai', type: 'upstream', status: 'inactive', group: '21'
+    }, expect.anything())
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('ignores the previous filter page when switching platform mid-request', async () => {
+    listAccounts.mockResolvedValueOnce(candidatePage(Array.from({ length: 20 }, (_, i) => i + 1), { total: 40 }))
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    const slowOldPage = createDeferred<ReturnType<typeof candidatePage>>()
+    listAccounts.mockImplementationOnce(() => slowOldPage.promise)
+    await wrapper.get('[data-test="load-more-candidates"]').trigger('click')
+    await flushPromises()
+
+    listAccounts.mockResolvedValueOnce(candidatePage([201], { total: 21 }))
+    await wrapper.get('[data-test="candidate-platform"]').setValue('openai')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, { platform: 'openai' }, expect.anything())
+    slowOldPage.resolve(candidatePage([999], { total: 40, page: 2 }))
+    await flushPromises()
+    expect(wrapper.find('[data-test="candidate-999"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="candidate-201"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps existing assignments when group lookup fails', async () => {
+    getGroups.mockRejectedValueOnce(new Error('groups offline'))
+    const wrapper = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(wrapper.get('[data-test="candidate-group"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="candidate-12"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('searches candidates on the server instead of filtering a first page locally', async () => {
     const wrapper = mountModal()
     await flushPromises()
     await vi.advanceTimersByTimeAsync(300)
     await flushPromises()
 
-    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, { lite: '1' }, expect.anything())
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, {}, expect.anything())
 
     listAccounts.mockResolvedValue({
       items: [{ id: 201, name: 'account-201', platform: 'openai', type: 'oauth', status: 'active' }],
@@ -464,7 +530,7 @@ describe('UserAssignedAccountsModal', () => {
     expect(listAccounts).toHaveBeenLastCalledWith(
       1,
       20,
-      { lite: '1', search: '201' },
+      { search: '201' },
       expect.anything()
     )
     expect(wrapper.get('[data-test="candidate-201"]').text()).toContain('account-201')
@@ -503,7 +569,7 @@ describe('UserAssignedAccountsModal', () => {
     await wrapper.get('[data-test="load-more-candidates"]').trigger('click')
     await flushPromises()
 
-    expect(listAccounts).toHaveBeenLastCalledWith(2, 20, { lite: '1' }, expect.anything())
+    expect(listAccounts).toHaveBeenLastCalledWith(2, 20, {}, expect.anything())
     expect(wrapper.get('[data-test="candidate-21"]').text()).toContain('twenty-first')
     expect(wrapper.get('[data-test="candidate-1"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="load-more-candidates"]').exists()).toBe(false)
@@ -546,7 +612,7 @@ describe('UserAssignedAccountsModal', () => {
     expect(listAccounts).toHaveBeenLastCalledWith(
       1,
       20,
-      { lite: '1', search: 'B' },
+      { search: 'B' },
       expect.anything()
     )
     expect(wrapper.get('[data-test="candidate-201"]').exists()).toBe(true)
@@ -566,7 +632,7 @@ describe('UserAssignedAccountsModal', () => {
     expect(listAccounts).toHaveBeenLastCalledWith(
       2,
       20,
-      { lite: '1', search: 'B' },
+      { search: 'B' },
       expect.anything()
     )
     expect(wrapper.get('[data-test="candidate-202"]').exists()).toBe(true)

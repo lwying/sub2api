@@ -18,6 +18,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
@@ -434,6 +435,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, "", false)
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteResponses, false) {
 		return
+	}
+	valueCapture := h.gatewayService.RequestAuditValueCaptureEnabled(c.Request.Context())
+	if valueCapture {
+		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
 	}
 	sessionHashBody := body
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
@@ -859,6 +864,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			if notCapturedReason == "" {
 				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
 			}
+			valueDetail := requestAuditValueInputFromTransport(c, valueCapture && notCapturedReason == "" && !res.OpenAIWSMode,
+				inboundEndpoint, service.RequestAuditProtocolOpenAIResp, reqModel, pricingAt, requestAuditMetadata)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:                  res,
@@ -882,6 +889,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					RequestAuditAttempts:    requestAuditAttemptsForRecord,
 					RequestAuditFingerprint: requestAuditFingerprint,
 					RequestAuditMetadata:    requestAuditMetadata,
+					RequestAuditValueDetail: valueDetail,
 					NotCapturedReason:       notCapturedReason,
 					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
@@ -1295,6 +1303,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteMessages, true) {
 		return
 	}
+	valueCapture := h.gatewayService.RequestAuditValueCaptureEnabled(c.Request.Context())
+	if valueCapture {
+		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
+	}
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
 	if requestAuditFingerprint != nil {
 		requestAuditFingerprint.DigestRequest(body)
@@ -1511,6 +1523,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			if notCapturedReason == "" {
 				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
 			}
+			valueDetail := requestAuditValueInputFromTransport(c, valueCapture && notCapturedReason == "" && !res.OpenAIWSMode,
+				inboundEndpoint, service.RequestAuditProtocolAnthropic, reqModel, pricingAt, requestAuditMetadata, body)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:                  res,
@@ -1533,6 +1547,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					RequestAuditAttempts:    requestAuditAttempts,
 					RequestAuditFingerprint: requestAuditFingerprint,
 					RequestAuditMetadata:    requestAuditMetadata,
+					RequestAuditValueDetail: valueDetail,
 					NotCapturedReason:       notCapturedReason,
 					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {

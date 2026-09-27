@@ -54,6 +54,40 @@
           {{ status.header_values_allowed ? t('admin.errorDiagnostics.operator.state.on') : t('admin.errorDiagnostics.operator.state.off') }}
         </dd>
 
+        <!--
+          The two plaintext layers get rows of their own, for the same reason the
+          encrypted pair does: a single "request body retention" value would
+          misreport whichever layer is actually running. Without these rows the
+          panel reads "Off" for body retention while the server is writing
+          plaintext request bodies, which is the one reading an operator must
+          never be given. The verified conclusion is shown, not the stored flag:
+          a layer whose own statement is no longer current is not running.
+        -->
+        <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.operator.state.plainBodyLabel') }}</dt>
+        <dd data-testid="operator-plain-body-retention-state" class="font-medium text-gray-900 dark:text-dark-100">
+          {{ status.plain_body_allowed ? t('admin.errorDiagnostics.operator.state.on') : t('admin.errorDiagnostics.operator.state.off') }}
+        </dd>
+
+        <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.operator.state.plainHeaderValuesLabel') }}</dt>
+        <dd data-testid="operator-plain-header-values-state" class="font-medium text-gray-900 dark:text-dark-100">
+          {{ status.plain_header_values_allowed ? t('admin.errorDiagnostics.operator.state.on') : t('admin.errorDiagnostics.operator.state.off') }}
+        </dd>
+
+        <!--
+          The deployment premise is one fact about the database, shared by both
+          plaintext layers, so it gets its own row next to them. Without it an
+          operator sees two layers stored as on and not collecting, and no way to
+          tell a partitioned usage_logs from a probe that could not answer.
+        -->
+        <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.operator.state.deploymentLabel') }}</dt>
+        <dd
+          data-testid="operator-plaintext-deployment"
+          :data-state="status.plaintext_capture_supported ? 'on' : 'off'"
+          class="text-gray-900 dark:text-dark-100"
+        >
+          {{ t(plaintextDeploymentKey) }}
+        </dd>
+
         <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.operator.state.keyLabel') }}</dt>
         <dd data-testid="operator-encryption-key" class="text-gray-900 dark:text-dark-100">
           {{ status.body_encryption_key_available ? t('admin.errorDiagnostics.operator.state.keyAvailable') : t('admin.errorDiagnostics.operator.state.keyUnavailable') }}
@@ -88,32 +122,84 @@
       >
         {{ t(headerValuesMismatchKey) }}
       </p>
+      <!--
+        The plaintext layers explain themselves in the same place and for the same
+        reason: a stored switch that is not in effect has its own cause (its own
+        statement is no longer current, or capture is not running), and leaving it
+        unexplained is how a ciphertext prompt ends up looking like the whole story.
+      -->
+      <p
+        v-if="plainBodyMismatchKey"
+        data-testid="operator-plain-body-mismatch"
+        class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      >
+        {{ t(plainBodyMismatchKey) }}
+      </p>
+      <p
+        v-if="plainHeaderValuesMismatchKey"
+        data-testid="operator-plain-header-values-mismatch"
+        class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      >
+        {{ t(plainHeaderValuesMismatchKey) }}
+      </p>
+      <!--
+        The deployment premise is explained once, for both plaintext layers. It is
+        deliberately not an acknowledgement hint: sending the operator to re-type a
+        statement would point them at a button that can never turn the layer on.
+      -->
+      <p
+        v-if="!status.plaintext_capture_supported"
+        data-testid="operator-plaintext-deployment-blocked"
+        class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      >
+        {{ t('admin.errorDiagnostics.operator.state.plaintextDeploymentBlocked') }}
+      </p>
 
-      <section class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+      <!--
+        One section per written statement. There are three of them — capture, the
+        plaintext body layer and the plaintext 429 header-value layer — and they
+        are separate records: collapsing them would leave the operator unable to
+        tell which capability is missing or stale.
+      -->
+      <section
+        v-for="acknowledgement in ackSections"
+        :key="acknowledgement.id"
+        class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
+        :data-testid="`${acknowledgement.id}-section`"
+      >
         <h3 class="text-sm font-medium text-gray-900 dark:text-dark-100">
-          {{ t('admin.errorDiagnostics.operator.ack.version') }} {{ status.risk_version }}
+          {{ t(acknowledgement.titleKey) }}
+          <span class="font-mono">{{ acknowledgement.version }}</span>
         </h3>
 
-        <div v-if="status.risk_acknowledgement" class="mt-2 space-y-1 text-xs" data-testid="operator-ack">
-          <div data-testid="operator-ack-version" class="text-gray-600 dark:text-dark-300">
+        <div
+          v-if="acknowledgement.acknowledgement"
+          class="mt-2 space-y-1 text-xs"
+          :data-testid="acknowledgement.id"
+        >
+          <div :data-testid="`${acknowledgement.id}-version`" class="text-gray-600 dark:text-dark-300">
             {{ t('admin.errorDiagnostics.operator.ack.version') }}:
-            <span class="font-mono">{{ status.risk_acknowledgement.version }}</span>
+            <span class="font-mono">{{ acknowledgement.acknowledgement.version }}</span>
           </div>
-          <div data-testid="operator-ack-operator" class="text-gray-600 dark:text-dark-300">
+          <div :data-testid="`${acknowledgement.id}-operator`" class="text-gray-600 dark:text-dark-300">
             {{ t('admin.errorDiagnostics.operator.ack.operator') }}:
-            <span class="font-mono">#{{ status.risk_acknowledgement.admin_user_id }}</span>
+            <span class="font-mono">#{{ acknowledgement.acknowledgement.admin_user_id }}</span>
           </div>
-          <div data-testid="operator-ack-accepted-at" class="text-gray-600 dark:text-dark-300">
+          <div :data-testid="`${acknowledgement.id}-accepted-at`" class="text-gray-600 dark:text-dark-300">
             {{ t('admin.errorDiagnostics.operator.ack.acceptedAt') }}:
-            <span class="font-mono">{{ formatDateTime(status.risk_acknowledgement.accepted_at) }}</span>
+            <span class="font-mono">{{ formatDateTime(acknowledgement.acknowledgement.accepted_at) }}</span>
           </div>
           <!-- The recorded statement is shown as plain text; it is not a secret. -->
           <div class="text-gray-600 dark:text-dark-300">
             {{ t('admin.errorDiagnostics.operator.ack.phrase') }}:
-            <span class="text-gray-800 dark:text-dark-200">{{ status.risk_acknowledgement.phrase }}</span>
+            <span class="text-gray-800 dark:text-dark-200">{{ acknowledgement.acknowledgement.phrase }}</span>
           </div>
         </div>
-        <p v-else data-testid="operator-ack-none" class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+        <p
+          v-else
+          :data-testid="`${acknowledgement.id}-none`"
+          class="mt-2 text-xs text-gray-500 dark:text-dark-400"
+        >
           {{ t('admin.errorDiagnostics.operator.ack.none') }}
         </p>
 
@@ -123,8 +209,8 @@
           already says so.
         -->
         <p
-          v-if="status.risk_acknowledgement && !status.risk_acknowledgement_current"
-          data-testid="operator-ack-stale"
+          v-if="acknowledgement.acknowledgement && !acknowledgement.current"
+          :data-testid="`${acknowledgement.id}-stale`"
           class="mt-2 text-xs text-amber-700 dark:text-amber-300"
         >
           {{ t('admin.errorDiagnostics.operator.ack.stale') }}
@@ -133,10 +219,23 @@
 
       <form v-if="showEnableForm" class="mt-4 space-y-3" data-testid="operator-enable-form" @submit.prevent="enable">
         <h3 class="text-sm font-medium text-gray-900 dark:text-dark-100">
-          {{ canEnableCapture ? t('admin.errorDiagnostics.operator.enable.title') : t('admin.errorDiagnostics.operator.enable.titleRetention') }}
+          {{ t(formTitleKey) }}
         </h3>
         <p class="max-w-3xl text-xs text-gray-500 dark:text-dark-400">
           {{ t('admin.errorDiagnostics.operator.enable.notice') }}
+        </p>
+        <!--
+          The layer switches are offered for turning a layer off as well as on, and
+          the server records a fresh acknowledgement with every update — including
+          one that only narrows. Saying so here is what keeps "turn this layer off"
+          from looking like it should be free of the statement above.
+        -->
+        <p
+          v-if="managingLayersOnly"
+          data-testid="operator-layers-notice"
+          class="max-w-3xl text-xs text-gray-500 dark:text-dark-400"
+        >
+          {{ t('admin.errorDiagnostics.operator.enable.layersNotice') }}
         </p>
 
         <fieldset>
@@ -199,7 +298,14 @@
           />
         </div>
 
-        <div v-if="showBodyRetentionToggle">
+        <!--
+          Every layer switch is rendered whenever this form is offered, including
+          the ones that are already on. A layer that is already stored as on has to
+          be visible here, because this form is the only place it can be turned
+          off on its own — turning it off leaves capture, the metadata and the
+          other layers exactly as the server last reported them.
+        -->
+        <div>
           <label class="inline-flex items-center gap-2 text-sm">
             <input
               v-model="retainBodies"
@@ -219,11 +325,13 @@
 
         <!--
           The 429 header value layer is a second, independent switch: it can be turned
-          on while request body retention stays off. It is never pre-selected for the
-          operator beyond the intent the server already stores, and it is only
-          offered when the shared stable key can actually be used.
+          on while request body retention stays off, and off while that layer stays on.
+          It is never pre-selected for the operator beyond the intent the server
+          already stores, and it is only interactive when the shared stable key can
+          actually be used — without the key the server refuses to store either one
+          on, so the request carries the stored flags unchanged.
         -->
-        <div v-if="showHeaderValuesToggle">
+        <div>
           <label class="inline-flex items-center gap-2 text-sm">
             <input
               v-model="retainHeaderValues"
@@ -242,11 +350,112 @@
         </div>
 
         <!--
+          The two plaintext layers (tickets 08/09) are their own switches with
+          their own statements. Neither needs the shared key — plaintext is stored
+          unencrypted — and one is pre-selected only while the server reports it as
+          both stored and covered by a current statement of its own. A layer whose
+          statement is no longer current is *not running*, so it starts unchecked
+          and has to be acknowledged again on purpose; hiding it as "already on"
+          would leave the operator with no way to re-consent to it.
+        -->
+        <div>
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input
+              v-model="retainPlainBodies"
+              type="checkbox"
+              data-testid="operator-plain-body-toggle"
+              class="h-4 w-4"
+            />
+            <span class="text-gray-700 dark:text-dark-200">
+              {{ t('admin.errorDiagnostics.operator.enable.plainBodyToggle') }}
+            </span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('admin.errorDiagnostics.operator.enable.plainBodyNotice') }}
+          </p>
+          <div v-if="retainPlainBodies" class="mt-2 space-y-2" data-testid="operator-plain-body-phrase-block">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-medium text-gray-600 dark:text-dark-300">
+                {{ t('admin.errorDiagnostics.operator.enable.plainBodyRequiredPhrase') }}
+              </span>
+              <button type="button" class="btn btn-secondary btn-sm" data-testid="operator-plain-body-copy" @click="copyPlainBodyPhrase">
+                {{ t('admin.errorDiagnostics.operator.enable.copyPhrase') }}
+              </button>
+            </div>
+            <p
+              data-testid="operator-plain-body-required-phrase"
+              class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-100 px-3 py-2 font-mono text-xs text-gray-900 dark:bg-dark-900 dark:text-dark-100"
+            >
+              {{ plainBodyRequiredPhrase }}
+            </p>
+            <textarea
+              v-model="plainBodyTyped"
+              data-testid="operator-plain-body-phrase-input"
+              rows="3"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              :disabled="submitting"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 focus:border-primary-500 focus:outline-none disabled:opacity-60 dark:border-dark-600 dark:bg-dark-900 dark:text-dark-100"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input
+              v-model="retainPlainHeaderValues"
+              type="checkbox"
+              data-testid="operator-plain-header-values-toggle"
+              class="h-4 w-4"
+            />
+            <span class="text-gray-700 dark:text-dark-200">
+              {{ t('admin.errorDiagnostics.operator.enable.plainHeaderValuesToggle') }}
+            </span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('admin.errorDiagnostics.operator.enable.plainHeaderValuesNotice') }}
+          </p>
+          <div
+            v-if="retainPlainHeaderValues"
+            class="mt-2 space-y-2"
+            data-testid="operator-plain-header-phrase-block"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-medium text-gray-600 dark:text-dark-300">
+                {{ t('admin.errorDiagnostics.operator.enable.plainHeaderValuesRequiredPhrase') }}
+              </span>
+              <button type="button" class="btn btn-secondary btn-sm" data-testid="operator-plain-header-copy" @click="copyPlainHeaderPhrase">
+                {{ t('admin.errorDiagnostics.operator.enable.copyPhrase') }}
+              </button>
+            </div>
+            <p
+              data-testid="operator-plain-header-required-phrase"
+              class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-100 px-3 py-2 font-mono text-xs text-gray-900 dark:bg-dark-900 dark:text-dark-100"
+            >
+              {{ plainHeaderRequiredPhrase }}
+            </p>
+            <textarea
+              v-model="plainHeaderTyped"
+              data-testid="operator-plain-header-phrase-input"
+              rows="3"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              :disabled="submitting"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 focus:border-primary-500 focus:outline-none disabled:opacity-60 dark:border-dark-600 dark:bg-dark-900 dark:text-dark-100"
+            />
+          </div>
+        </div>
+
+        <!--
           An explicit click (or an explicit Enter in the form) is the only trigger:
           nothing here enables capture as a side effect of typing or of loading.
         -->
         <button type="submit" class="btn btn-primary" data-testid="operator-enable" :disabled="!canEnable" @click.prevent="enable">
-          {{ submitting ? t('admin.errorDiagnostics.operator.enable.confirming') : t('admin.errorDiagnostics.operator.enable.confirm') }}
+          {{ submitting ? t('admin.errorDiagnostics.operator.enable.confirming') : t(confirmKey) }}
         </button>
       </form>
 
@@ -285,10 +494,17 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getLocale } from '@/i18n'
 import { updateOperatorSettings } from '../api'
-import { ackLanguageLabel, formatDateTime, matchesRiskPhrase, operatorErrorMessage } from '../labels'
+import {
+  ackLanguageLabel,
+  formatDateTime,
+  matchesRiskPhrase,
+  operatorErrorMessage,
+  plaintextSupportReasonLabelKey,
+} from '../labels'
 import {
   OPERATOR_ACK_LANGUAGES,
   type ErrorDiagnosticOperatorStatus,
+  type ErrorDiagnosticRiskAcknowledgementView,
   type OperatorAckLanguage,
 } from '../types'
 
@@ -315,12 +531,27 @@ const ackLanguage = ref<OperatorAckLanguage>(defaultAckLanguage())
 const typedPhrase = ref('')
 const retainBodies = ref(false)
 const retainHeaderValues = ref(false)
+const retainPlainBodies = ref(false)
+const retainPlainHeaderValues = ref(false)
+const plainBodyTyped = ref('')
+const plainHeaderTyped = ref('')
 const submitting = ref(false)
 const errorMessage = ref('')
 
 const keyAvailable = computed(() => props.status?.body_encryption_key_available === true)
 const requiredPhrase = computed(() =>
   ackLanguage.value === 'zh' ? props.status?.risk_phrase_zh ?? '' : props.status?.risk_phrase_en ?? '',
+)
+/** Each plaintext layer has its own statement, in the language being given. */
+const plainBodyRequiredPhrase = computed(() =>
+  ackLanguage.value === 'zh'
+    ? props.status?.plain_body_risk_phrase_zh ?? ''
+    : props.status?.plain_body_risk_phrase_en ?? '',
+)
+const plainHeaderRequiredPhrase = computed(() =>
+  ackLanguage.value === 'zh'
+    ? props.status?.plain_header_risk_phrase_zh ?? ''
+    : props.status?.plain_header_risk_phrase_en ?? '',
 )
 
 /**
@@ -348,21 +579,56 @@ const canEnableHeaderValues = computed(
     keyAvailable.value,
 )
 /**
- * Either retention layer being off is a reason to show the form on its own: the
- * layers are independent, so "body retention is already on" must not hide the
- * switch that turns header value retention on.
+ * The plaintext layers never need a key: they are stored unencrypted, so a missing
+ * key is not a reason to hide their switches. What decides whether a layer still
+ * has to be acknowledged is the server's *verified* conclusion, not its stored
+ * flag: a stored-on layer whose own statement version moved on reports
+ * `plain_*_allowed = false` because it is not running. Treating that as "already
+ * on" is what would leave it with no re-consent path at all.
  */
-const showEnableForm = computed(
-  () => canEnableCapture.value || canEnableRetention.value || canEnableHeaderValues.value,
+const canEnablePlainBody = computed(
+  () => props.status !== null && props.status.enabled && props.status.capture_allowed && !props.status.plain_body_allowed,
+)
+const canEnablePlainHeaderValues = computed(
+  () =>
+    props.status !== null &&
+    props.status.enabled &&
+    props.status.capture_allowed &&
+    !props.status.plain_header_values_allowed,
+)
+/** True when at least one layer this form can turn on is still off. */
+const canEnableAnyLayer = computed(
+  () =>
+    canEnableRetention.value ||
+    canEnableHeaderValues.value ||
+    canEnablePlainBody.value ||
+    canEnablePlainHeaderValues.value,
 )
 /**
- * A toggle is only rendered for a layer this form can actually change: when
- * capture itself has to be (re-)enabled both layers are shown, otherwise only the
- * layer that is still off. A layer that is already on is not offered for turning
- * off here — disabling is the documented action for that, and it turns both off.
+ * The form is offered whenever a status can be read: the same four switches turn a
+ * layer on and off, so the gate being up and every layer already running is not a
+ * reason to hide them. Turning a layer off here leaves the gate, the metadata
+ * capture and the other layers exactly as the server last reported them, which is
+ * what makes one layer closable without closing the rest.
  */
-const showBodyRetentionToggle = computed(() => canEnableCapture.value || canEnableRetention.value)
-const showHeaderValuesToggle = computed(() => canEnableCapture.value || canEnableHeaderValues.value)
+const showEnableForm = computed(() => props.status !== null)
+/**
+ * The form is only managing layers, so nothing is being turned on. The button and
+ * the heading say so instead of promising an "enable" that would change nothing.
+ */
+const managingLayersOnly = computed(() => !canEnableCapture.value)
+const formTitleKey = computed(() =>
+  canEnableCapture.value
+    ? 'admin.errorDiagnostics.operator.enable.title'
+    : canEnableAnyLayer.value
+      ? 'admin.errorDiagnostics.operator.enable.titleRetention'
+      : 'admin.errorDiagnostics.operator.enable.titleLayers',
+)
+const confirmKey = computed(() =>
+  canEnableCapture.value || canEnableAnyLayer.value
+    ? 'admin.errorDiagnostics.operator.enable.confirm'
+    : 'admin.errorDiagnostics.operator.enable.applyLayers',
+)
 /**
  * No usable key: neither layer can be turned on, and the notice names both so the
  * operator is not left guessing why the switches are unavailable. It is never
@@ -379,7 +645,11 @@ const retentionBlocked = computed(
 const showDisable = computed(
   () =>
     props.status !== null &&
-    (props.status.enabled || props.status.body_retention_enabled || props.status.header_values_enabled),
+    (props.status.enabled ||
+      props.status.body_retention_enabled ||
+      props.status.header_values_enabled ||
+      props.status.plain_body_enabled ||
+      props.status.plain_header_values_enabled),
 )
 
 /** Stored on but nothing is running: which acknowledgement is missing. */
@@ -410,12 +680,111 @@ const headerValuesMismatchKey = computed(() => {
 })
 
 /**
- * The stored intent of one layer, which is what the matching toggle is pre-set to.
+ * The same question for a plaintext layer, answered from its own record.
+ *
+ * A plaintext layer has no key in its way, so a stored-on layer that is not in
+ * effect has exactly two causes: capture itself is not running, or the layer's own
+ * statement is not current. Saying which one it is is what lets the operator act
+ * on it, and it is why this is not folded into the ciphertext layers' notices.
+ */
+function plaintextMismatchKey(
+  status: ErrorDiagnosticOperatorStatus | null,
+  layer: 'plain_body' | 'plain_header_values',
+): string {
+  if (status === null) return ''
+  const stored = layer === 'plain_body' ? status.plain_body_enabled : status.plain_header_values_enabled
+  const allowed = layer === 'plain_body' ? status.plain_body_allowed : status.plain_header_values_allowed
+  if (!stored || allowed) return ''
+  // A refused deployment premise is not this layer's own problem, and it is not an
+  // acknowledgement problem either: it is explained once, for both layers, by the
+  // deployment notice. Repeating it here per layer would read as two separate
+  // faults, and pointing at the statement would be actively misleading.
+  if (!status.plaintext_capture_supported) return ''
+  if (!status.capture_allowed) {
+    return layer === 'plain_body'
+      ? 'admin.errorDiagnostics.operator.state.plainBodyMismatchCapture'
+      : 'admin.errorDiagnostics.operator.state.plainHeaderValuesMismatchCapture'
+  }
+  const acknowledgement =
+    layer === 'plain_body' ? status.plain_body_risk_acknowledgement : status.plain_header_risk_acknowledgement
+  const current =
+    layer === 'plain_body'
+      ? status.plain_body_risk_acknowledgement_current
+      : status.plain_header_risk_acknowledgement_current
+  if (acknowledgement && !current) {
+    return layer === 'plain_body'
+      ? 'admin.errorDiagnostics.operator.state.plainBodyMismatchStaleAck'
+      : 'admin.errorDiagnostics.operator.state.plainHeaderValuesMismatchStaleAck'
+  }
+  return layer === 'plain_body'
+    ? 'admin.errorDiagnostics.operator.state.plainBodyMismatchNoAck'
+    : 'admin.errorDiagnostics.operator.state.plainHeaderValuesMismatchNoAck'
+}
+
+const plainBodyMismatchKey = computed(() => plaintextMismatchKey(props.status, 'plain_body'))
+const plainHeaderValuesMismatchKey = computed(() =>
+  plaintextMismatchKey(props.status, 'plain_header_values'),
+)
+
+/**
+ * The deployment premise, shown as one row with the reason code the server sent.
+ *
+ * The reason is a closed enum; an unknown code falls back to "unknown" rather than
+ * being echoed, and no database error is ever part of it.
+ */
+const plaintextDeploymentKey = computed(() =>
+  plaintextSupportReasonLabelKey(props.status?.plaintext_capture_support_reason),
+)
+
+/**
+ * One section per written statement. They are separate records — the capture gate
+ * and each plaintext layer — so the panel can say which one is missing or stale
+ * instead of collapsing three statements into a single "not acknowledged".
+ */
+interface OperatorAckSection {
+  id: string
+  titleKey: string
+  version: string
+  acknowledgement: ErrorDiagnosticRiskAcknowledgementView | undefined
+  current: boolean
+}
+
+const ackSections = computed<OperatorAckSection[]>(() => {
+  const status = props.status
+  if (status === null) return []
+  return [
+    {
+      id: 'operator-ack',
+      titleKey: 'admin.errorDiagnostics.operator.ack.captureTitle',
+      version: status.risk_version,
+      acknowledgement: status.risk_acknowledgement,
+      current: status.risk_acknowledgement_current,
+    },
+    {
+      id: 'operator-plain-body-ack',
+      titleKey: 'admin.errorDiagnostics.operator.ack.plainBodyTitle',
+      version: status.plain_body_risk_version,
+      acknowledgement: status.plain_body_risk_acknowledgement,
+      current: status.plain_body_risk_acknowledgement_current,
+    },
+    {
+      id: 'operator-plain-header-ack',
+      titleKey: 'admin.errorDiagnostics.operator.ack.plainHeaderTitle',
+      version: status.plain_header_risk_version,
+      acknowledgement: status.plain_header_risk_acknowledgement,
+      current: status.plain_header_risk_acknowledgement_current,
+    },
+  ]
+})
+
+/**
+ * The stored intent of a ciphertext layer, which is what its toggle is pre-set to.
  *
  * This is not an automatic opt-in: the flag is already recorded server-side, the
  * toggle is rendered with that value so re-giving an acknowledgement does not
  * silently drop it, and the operator can clear it before submitting. It is only
- * ever pre-set when the shared key can be used.
+ * ever pre-set when the shared key can be used, because that is the only state in
+ * which the layer can be asked for at all.
  */
 function storedRetentionIntent(
   status: ErrorDiagnosticOperatorStatus | null,
@@ -426,27 +795,81 @@ function storedRetentionIntent(
 }
 
 /**
+ * A plaintext layer is pre-set only while the server says it is both stored *and*
+ * covered by a current statement of its own.
+ *
+ * A layer whose statement is stale is not running, so an unchecked box asks for
+ * exactly what is happening and leaves the re-consent to a deliberate act. A layer
+ * that is stored and covered keeps its box checked, so re-giving the capture
+ * acknowledgement does not silently drop a retention choice that is in effect.
+ */
+function plaintextRetentionIntent(
+  status: ErrorDiagnosticOperatorStatus | null,
+  layer: 'plain_body' | 'plain_header_values',
+): boolean {
+  if (status === null || !status.plaintext_capture_supported) return false
+  if (layer === 'plain_body') {
+    return status.plain_body_enabled === true && status.plain_body_risk_acknowledgement_current === true
+  }
+  return status.plain_header_values_enabled === true && status.plain_header_risk_acknowledgement_current === true
+}
+
+/**
+ * What this request asks the server to store for a ciphertext layer.
+ *
+ * Asking for retention with no usable key is refused outright, and the switch is
+ * not interactive in that state either, so the flag is only ever sent as on when
+ * the key can actually be used. Turning a layer off never needs the key.
+ */
+function ciphertextLayerRequest(checked: boolean): boolean {
+  return checked && keyAvailable.value
+}
+
+/**
  * The confirmation is deliberate every time: the server refuses an enable without a
  * freshly typed statement, so the button stays unavailable until the exact text is
  * present, and never for a statement the operator has not typed themselves.
  */
-const canEnable = computed(
-  () => showEnableForm.value && !submitting.value && matchesRiskPhrase(typedPhrase.value, requiredPhrase.value),
-)
+const canEnable = computed(() => {
+  if (!showEnableForm.value || submitting.value) return false
+  if (!matchesRiskPhrase(typedPhrase.value, requiredPhrase.value)) return false
+  // A plaintext layer that is being turned on needs its own statement typed out,
+  // verbatim; nothing here is inferred from the shared one.
+  if (retainPlainBodies.value && !matchesRiskPhrase(plainBodyTyped.value, plainBodyRequiredPhrase.value)) {
+    return false
+  }
+  if (
+    retainPlainHeaderValues.value &&
+    !matchesRiskPhrase(plainHeaderTyped.value, plainHeaderRequiredPhrase.value)
+  ) {
+    return false
+  }
+  return true
+})
 
 // A new statement (or a new server state) discards anything already typed.
 watch(requiredPhrase, () => {
   typedPhrase.value = ''
 })
+watch([plainBodyRequiredPhrase, plainHeaderRequiredPhrase], () => {
+  plainBodyTyped.value = ''
+  plainHeaderTyped.value = ''
+})
 watch(
   () => props.status,
   (status) => {
     typedPhrase.value = ''
-    // Each layer's intent comes from the server's stored flag, so re-giving an
-    // acknowledgement does not silently drop a retention choice that is already
-    // recorded. It is only offered when the key can actually be used.
+    // Each layer's intent comes from the server's own recorded state, so re-giving
+    // an acknowledgement does not silently drop a retention choice that is in
+    // effect. A ciphertext layer is offered only when the key can actually be used;
+    // a plaintext layer only while its own statement is current (see
+    // plaintextRetentionIntent).
     retainBodies.value = storedRetentionIntent(status, 'body_retention_enabled')
     retainHeaderValues.value = storedRetentionIntent(status, 'header_values_enabled')
+    retainPlainBodies.value = plaintextRetentionIntent(status, 'plain_body')
+    retainPlainHeaderValues.value = plaintextRetentionIntent(status, 'plain_header_values')
+    plainBodyTyped.value = ''
+    plainHeaderTyped.value = ''
     errorMessage.value = ''
   },
   { immediate: true },
@@ -454,29 +877,35 @@ watch(
 
 async function enable() {
   if (!canEnable.value || !props.status) return
-  const status = props.status
 
   submitting.value = true
   errorMessage.value = ''
   try {
     const next = await updateOperatorSettings({
       enabled: true,
-      // Both layers are always stated, because the server reads an omitted field as
-      // off. A layer this form is changing is sent exactly as the operator sees it;
-      // a layer it is not touching keeps the value the server last reported.
-      body_retention_enabled: showBodyRetentionToggle.value
-        ? retainBodies.value && keyAvailable.value
-        : status.body_retention_enabled,
-      header_values_enabled: showHeaderValuesToggle.value
-        ? retainHeaderValues.value && keyAvailable.value
-        : status.header_values_enabled,
+      // All four layers are always stated, because the server reads an omitted field
+      // as off. Each one is sent exactly as the operator sees it in the form, which
+      // is what makes a layer closable on its own: the gate stays on, and every
+      // layer the operator left checked keeps running.
+      body_retention_enabled: ciphertextLayerRequest(retainBodies.value),
+      header_values_enabled: ciphertextLayerRequest(retainHeaderValues.value),
+      plain_body_enabled: retainPlainBodies.value,
+      plain_header_values_enabled: retainPlainHeaderValues.value,
       language: ackLanguage.value,
       phrase: typedPhrase.value.trim(),
+      // Only a layer that is being turned on needs its statement; a layer that
+      // stays off carries an empty one (the server reads that as "not requested").
+      plain_body_phrase: retainPlainBodies.value ? plainBodyTyped.value.trim() : '',
+      plain_header_values_phrase: retainPlainHeaderValues.value ? plainHeaderTyped.value.trim() : '',
     })
-    // The statement is not kept: the next enable has to be given again.
+    // The statements are not kept: the next enable has to give them again.
     typedPhrase.value = ''
+    plainBodyTyped.value = ''
+    plainHeaderTyped.value = ''
     retainBodies.value = false
     retainHeaderValues.value = false
+    retainPlainBodies.value = false
+    retainPlainHeaderValues.value = false
     // The server's answer is the state; nothing is assumed from what was requested.
     emit('updated', next)
   } catch (error) {
@@ -492,17 +921,25 @@ async function disable() {
   try {
     const next = await updateOperatorSettings({
       enabled: false,
-      // Turning the gate off turns both retention layers off with it; the server
+      // Turning the gate off turns every retention layer off with it; the server
       // enforces that, and this states the same intent.
       body_retention_enabled: false,
       header_values_enabled: false,
+      plain_body_enabled: false,
+      plain_header_values_enabled: false,
       language: ackLanguage.value,
       // Disabling is not an acknowledgement, so no statement is carried with it.
       phrase: '',
+      plain_body_phrase: '',
+      plain_header_values_phrase: '',
     })
     typedPhrase.value = ''
+    plainBodyTyped.value = ''
+    plainHeaderTyped.value = ''
     retainBodies.value = false
     retainHeaderValues.value = false
+    retainPlainBodies.value = false
+    retainPlainHeaderValues.value = false
     emit('updated', next)
   } catch (error) {
     errorMessage.value = operatorErrorMessage(t, (error as { reason?: unknown } | null)?.reason)
@@ -511,9 +948,8 @@ async function disable() {
   }
 }
 
-/** Explicit action only — the statement is never auto-copied anywhere. */
-async function copyPhrase() {
-  const statement = requiredPhrase.value
+/** Explicit action only — a statement is never auto-copied anywhere. */
+async function copyStatement(statement: string) {
   if (statement === '') return
   try {
     await navigator.clipboard?.writeText?.(statement)
@@ -521,5 +957,17 @@ async function copyPhrase() {
     // Copying is a convenience; a refused clipboard must not look like a failure of
     // the gate itself.
   }
+}
+
+async function copyPhrase() {
+  await copyStatement(requiredPhrase.value)
+}
+
+async function copyPlainBodyPhrase() {
+  await copyStatement(plainBodyRequiredPhrase.value)
+}
+
+async function copyPlainHeaderPhrase() {
+  await copyStatement(plainHeaderRequiredPhrase.value)
 }
 </script>

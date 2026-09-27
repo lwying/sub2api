@@ -13,9 +13,13 @@ package service
 //     不采集，也不会被伪造成上游 HTTP 失败。
 //   - 协议：调用方必须显式给出被覆盖分支的协议（messages／chat_completions／responses），
 //     且协议按**入站路由**推导，不跟随上游 wire 协议或请求审计的协议值；未知协议一律不绑定。
-//     入站路由不是范围的全部：Bedrock 这类入站同样是 /v1/messages、真实上游却不是 Claude
-//     Messages 的路径额外声明头值这一层出界（见 bindBedrockMessagesErrorDiagnosticObserver），
-//     使该行按未采集记录，而不是套用 Claude Messages 的头值契约。
+//     入站路由不是范围的全部：ADR 0005 的 429 头值例外还要求**真实上游是 Claude Messages**，
+//     因此入站同样是 /v1/messages、真实上游却不是 Claude Messages 的路径额外声明头值这一层
+//     出界，使该行按未采集记录，而不是套用 Claude Messages 的头值契约、留下一个错误的协议标签。
+//     这条边界只影响头值：协议元数据与正文诊断照旧。当前两类来路：
+//     Bedrock（bindBedrockMessagesErrorDiagnosticObserver）与 OpenAI 形态上游
+//     （bindOpenAICompatWireErrorDiagnosticObserver：/v1/messages 的 Responses 转换分支与
+//     raw Chat Completions 兜底）。
 //   - 采集边界：观察者只在传输层真的收到 4xx/5xx 时被调用一次；连接故障、客户端取消与本地
 //     拒绝都不会产生观察结果。
 //   - 写入：回调内只做有界快照（正文 ≤1 MiB 且必须读完整，由传输层保证），随后交给诊断服务
@@ -129,7 +133,8 @@ type errorDiagnosticBinding struct {
 	bodySuppressedVerdict string
 	// headerSuppressedVerdict：同一结论在头值这一层的形式（只有 Messages 绑定会带出）。
 	headerSuppressedVerdict string
-	// headerOutOfScope：本次真实上游的形态不在头值能力范围内（例如 Bedrock）。
+	// headerOutOfScope：本次真实上游的形态不在头值能力范围内（例如 Bedrock，或经
+	// /v1/messages 入站但真实上游是 OpenAI 形态的请求）。
 	// 它只影响头值：元数据与正文诊断照旧，且该行的头值结论是**未采集**而不是跳过。
 	headerOutOfScope bool
 }
@@ -179,6 +184,31 @@ func (s *GatewayService) bindBedrockMessagesErrorDiagnosticObserver(req *http.Re
 	}
 	return s.errorDiagnostics.bindRequest(req, c, errorDiagnosticBinding{
 		protocol:         ErrorDiagnosticProtocolMessages,
+		headerOutOfScope: true,
+	})
+}
+
+// bindOpenAICompatWireErrorDiagnosticObserver 为**真实上游形态不是 Claude Messages**的
+// OpenAI 形态发送点绑定观察者（收口点见调用方）。
+//
+// 与 Bedrock 收口点同一条边界，只是来路不同：这些发送点的真实 wire 是 OpenAI 形态的
+// Chat Completions／Responses（请求头与响应头都是 OpenAI 形态），不满足 ADR 0005 的
+// 「Claude Messages 上游」条件，因此 429 头值这一层整体出界，按未采集记录。
+//
+// 为什么不能沿用 Messages 协议的头值契约：两个协议的 429 头**同名**（Retry-After、
+// X-Request-Id、Content-Type 都在 Claude Messages 的闭集白名单里），套用 Claude 的白名单
+// 不会失败，而是会静静地留下一份被管理员读成「Claude 限流事实」的快照——错误的协议标签
+// 比没有标签更危险（ADR 0005「上游形态也是范围条件」；逐协议白名单见
+// docs/assigned-accounts-audit-value-details-spec-20260926.md）。
+//
+// 出界只影响头值：protocol 仍由调用方按**入站路由**给出，元数据与正文诊断照旧。
+// nil 接缝（未注入／未开启）时原样返回。
+func (s *OpenAIGatewayService) bindOpenAICompatWireErrorDiagnosticObserver(req *http.Request, c *gin.Context, protocol string) *http.Request {
+	if s == nil {
+		return req
+	}
+	return s.errorDiagnostics.bindRequest(req, c, errorDiagnosticBinding{
+		protocol:         protocol,
 		headerOutOfScope: true,
 	})
 }
@@ -265,14 +295,22 @@ func (o *errorDiagnosticObserver) observerFor(ctx context.Context, c *gin.Contex
 	if headerValuesRequested && !keyAvailable {
 		binding.headerSuppressedVerdict = ErrorDiagnosticHeaderVerdictSuppressedEncryptionUnavailable
 	}
+	// 新明文层（票据 08／09）是另外两条 tee 理由，而且**不看密钥**：新格式以明文落库，
+	// 没有密钥这一环，因此「要求过明文留存」本身就足以让传输层读走并交回这些字节。
+	// 上游形态出界（Bedrock）依旧连读都不读：那一层的范围判定与留存格式无关。
+	plainBodyRequested := settings.PlainBodyCaptureAllowed()
+	plainHeaderRequested := !binding.headerOutOfScope &&
+		protocol == ErrorDiagnosticProtocolMessages && settings.PlainHeaderValuesCaptureAllowed()
 	captured := *binding
 	return &httpattempt.DiagnosticObserver{
 		// 正文留存是票 02 的分阶段 opt-in：未开启时只采集净化元数据。
-		// 而且必须真有稳定密钥才 tee：只有布尔值而密钥缺席时，这些字节注定被判为
+		// 旧密文路径必须真有稳定密钥才 tee：只有布尔值而密钥缺席时，这些字节注定被判为
 		// skipped_encryption_unavailable，传输层不该为它们读走并复制最多 1 MiB 明文。
-		CaptureRequestBody: settings.BodyCaptureAllowed() && keyAvailable,
+		// 新明文路径不需要密钥，因此它单独成立。
+		CaptureRequestBody: (settings.BodyCaptureAllowed() && keyAvailable) || plainBodyRequested,
 		// 429 头值同理，但走自己的开关：正文关着时头值照样采，头值关着时正文一字不改。
-		CaptureErrorHeaders: headerValuesRequested && keyAvailable,
+		// 两个头值层（旧密文与新明文）各自都能单独成立。
+		CaptureErrorHeaders: (headerValuesRequested && keyAvailable) || plainHeaderRequested,
 		OnUpstreamError: func(observation httpattempt.DiagnosticObservation) {
 			o.record(ctx, captured, observation, c, ordinalKey)
 		},

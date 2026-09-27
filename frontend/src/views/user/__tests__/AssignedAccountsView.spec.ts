@@ -174,6 +174,29 @@ describe('AssignedAccountsView', () => {
     wrapper.unmount()
   })
 
+  it('filters assigned accounts by platform, exact type and search without exposing admin actions', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="filter-platform"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="filter-account-type"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="filter-search"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="view-detail"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="schedule-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="add-account"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="filter-platform"]').setValue('openai')
+    await wrapper.get('[data-test="filter-account-type"]').setValue('upstream')
+    await wrapper.get('[data-test="filter-search"]').setValue('client')
+    await new Promise((resolve) => setTimeout(resolve, 320))
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, {
+      platform: 'openai', account_type: 'upstream', search: 'client'
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    wrapper.unmount()
+  })
+
   it('renders an identity value as inert text instead of markup', async () => {
     listAccounts.mockResolvedValue({
       items: [hostileAccount({ email_masked: '<img src=x onerror="alert(1)">' })],

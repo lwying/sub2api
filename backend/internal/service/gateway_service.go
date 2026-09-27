@@ -788,6 +788,7 @@ type GatewayService struct {
 	groupRepo                      GroupRepository
 	usageLogRepo                   UsageLogRepository
 	requestAuditRepo               RequestAuditRepository
+	errorDiagnosticUsageAttacher   ErrorDiagnosticUsageAttacher
 	requestAuditValueDetailCapture *RequestAuditValueDetailCapture
 	requestAuditFingerprinter      RequestAuditFingerprinter
 	usageBillingRepo               UsageBillingRepository
@@ -833,6 +834,12 @@ type GatewayService struct {
 func (s *GatewayService) SetRequestAuditValueDetailCapture(capture *RequestAuditValueDetailCapture) {
 	if s != nil {
 		s.requestAuditValueDetailCapture = capture
+	}
+}
+
+func (s *GatewayService) SetErrorDiagnosticUsageAttacher(attacher ErrorDiagnosticUsageAttacher) {
+	if s != nil {
+		s.errorDiagnosticUsageAttacher = attacher
 	}
 }
 

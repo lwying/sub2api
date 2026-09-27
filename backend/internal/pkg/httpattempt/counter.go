@@ -11,13 +11,10 @@ type counterContextKey struct{}
 type metadataContextKey struct{}
 type claudeHeaderValueCaptureContextKey struct{}
 
-// WithClaudeHeaderValueCapture 标记本次逻辑请求允许复制 Claude 头值与 metadata.user_id
-// 的**值**快照（默认关闭的短期诊断旁路，见 ADR 0006）。
-//
-// 只有显式打上这个标记，传输层才会在最终 wire 请求与上游响应上构建值快照；
-// 未打标记时快照字段保持 nil，热路径上不会读取或复制任何明文值。
-// 标记是**请求级**的：它只表示「这次请求可以采」，不表示「这次请求一定不留明文」——
-// 落库一律由 service 层加密完成，且服务层会再做一次独立的门控判定。
+// WithClaudeHeaderValueCapture marks a request for protocol-allowlisted value
+// snapshots. The name is retained for existing callers; each attempt freezes its
+// actual wire protocol. Without this marker, no value is read or copied. The
+// service still re-checks the versioned operator acknowledgement before writing.
 func WithClaudeHeaderValueCapture(ctx context.Context, enabled bool) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -52,16 +49,17 @@ func WithClaudeMetadataUserID(ctx context.Context, userID string) context.Contex
 // Metadata describes one upstream HTTP transport attempt without request or response bodies.
 //
 // RequestHeaders / ResponseHeaders 是**长期审计**用的存在性与闭集摘要，永远只有受限信息。
-// RequestHeaderValues / ResponseHeaderValues / MetadataUserID 是**默认关闭**的短期值快照
-// （Claude /v1/messages 的值明细旁路）：它们只在调用方显式打开时才被填充，
-// 未打开时保持 nil，因此关闭态下热路径不会读取或复制任何明文值。
+// RequestHeaderValues / ResponseHeaderValues / MetadataUserID are default-off
+// value snapshots. Only an enabled request populates them; no values are copied
+// on the hot path while the gate is closed.
 // RequestHeaderValueOmission / ResponseHeaderValueOmission 是与它们**同源同刻**的省略摘要
 // （只含计数），关闭态下同样保持零值。
-// 值快照只在内存中短暂存在，落库由 service 层加密完成——传输层从不写库。
+// Transport never persists values; persistence is gated and validated downstream.
 type Metadata struct {
 	AccountID            int64
 	Model                string
 	Protocol             string
+	ValueProtocol        string // real wire family for optional value capture; never persisted in long-lived audit
 	RequestHeaders       map[string]any
 	ResponseHeaders      map[string]any
 	StatusCode           *int
@@ -89,7 +87,8 @@ type Metadata struct {
 
 	// captureHeaderValues 是本次尝试的值快照开关：由请求上下文标记在尝试开始时**固化**，
 	// 因此响应阶段（SetResponse 拿不到上下文）也按同一结论处理，不会中途改变判据。
-	captureHeaderValues bool
+	captureHeaderValues  bool
+	captureValueProtocol string
 }
 
 // Counter tracks upstream HTTP transport attempts for one logical request.
@@ -248,7 +247,15 @@ func StartRequestAttempt(req *http.Request) *Attempt {
 	metadata := metadataFromContext(req.Context())
 	metadata.RequestHeaders = SanitizeRequestHeaders(req.Header)
 	if ClaudeHeaderValueCaptureEnabled(req.Context()) {
-		metadata.RequestHeaderValues, metadata.RequestHeaderValueOmission = SanitizeClaudeRequestHeaderValuesWithOmission(req.Header)
+		var supported bool
+		protocol := metadata.ValueProtocol
+		if protocol == "" {
+			protocol = metadata.Protocol
+		}
+		metadata.RequestHeaderValues, metadata.RequestHeaderValueOmission, supported = SanitizeProtocolRequestHeaderValues(protocol, req.Header)
+		if !supported {
+			metadata.RequestHeaderValues = nil
+		}
 	}
 	return startAttempt(req.Context(), metadata)
 }
@@ -262,6 +269,12 @@ func startAttempt(ctx context.Context, metadata Metadata) *Attempt {
 	metadata.RequestBytes = &zero
 	// 把请求级的开关固化到这次尝试上：响应阶段不再有上下文可查。
 	metadata.captureHeaderValues = ClaudeHeaderValueCaptureEnabled(ctx)
+	if metadata.captureHeaderValues {
+		metadata.captureValueProtocol = metadata.ValueProtocol
+		if metadata.captureValueProtocol == "" {
+			metadata.captureValueProtocol = metadata.Protocol
+		}
+	}
 	index := counter.incrementMetadata(metadata)
 	return &Attempt{counter: counter, index: index}
 }
@@ -325,7 +338,7 @@ func (a *Attempt) SetResponse(statusCode int, headers http.Header, bodyPresent b
 		metadata.ResponseBytes = &zero
 		metadata.ResponseReadComplete = &complete
 		if metadata.captureHeaderValues {
-			metadata.ResponseHeaderValues, metadata.ResponseHeaderValueOmission = SanitizeClaudeResponseHeaderValuesWithOmission(headers)
+			metadata.ResponseHeaderValues, metadata.ResponseHeaderValueOmission, _ = SanitizeProtocolResponseHeaderValues(metadata.captureValueProtocol, headers)
 		}
 	})
 }

@@ -142,6 +142,38 @@ func TestUserVisibleAccountRepository_RealQuery(t *testing.T) {
 	require.True(t, stillEnabled, "清空分配不应关闭能力开关")
 }
 
+func TestUserVisibleAccountRepository_TypeFilterKeepsCountAndScope(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUserVisibleAccountRepository(client)
+	userA := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("type-filter-a-%d@example.com", time.Now().UnixNano())})
+	userB := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("type-filter-b-%d@example.com", time.Now().UnixNano())})
+	want := mustCreateAccount(t, client, &service.Account{Name: "type-filter-upstream", Platform: service.PlatformOpenAI, Type: service.AccountTypeUpstream})
+	other := mustCreateAccount(t, client, &service.Account{Name: "type-filter-apikey", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey})
+	disabled := mustCreateAccount(t, client, &service.Account{Name: "type-filter-disabled", Platform: service.PlatformOpenAI, Type: service.AccountTypeUpstream, Status: service.StatusInactive})
+	defer func() {
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM user_visible_accounts WHERE user_id IN ($1, $2)`, userA.ID, userB.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM accounts WHERE id IN ($1, $2, $3)`, want.ID, other.ID, disabled.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM users WHERE id IN ($1, $2)`, userA.ID, userB.ID)
+	}()
+
+	enabled := true
+	ids := []int64{want.ID, other.ID, disabled.ID}
+	require.NoError(t, repo.UpdateAccountView(ctx, userA.ID, &enabled, &ids, nil))
+	filter := service.VisibleAccountFilter{Platform: service.PlatformOpenAI, AccountType: service.AccountTypeUpstream, Page: 1, PageSize: 1}
+	rows, total, err := repo.ListVisibleAccounts(ctx, userA.ID, filter)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	require.Equal(t, want.ID, rows[0].ID)
+
+	require.NoError(t, repo.UpdateAccountView(ctx, userB.ID, &enabled, nil, nil))
+	rows, total, err = repo.ListVisibleAccounts(ctx, userB.ID, filter)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	require.Zero(t, total)
+}
+
 // TestUserVisibleAccountRepository_UpdateIsAtomicAndValidated 验证更新接口的
 // 事务性：未知账号 id 整单失败，不留下「开关已打开但分配未落库」的中间状态；
 // 不存在的用户不会写入任何数据。

@@ -73,6 +73,17 @@ func (s *routesVisibleAccountRepoStub) GetVisibleAccount(_ context.Context, user
 	return nil, nil
 }
 
+// routesAdminServiceStub 只实现候选接口需要的 ListAccountOptions，其余方法由嵌入的
+// nil 接口兜底：本文件只验证路由注册与鉴权，不会调用其它方法。
+type routesAdminServiceStub struct {
+	service.AdminService
+	options []service.Account
+}
+
+func (s routesAdminServiceStub) ListAccountOptions(_ context.Context, _, _ int, _, _, _, _ string, _ int64) ([]service.Account, int64, error) {
+	return s.options, int64(len(s.options)), nil
+}
+
 func newAccountViewTestRouter(t *testing.T) (*gin.Engine, *routesVisibleAccountRepoStub) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -81,10 +92,19 @@ func newAccountViewTestRouter(t *testing.T) (*gin.Engine, *routesVisibleAccountR
 	visibleAccountService := service.NewVisibleAccountService(repo)
 	adminUserHandler := &adminhandler.UserHandler{}
 	adminUserHandler.SetVisibleAccountService(visibleAccountService)
+	adminAccountHandler := adminhandler.NewAccountHandler(routesAdminServiceStub{
+		options: []service.Account{{
+			ID: 42, Name: "candidate", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+			Status: service.StatusDisabled,
+			// 投递哨兵值：候选路由不得把它们放进响应。
+			Credentials: map[string]any{"access_token": "never-export-this"},
+			Extra:       map[string]any{"private": "never-export-this"},
+		}},
+	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	handlers := &handler.Handlers{
 		VisibleAccount: handler.NewVisibleAccountHandler(visibleAccountService),
-		Admin:          &handler.AdminHandlers{User: adminUserHandler},
+		Admin:          &handler.AdminHandlers{User: adminUserHandler, Account: adminAccountHandler},
 	}
 
 	// 与生产一致：普通用户入口走 JWT 鉴权，管理员入口走管理员鉴权。
@@ -241,6 +261,7 @@ func TestUserTokenCannotReachAdminAccountEndpoints(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/v1/admin/accounts",
+		"/api/v1/admin/accounts/options",
 		"/api/v1/admin/accounts/data",
 		"/api/v1/admin/accounts/batch-update-credentials",
 		"/api/v1/admin/proxies",
@@ -253,4 +274,28 @@ func TestUserTokenCannotReachAdminAccountEndpoints(t *testing.T) {
 		recorder = doRouteRequest(router, http.MethodGet, path, "", "")
 		require.Equal(t, http.StatusUnauthorized, recorder.Code, "%s must require authentication", path)
 	}
+}
+
+// TestAdminTokenReachesAccountOptionsWithNarrowPayload 固定候选接口的正向行为：
+// 管理员 token 能真正到达 /api/v1/admin/accounts/options 并拿到窄字段响应，
+// 普通用户 token 与未认证请求则分别被 403／401 拦下（与上面的拒绝用例同一口径）。
+func TestAdminTokenReachesAccountOptionsWithNarrowPayload(t *testing.T) {
+	router, _ := newAccountViewTestRouter(t)
+
+	recorder := doRouteRequest(router, http.MethodGet,
+		"/api/v1/admin/accounts/options?platform=openai&type=oauth&status=inactive&group=21&search=cand&page=1&page_size=20",
+		"", "Bearer admin-token")
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"), "candidate payload must not be cached")
+	require.Contains(t, recorder.Body.String(), `"name":"candidate"`)
+	require.Contains(t, recorder.Body.String(), `"platform":"openai"`)
+	require.Contains(t, recorder.Body.String(), `"type":"oauth"`)
+	require.Contains(t, recorder.Body.String(), `"status":"disabled"`)
+	require.NotContains(t, recorder.Body.String(), "never-export-this")
+
+	recorder = doRouteRequest(router, http.MethodGet, "/api/v1/admin/accounts/options", "", "Bearer user-token")
+	require.Equal(t, http.StatusForbidden, recorder.Code, "user token must not reach the admin candidate endpoint")
+
+	recorder = doRouteRequest(router, http.MethodGet, "/api/v1/admin/accounts/options", "", "")
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 }

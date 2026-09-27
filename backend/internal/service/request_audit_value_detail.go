@@ -1,23 +1,13 @@
 package service
 
-// Claude Messages /v1/messages 请求审计的**值**明细旁路（ADR 0006）。
-//
-// 既有请求审计只保存协议元数据与事件骨架（ADR 0001），长期存活的 request_audits 行
-// 永远不含模型正文、认证凭据原文，也不含任何头**值**。本文件实现一个**有范围**的例外：
-//
-//   - 只对入站路由为 /v1/messages、且这次逻辑请求真的走了 Anthropic 上游的请求；
-//   - 只保存通过**闭集白名单 + 有界校验**的**值**：入站请求头值、每次真实上游尝试的
-//     请求／响应头值，metadata.user_id 解析出的 device_id／session_id／account_uuid，
-//     以及最终模型与每次尝试的模型；
-//   - 值一律加密（专用 HKDF 子密钥，见 repository 层），缺稳定密钥时一律不留存，
-//     **不存在明文回退**；
-//   - 默认关闭：门控与风险确认都在服务层判定（见
-//     request_audit_value_detail_settings.go），调用方不得自称可以采集；
-//   - 只在使用记录与 request_audits 行都已存在时写入，且与使用记录同生共死。
-//
-// 明文信封（存储列）刻意**不含模型名**：模型别名由调用方任意指定，既有审计因此从不落库
-// 模型名（见 request_audit.go 的 SanitizeRequestAuditAttempt）。本能力把模型名放进密文载荷，
-// 因此它和其它值一样只受 7 天披露窗口保护，不会在到期后以任何形式残留可读明文。
+// Usage-owned request-audit value detail sidecar. Long-lived request_audits
+// contains only protocol metadata and event skeletons, not values or bodies.
+// New allowlisted header values, identifiers, and bounded caller-controlled model
+// aliases are retained as plaintext only while their usage log exists. Legacy
+// encrypted rows keep their original seven-day deadline and decryption key.
+// Default-off capture requires a current written acknowledgement. Each captured
+// attempt uses its actual wire protocol and closed header-value contract; unknown
+// protocols or mixed-wire attempts are marked unsupported rather than guessed.
 //
 // 本文件的名字是**持久化边界**的二次收窄，不是净化器：净化器（internal/pkg/httpattempt 的
 // SanitizeClaude*HeaderValues）负责按语义判定「哪个头值得看」并规范化取值；本层负责
@@ -37,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
@@ -61,9 +52,16 @@ const (
 	RequestAuditValueDetailSkippedEncryptionUnavailable = "skipped_encryption_unavailable"
 	RequestAuditValueDetailSkippedInvalidValues         = "skipped_invalid_values"
 	RequestAuditValueDetailSkippedTooManyAttempts       = "skipped_too_many_attempts"
+	RequestAuditValueDetailSkippedUnsupportedProtocol   = "skipped_unsupported_protocol"
+	RequestAuditValueDetailStorageEncryptedV1           = "encrypted_v1"
+	RequestAuditValueDetailStoragePlaintextUsageBound   = "plaintext_usage_bound"
 
-	// RequestAuditValueDetailRouteMessages 是本能力唯一覆盖的入站路由。
-	RequestAuditValueDetailRouteMessages = "/v1/messages"
+	// 本能力覆盖的入站路由闭集。入站路由同时也是**入站 wire 协议**的来源
+	// （见 RequestAuditValueDetailInboundProtocolForRoute）。
+	RequestAuditValueDetailRouteMessages         = "/v1/messages"
+	RequestAuditValueDetailRouteChatCompletions  = "/v1/chat/completions"
+	RequestAuditValueDetailRouteResponses        = "/v1/responses"
+	RequestAuditValueDetailRouteResponsesCompact = "/v1/responses/compact"
 
 	// RequestAuditValueDetailRetention 是加密值明细在在线主库的保留期（7 天）。
 	RequestAuditValueDetailRetention = 7 * 24 * time.Hour
@@ -124,6 +122,7 @@ var (
 type RequestAuditValueDetailAttempt struct {
 	Index                int
 	AccountID            int64
+	Protocol             string
 	Model                string
 	MetadataUserID       string
 	UpstreamStatus       *int
@@ -140,6 +139,13 @@ type RequestAuditValueDetailAttempt struct {
 //
 // Route 是入站路由；Protocol 是这次逻辑请求实际发出的上游协议形态。
 // 两者共同决定是否在范围内（见 RequestAuditValueDetailScopeApplies）。
+//
+// 三个协议事实各归其位：
+//   - Route → 入站 wire 协议（RequestAuditValueDetailInboundProtocolForRoute），
+//     用于解释 InboundHeaderValues 与入站正文里的标识；
+//   - Protocol 与每次 Attempts[i].Protocol → 真实上游 wire 协议，只用于尝试级取值
+//     与范围判定，**不得**用来解释入站头值或入站正文；
+//   - 入站与出站在转换分支里可以不同（Chat Completions→Anthropic、Messages→OpenAI）。
 type RequestAuditValueDetailInput struct {
 	Route               string
 	Protocol            string
@@ -158,8 +164,8 @@ type RequestAuditValueDetailInput struct {
 
 // RequestAuditValueDetailFields 是**明文信封**里的标量字段。
 //
-// 这里只放调用方无法任意构造的封闭事实：路由与协议都是闭集枚举，状态码有界，
-// 时间是服务端事实。模型名刻意不在这里（它由调用方任意指定，只进密文）。
+// The default GET envelope contains only bounded server facts. Caller-controlled
+// model aliases remain in the explicit reveal payload, not this response.
 type RequestAuditValueDetailFields struct {
 	Route        string
 	Protocol     string
@@ -182,11 +188,12 @@ type RequestAuditValueDetailInboundValues struct {
 
 // RequestAuditValueDetailAttemptValues 是单次上游尝试校验后的值。
 //
-// LatencyMillis 与 ProxyID 是尝试级的标量事实（耗时、代理内部 ID）：它们不是敏感值，
-// 但仍然只存在于**密文载荷**里，因此同样受 7 天披露窗口保护，不会以明文列残留。
+// LatencyMillis and ProxyID are bounded attempt facts. They remain in the
+// reveal payload, not in the default envelope, for both legacy and new rows.
 type RequestAuditValueDetailAttemptValues struct {
 	Index           int                 `json:"index"`
 	AccountID       int64               `json:"account_id,omitempty"`
+	Protocol        string              `json:"protocol,omitempty"`
 	Model           string              `json:"model,omitempty"`
 	UpstreamStatus  *int                `json:"upstream_status,omitempty"`
 	LatencyMillis   *int64              `json:"latency_ms,omitempty"`
@@ -198,23 +205,38 @@ type RequestAuditValueDetailAttemptValues struct {
 	SessionID       string              `json:"session_id,omitempty"`
 }
 
-// RequestAuditValueDetailValues 是解密后的值视图（白名单收敛结果）。
+// RequestAuditValueDetailValues is the bounded, allowlisted reveal payload.
+// Model is the caller-selected alias where available; the real wire model is
+// recorded per attempt. No free-text model is present in the default envelope.
 //
-// Model 是最终模型名：它在这里而不是明文列，正是因为它由调用方任意指定。
-//
-// Truncated 表示「调用方提供的值里有条目没被收下」（不在闭集里的头名，或取值没通过
-// 净化器）。它不是失败，也不能藏起来：没有这个标记，管理员无法区分
+// Truncated 是**采集侧**的事实：表示「调用方提供的值里有条目没被收下」（不在闭集里的
+// 头名，或取值没通过净化器）。它不是失败，也不能藏起来：没有这个标记，管理员无法区分
 // 「客户端只发了这些」与「我们只收了这些」。
 //
 // 这个事实有两个来源，且**两者都必须写进载荷**：
 //   - 净化器在采集那一刻丢掉的头名／取值（由 httpattempt.ClaudeHeaderValueOmission 计数带入，
 //     因为它在服务层已经看不见了）；
-//   - 本层白名单复核时丢掉的条目（见 NormalizeRequestAuditValueDetailValues）。
+//   - 采集侧白名单复核时丢掉的条目（见 NormalizeRequestAuditValueDetailValues）。
+//
+// 它只表达采集侧。**读侧复核丢掉的条目是另一条事实**（ADR 0006：读侧自己的丢弃必须显式
+// 告警，且与载荷自带的 truncated 相互独立）：读侧不得把读侧的丢弃并进这个字段——否则
+// 管理员会把「读侧没收下」读成「采集时客户端就没发」，而这正是本条要防的误读。读侧的
+// 事实由 ValidationDropped 承载，见 DecodeRequestAuditValueDetailValuesForProtocol。
 type RequestAuditValueDetailValues struct {
 	Model     string                                 `json:"model,omitempty"`
 	Inbound   RequestAuditValueDetailInboundValues   `json:"inbound"`
 	Attempts  []RequestAuditValueDetailAttemptValues `json:"attempts,omitempty"`
 	Truncated bool                                   `json:"truncated,omitempty"`
+	// ValidationDropped 是**读侧**的事实：读侧复核拒收了载荷里的条目。
+	//
+	// 它刻意是**传输专用**的，不进存储格式：
+	//   - `json:"-"` 让它既不被 EncodeRequestAuditValueDetailValues 写进存储载荷，
+	//     也不能由载荷设置（该键对解码器是未知字段，DisallowUnknownFields 会拒绝），
+	//     因此「载荷说了算」的永远只有 Truncated 一个；
+	//   - 读取路径把它带到揭示 DTO（RequestAuditValueDetailReveal.ValidationDropped），
+	//     使管理员能同时看到「采集时没收下」（Truncated）与「读侧没收下」两条独立事实，
+	//     而不是把后者冒充成前者，也不是静默丢掉。
+	ValidationDropped bool `json:"-"`
 }
 
 // requestAuditValueDetailBoundedAttemptCount 把观察到的尝试数收敛到存储上限
@@ -276,47 +298,48 @@ func (v RequestAuditValueDetailValues) Empty() bool {
 	return v.EntryCount() == 0
 }
 
-// RequestAuditValueDetailWrite 是写入路径的完整输入：标量字段 + 待加密载荷。
-//
-// Payload 只在 State == stored 时非空；加密由仓储层用专用密钥完成，
-// 失败即退化为 skipped_encryption_unavailable，绝不回退为明文。
+// RequestAuditValueDetailWrite contains the format-bound payload and metadata.
+// New writes use plaintext_usage_bound; existing encrypted_v1 rows retain their
+// original seven-day window and require the old cipher for disclosure.
 type RequestAuditValueDetailWrite struct {
-	UsageLogID   int64
-	State        string
-	Reason       string
-	Fields       RequestAuditValueDetailFields
-	Payload      []byte
-	AttemptCount int
-	EntryCount   int
-	ExpiresAt    time.Time
+	UsageLogID    int64
+	State         string
+	Reason        string
+	StorageFormat string
+	Fields        RequestAuditValueDetailFields
+	Payload       []byte
+	AttemptCount  int
+	EntryCount    int
+	ExpiresAt     time.Time
 }
 
-// Retained 报告本次写入是否携带可加密的值载荷。
+// Retained reports whether the write contains values in its selected format.
 func (w RequestAuditValueDetailWrite) Retained() bool {
 	return w.State == RequestAuditValueDetailStateStored && len(w.Payload) > 0
 }
 
 // RequestAuditValueDetail 是值明细旁路的存储信封，不含明文值。
 type RequestAuditValueDetail struct {
-	UsageLogID   int64
-	State        string
-	Reason       string
-	Fields       RequestAuditValueDetailFields
-	Stored       bool
-	KeyVersion   int
-	AttemptCount int
-	EntryCount   int
-	PayloadBytes int
-	ExpiresAt    time.Time
-	CreatedAt    time.Time
+	UsageLogID    int64
+	State         string
+	Reason        string
+	StorageFormat string
+	Fields        RequestAuditValueDetailFields
+	Stored        bool
+	KeyVersion    int
+	AttemptCount  int
+	EntryCount    int
+	PayloadBytes  int
+	ExpiresAt     time.Time
+	CreatedAt     time.Time
 }
 
-// Expired 报告该行是否已过 7 天披露窗口（按到期时刻精确判定）。
+// Expired applies only to legacy ciphertext. New plaintext follows usage deletion.
 func (d RequestAuditValueDetail) Expired(now time.Time) bool {
-	return !d.ExpiresAt.IsZero() && !d.ExpiresAt.After(now)
+	return d.StorageFormat != RequestAuditValueDetailStoragePlaintextUsageBound && !d.ExpiresAt.IsZero() && !d.ExpiresAt.After(now)
 }
 
-// Readable 报告此刻是否可以读取值：有未到期密文，且未过 7 天窗口。
+// Readable requires an existing stored payload; only legacy rows can expire independently.
 func (d RequestAuditValueDetail) Readable(now time.Time) bool {
 	return d.Stored && !d.Expired(now)
 }
@@ -328,6 +351,7 @@ func (d RequestAuditValueDetail) Readable(now time.Time) bool {
 // 因此「默认 GET 不返回值」是类型保证，而不是调用约定。
 type RequestAuditValueDetailEnvelope struct {
 	UsageLogID        int64      `json:"usage_log_id"`
+	StorageFormat     string     `json:"storage_format,omitempty"`
 	State             string     `json:"state"`
 	Reason            string     `json:"reason"`
 	Route             string     `json:"route,omitempty"`
@@ -357,9 +381,9 @@ type RequestAuditValueDetailRepository interface {
 
 // RequestAuditValueDetailGate 是采集门控结论。
 //
-// CaptureAllowed 是「运维允许不允许」（默认关闭，且必须携带书面风险确认）；
-// EncryptionAvailable 是「部署做不做得到」（有没有跨重启稳定的配置密钥）。
-// 两者都不为真时一个字节的值都不会被读取或复制。
+// CaptureAllowed requires the stored switch and current written risk confirmation.
+// EncryptionAvailable reports only whether legacy ciphertext can be decrypted;
+// new plaintext capture needs no key.
 type RequestAuditValueDetailGate struct {
 	CaptureAllowed      bool
 	EncryptionAvailable bool
@@ -375,42 +399,101 @@ type RequestAuditValueDetailGateReader interface {
 
 // RequestAuditValueDetailScopeApplies 报告这次逻辑请求是否在本能力范围内。
 //
-// 范围是「入站 /v1/messages」**并且**「真实上游尝试走 Anthropic 协议形态」：
-// 只有这种情况下的头值与 metadata.user_id 才对应官方 Claude Code 客户端的形态。
-// /v1/messages 入站但被改写到别的上游协议时属于范围内但不可采，记 skipped_out_of_scope；
-// 其它入站路由直接不在范围内（未采集）。
+// Only actually audited Messages, Chat Completions and Responses HTTP routes
+// with a supported real wire protocol qualify. Unsupported signed or mixed
+// protocols are reported without copying values; uncovered routes write no row.
 func RequestAuditValueDetailScopeApplies(route, protocol string) bool {
-	return route == RequestAuditValueDetailRouteMessages && protocol == RequestAuditProtocolAnthropic
+	return requestAuditValueDetailRouteSupported(route) && requestAuditValueDetailProtocolSupported(protocol)
 }
 
-// BuildRequestAuditValueDetailWrite 判定本次采集的状态与原因，并给出可加密的载荷。
+func requestAuditValueDetailRouteSupported(route string) bool {
+	_, ok := RequestAuditValueDetailInboundProtocolForRoute(route)
+	return ok
+}
+
+// RequestAuditValueDetailInboundProtocolForRoute 报告某个入站路由承载的**入站 wire 协议**。
 //
-// 判定顺序固定：路由范围 → 协议范围 → 门控 → 尝试数 → 规范化与有界校验 →
-// 密钥可用性 → 编码。任何一步不合格都只影响值明细，不影响使用记录、请求审计或本次上游调用。
+// 入站头值与入站正文里的事实（头值闭集、metadata.user_id 形态）由**客户端实际使用的入站协议**
+// 决定，绝不能拿「这次逻辑请求最终发往上游的形态」来解释：Chat Completions 入站 → Anthropic
+// 出站、Messages 入站 → OpenAI 出站这类转换里，入站 wire 与出站 wire 是两个不同的闭集，把出站
+// 白名单套到入站 wire 上会把客户端的合法头值判成「闭集外的名字」而整份丢弃（ADR 0007、
+// 规格「逐协议白名单：入站允许头」）。
+//
+// 与之相对的是**真实上游协议**：它只能来自传输层逐次观察到的尝试，不得由入站路由字符串推断
+// （规格已明确点名 count_tokens 与 Antigravity 兼容路径会被路径规范化误映射）。
+func RequestAuditValueDetailInboundProtocolForRoute(route string) (string, bool) {
+	switch strings.TrimSpace(route) {
+	case RequestAuditValueDetailRouteMessages:
+		return RequestAuditProtocolAnthropic, true
+	case RequestAuditValueDetailRouteChatCompletions:
+		return RequestAuditProtocolOpenAIChat, true
+	case RequestAuditValueDetailRouteResponses, RequestAuditValueDetailRouteResponsesCompact:
+		return RequestAuditProtocolOpenAIResp, true
+	default:
+		return "", false
+	}
+}
+
+func requestAuditValueDetailProtocolSupported(protocol string) bool {
+	switch protocol {
+	case RequestAuditProtocolAnthropic, RequestAuditProtocolOpenAIChat, RequestAuditProtocolOpenAIResp:
+		return true
+	default:
+		return false
+	}
+}
+
+// BuildRequestAuditValueDetailWrite validates the scoped, protocol-specific
+// plaintext payload. An unsupported wire protocol, closed gate, or invalid
+// snapshot affects only this sidecar; it never blocks a model request.
 // 返回 nil 表示「未采集」：入站路由不在范围内时一个字节都不写（由「无行」表达未采集）。
 func BuildRequestAuditValueDetailWrite(in RequestAuditValueDetailInput, gate RequestAuditValueDetailGate, now time.Time) *RequestAuditValueDetailWrite {
 	route := strings.TrimSpace(in.Route)
-	if route != RequestAuditValueDetailRouteMessages {
-		// 路由不在范围内：这是「未采集」，不是失败。返回 nil 表示不落任何行，
+	if !requestAuditValueDetailRouteSupported(route) {
+		// 路由不在范围内：这是「未采集」，不是失败。返回 nil 表示不落任何行,
 		// 避免为其它协议的流量写空壳记录。
 		return nil
 	}
 
+	// 入站头值按**入站路由**对应的协议校验；in.Protocol 是这次逻辑请求真实发出的上游形态，
+	// 只用于尝试级取值与范围判定。两者在转换分支（Chat Completions→Anthropic、
+	// Messages→OpenAI）里不是同一个闭集，不能互相解释。
+	inboundProtocol, inboundSupported := RequestAuditValueDetailInboundProtocolForRoute(route)
+	if !inboundSupported {
+		// 与上面的路由闭集同源，因此这里不可达；显式 fail closed 是为了将来两者漂移时
+		// 不会悄悄退化成「用出站协议猜入站 wire」。
+		return &RequestAuditValueDetailWrite{
+			State:         RequestAuditValueDetailStateSkipped,
+			Reason:        RequestAuditValueDetailSkippedUnsupportedProtocol,
+			StorageFormat: RequestAuditValueDetailStoragePlaintextUsageBound,
+			Fields:        requestAuditValueDetailFields(in, route),
+		}
+	}
+
 	write := &RequestAuditValueDetailWrite{
-		State:     RequestAuditValueDetailStateSkipped,
-		Reason:    RequestAuditValueDetailSkippedOutOfScope,
-		Fields:    requestAuditValueDetailFields(in, route),
-		ExpiresAt: now.UTC().Add(RequestAuditValueDetailRetention),
+		State:         RequestAuditValueDetailStateSkipped,
+		Reason:        RequestAuditValueDetailSkippedOutOfScope,
+		StorageFormat: RequestAuditValueDetailStoragePlaintextUsageBound,
+		Fields:        requestAuditValueDetailFields(in, route),
 	}
 
 	if !RequestAuditValueDetailScopeApplies(route, strings.TrimSpace(in.Protocol)) {
-		// 范围内路由、但这次真实上游尝试不是 Anthropic 形态：明确记「不在范围」。
+		write.Reason = RequestAuditValueDetailSkippedUnsupportedProtocol
 		return write
 	}
-
 	if !gate.CaptureAllowed {
 		write.Reason = RequestAuditValueDetailSkippedRetentionDisabled
 		return write
+	}
+
+	for _, attempt := range in.Attempts {
+		protocol := strings.TrimSpace(attempt.Protocol)
+		if protocol != "" && (!requestAuditValueDetailProtocolSupported(protocol) || protocol != in.Protocol) {
+			// An unsupported or mixed real wire attempt must not be reported as
+			// malformed values or decoded under the final account's protocol.
+			write.Reason = RequestAuditValueDetailSkippedUnsupportedProtocol
+			return write
+		}
 	}
 
 	if len(in.Attempts) > RequestAuditValueDetailMaxAttempts {
@@ -421,7 +504,7 @@ func BuildRequestAuditValueDetailWrite(in RequestAuditValueDetailInput, gate Req
 		return write
 	}
 
-	values, ok := NormalizeRequestAuditValueDetailValues(requestAuditValueDetailValuesFromInput(in))
+	values, ok := NormalizeRequestAuditValueDetailValuesForProtocols(requestAuditValueDetailValuesFromInput(in), inboundProtocol, strings.TrimSpace(in.Protocol))
 	if !ok {
 		write.Reason = RequestAuditValueDetailSkippedInvalidValues
 		return write
@@ -433,21 +516,16 @@ func BuildRequestAuditValueDetailWrite(in RequestAuditValueDetailInput, gate Req
 		return write
 	}
 	if entryCount == 0 {
-		// 在范围内、开关也开着，但一条可留存的值都没有：这是「未采集」，
-		// 不是「采集失败」，也不能写成「已留存」。省略摘要（有头没被收下）在这里
-		// 不单独成行：truncated 只在载荷里有地方表达，而空载荷不是一次留存。
-		// 真实 Claude 请求总有最终模型名，因此这一分支不会把「丢过条目」这个事实盖掉。
+		if values.Truncated {
+			write.Reason = RequestAuditValueDetailSkippedInvalidValues
+			return write
+		}
+		// 完全没有可留存事实且采集侧没有省略时，是未观察到值；
+		// 若存在省略，已在上方作为拒留处理，不能假报为「未采集」。
 		write.State = RequestAuditValueDetailStateNotObserved
 		write.Reason = RequestAuditValueDetailNotObserved
 		return write
 	}
-	if !gate.EncryptionAvailable {
-		// 开关开着但部署拿不出稳定密钥：留下稳定原因码，而不是退化成「未采集」。
-		write.EntryCount = entryCount
-		write.Reason = RequestAuditValueDetailSkippedEncryptionUnavailable
-		return write
-	}
-
 	payload, err := EncodeRequestAuditValueDetailValues(values)
 	if err != nil || len(payload) == 0 {
 		write.Reason = RequestAuditValueDetailSkippedInvalidValues
@@ -489,25 +567,67 @@ func DescribeRequestAuditValueDetailState(detail RequestAuditValueDetail, now ti
 // 不算整份不合格；采集侧带进来的省略摘要（values.Truncated）同样原样保留，
 // 因此本层不会把「客户端发了我们没收的东西」这个事实抹掉。
 func NormalizeRequestAuditValueDetailValues(values RequestAuditValueDetailValues) (RequestAuditValueDetailValues, bool) {
-	model, ok := normalizeRequestAuditValueDetailModel(values.Model)
+	return NormalizeRequestAuditValueDetailValuesForProtocol(values, RequestAuditProtocolAnthropic)
+}
+
+// NormalizeRequestAuditValueDetailValuesForProtocol 是**采集／持久化边界**的收窄：
+// 它把本层在这次收窄中丢掉的条目并入载荷自带的 truncated（两者都是采集侧的事实，
+// 见 RequestAuditValueDetailValues.Truncated）。
+//
+// 这个合并只对采集侧成立。读侧不得复用合并后的结果：读侧的丢弃是另一条事实，
+// 必须与载荷自带的 truncated 分开表达（见 DecodeRequestAuditValueDetailValuesForProtocol）。
+func NormalizeRequestAuditValueDetailValuesForProtocol(values RequestAuditValueDetailValues, protocol string) (RequestAuditValueDetailValues, bool) {
+	return NormalizeRequestAuditValueDetailValuesForProtocols(values, protocol, protocol)
+}
+
+// NormalizeRequestAuditValueDetailValuesForProtocols 是本边界**双协议**形式：入站头值按
+// inboundProtocol 复核，逐次尝试的请求/响应头值按 wireProtocol 复核。
+//
+// 两者必须分开的理由：Chat Completions 入站 → Anthropic 出站、Messages 入站 → OpenAI 出站
+// 时，入站 wire 与出站 wire 的闭集不同；用一个协议同时解释两边，必然把其中一边的合法取值
+// 判成「闭集外的名字」。inboundProtocol 由入站路由决定（RequestAuditValueDetailInboundProtocolForRoute），
+// wireProtocol 只来自逐次真实尝试。
+func NormalizeRequestAuditValueDetailValuesForProtocols(values RequestAuditValueDetailValues, inboundProtocol, wireProtocol string) (RequestAuditValueDetailValues, bool) {
+	normalized, dropped, ok := normalizeRequestAuditValueDetailValuesForProtocols(values, inboundProtocol, wireProtocol)
 	if !ok {
 		return RequestAuditValueDetailValues{}, false
 	}
-	inboundHeaders, inboundDropped, ok := normalizeRequestAuditValueDetailHeaderValues(values.Inbound.RequestHeaders, false)
+	if dropped {
+		normalized.Truncated = true
+	}
+	return normalized, true
+}
+
+// normalizeRequestAuditValueDetailValuesForProtocol 是单协议形式（入站与出站同形时使用）。
+// normalizeRequestAuditValueDetailValuesForProtocols 是白名单与有界复核的唯一实现。
+//
+// 第二个返回值是**本层这次复核丢掉的条目**（闭集外的头名、没通过净化器的取值）。
+// 它刻意不并进 Truncated：采集侧据此把丢弃记进载荷（那是采集时的事实），读侧则必须
+// 把它当作另一条事实处理——读侧调用方（Decode）因此拿得到这个布尔值，而不是只看一个
+// 已被合并的 Truncated。ok=false 表示整份不合格，此时不返回任何部分结果。
+func normalizeRequestAuditValueDetailValuesForProtocols(values RequestAuditValueDetailValues, inboundProtocol, wireProtocol string) (RequestAuditValueDetailValues, bool, bool) {
+	if !requestAuditValueDetailProtocolSupported(inboundProtocol) || !requestAuditValueDetailProtocolSupported(wireProtocol) {
+		return RequestAuditValueDetailValues{}, false, false
+	}
+	model, ok := normalizeRequestAuditValueDetailModel(values.Model)
 	if !ok {
-		return RequestAuditValueDetailValues{}, false
+		return RequestAuditValueDetailValues{}, false, false
+	}
+	inboundHeaders, inboundDropped, ok := normalizeRequestAuditValueDetailHeaderValuesForProtocol(values.Inbound.RequestHeaders, inboundProtocol, false)
+	if !ok {
+		return RequestAuditValueDetailValues{}, false, false
 	}
 	deviceID, ok := normalizeRequestAuditValueDetailIdentifier(values.Inbound.DeviceID)
 	if !ok {
-		return RequestAuditValueDetailValues{}, false
+		return RequestAuditValueDetailValues{}, false, false
 	}
 	accountUUID, ok := normalizeRequestAuditValueDetailIdentifier(values.Inbound.AccountUUID)
 	if !ok {
-		return RequestAuditValueDetailValues{}, false
+		return RequestAuditValueDetailValues{}, false, false
 	}
 	sessionID, ok := normalizeRequestAuditValueDetailIdentifier(values.Inbound.SessionID)
 	if !ok {
-		return RequestAuditValueDetailValues{}, false
+		return RequestAuditValueDetailValues{}, false, false
 	}
 	out := RequestAuditValueDetailValues{
 		Model: model,
@@ -517,30 +637,40 @@ func NormalizeRequestAuditValueDetailValues(values RequestAuditValueDetailValues
 			AccountUUID:    accountUUID,
 			SessionID:      sessionID,
 		},
-		// 任一方向丢过条目，整行就带着「不完整」这个事实。
-		Truncated: values.Truncated || inboundDropped,
+		// 载荷自带的 truncated 原样带出：本层不替调用方决定怎么处理自己的丢弃事实。
+		Truncated: values.Truncated,
 	}
+	dropped := inboundDropped
 	for _, attempt := range values.Attempts {
-		normalized, dropped, ok := normalizeRequestAuditValueDetailAttempt(attempt)
-		if !ok {
-			return RequestAuditValueDetailValues{}, false
+		protocol := attempt.Protocol
+		if protocol == "" {
+			protocol = wireProtocol
 		}
-		out.Truncated = out.Truncated || dropped
+		if !requestAuditValueDetailProtocolSupported(protocol) || protocol != wireProtocol {
+			// Mixed wire protocols cannot reuse one outbound contract. Fail closed
+			// until the payload carries an independently validated contract for each.
+			return RequestAuditValueDetailValues{}, false, false
+		}
+		normalized, attemptDropped, ok := normalizeRequestAuditValueDetailAttemptForProtocol(attempt, protocol)
+		if !ok {
+			return RequestAuditValueDetailValues{}, false, false
+		}
+		dropped = dropped || attemptDropped
 		out.Attempts = append(out.Attempts, normalized)
 	}
-	return out, true
+	return out, dropped, true
 }
 
-func normalizeRequestAuditValueDetailAttempt(attempt RequestAuditValueDetailAttemptValues) (RequestAuditValueDetailAttemptValues, bool, bool) {
+func normalizeRequestAuditValueDetailAttemptForProtocol(attempt RequestAuditValueDetailAttemptValues, protocol string) (RequestAuditValueDetailAttemptValues, bool, bool) {
 	model, ok := normalizeRequestAuditValueDetailModel(attempt.Model)
 	if !ok {
 		return RequestAuditValueDetailAttemptValues{}, false, false
 	}
-	requestHeaders, requestDropped, ok := normalizeRequestAuditValueDetailHeaderValues(attempt.RequestHeaders, false)
+	requestHeaders, requestDropped, ok := normalizeRequestAuditValueDetailHeaderValuesForProtocol(attempt.RequestHeaders, protocol, false)
 	if !ok {
 		return RequestAuditValueDetailAttemptValues{}, false, false
 	}
-	responseHeaders, responseDropped, ok := normalizeRequestAuditValueDetailHeaderValues(attempt.ResponseHeaders, true)
+	responseHeaders, responseDropped, ok := normalizeRequestAuditValueDetailHeaderValuesForProtocol(attempt.ResponseHeaders, protocol, true)
 	if !ok {
 		return RequestAuditValueDetailAttemptValues{}, false, false
 	}
@@ -559,6 +689,7 @@ func normalizeRequestAuditValueDetailAttempt(attempt RequestAuditValueDetailAtte
 	out := RequestAuditValueDetailAttemptValues{
 		Index:           attempt.Index,
 		AccountID:       attempt.AccountID,
+		Protocol:        protocol,
 		Model:           model,
 		RequestHeaders:  requestHeaders,
 		ResponseHeaders: responseHeaders,
@@ -593,7 +724,7 @@ func normalizeRequestAuditValueDetailAttempt(attempt RequestAuditValueDetailAtte
 // 只有「无法唯一表示」的形状才整份不合格：取值个数为 0 或超过净化器上限（4）、
 // 元素不是字符串、取值或名字超界、含控制字符。额外还有一层**值内凭据形态**检查：
 // 即使净化器误放行了看起来像凭据的值，本层也拒绝整份快照，绝不落库。
-func normalizeRequestAuditValueDetailHeaderValues(values map[string][]string, response bool) (map[string][]string, bool, bool) {
+func normalizeRequestAuditValueDetailHeaderValuesForProtocol(values map[string][]string, protocol string, response bool) (map[string][]string, bool, bool) {
 	if len(values) == 0 {
 		return nil, false, true
 	}
@@ -632,10 +763,14 @@ func normalizeRequestAuditValueDetailHeaderValues(values map[string][]string, re
 	// 一旦命中就会把整份快照判为不合格。凭据类头本身根本不在闭集里，它们只会得到
 	// 存在性标记并被丢弃。
 	var revalidated map[string]any
+	var supported bool
 	if response {
-		revalidated = httpattempt.SanitizeClaudeResponseHeaderValueMap(candidate)
+		revalidated, supported = httpattempt.SanitizeProtocolResponseHeaderValueMap(protocol, candidate)
 	} else {
-		revalidated = httpattempt.SanitizeClaudeRequestHeaderValueMap(candidate)
+		revalidated, supported = httpattempt.SanitizeProtocolRequestHeaderValueMap(protocol, candidate)
+	}
+	if !supported {
+		return nil, false, false
 	}
 	out := make(map[string][]string, len(revalidated))
 	accepted := 0
@@ -731,8 +866,8 @@ func normalizeRequestAuditValueDetailIdentifier(value string) (string, bool) {
 
 // normalizeRequestAuditValueDetailModel 校验模型名的形状：有界、无控制字符、不含凭据形态。
 //
-// 模型名由调用方任意指定，因此它只进密文；这里再收一次形状，
-// 避免它成为一条绕过正文禁令的自由文本通道。
+// The caller controls this alias. Shape bounds and a risk acknowledgement
+// limit, but cannot eliminate, the risk of short secret-like content in plaintext.
 func normalizeRequestAuditValueDetailModel(value string) (string, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -787,10 +922,9 @@ func requestAuditValueDetailLooksLikeCredential(value string) bool {
 	return false
 }
 
-// EncodeRequestAuditValueDetailValues 把校验后的值编码成确定性的 JSON 载荷。
-//
-// 确定性很重要：同一份值必须产生同一份密文，否则「以密文对比是否重复」会成为
-// 一条本不存在的旁路。map 的键由 encoding/json 排序。
+// EncodeRequestAuditValueDetailValues creates bounded JSON with stable key
+// ordering. The legacy cipher and new plaintext store share the same payload
+// shape but never share each other's lifetime rules.
 func EncodeRequestAuditValueDetailValues(values RequestAuditValueDetailValues) ([]byte, error) {
 	encoded, err := json.Marshal(values)
 	if err != nil {
@@ -802,11 +936,31 @@ func EncodeRequestAuditValueDetailValues(values RequestAuditValueDetailValues) (
 	return encoded, nil
 }
 
-// DecodeRequestAuditValueDetailValues 解码并**重新校验**已解密的载荷。
+// DecodeRequestAuditValueDetailValues revalidates before reveal. A successful
+// DB read or legacy decrypt does not make payload data trustworthy; no partial
+// values are returned when validation fails.
 //
-// 解密成功不等于内容可信（密钥错配、密文被替换、旧版本载荷都可能落到这里），
-// 因此解码结果必须再过一遍白名单与有界校验；不合格一律返回错误，绝不返回部分结果。
+// 读侧复核拒收的条目**不是**校验失败：那是读侧自己的一条事实。它不并进载荷自带的
+// truncated（那会把「读侧没收下」冒充成「采集时就没收下」），也不静默消失（那会让
+// 剩下的列表被读成「客户端只发了这些」），而是通过 RequestAuditValueDetailValues.
+// ValidationDropped（传输专用，不进存储载荷）交给揭示 DTO，与 Truncated 各自独立
+// 呈现，符合 ADR 0006 对读侧告警的要求。载荷自带的 truncated 原样带出，不改写。
 func DecodeRequestAuditValueDetailValues(payload []byte) (RequestAuditValueDetailValues, error) {
+	return DecodeRequestAuditValueDetailValuesForProtocol(payload, RequestAuditProtocolAnthropic)
+}
+
+func DecodeRequestAuditValueDetailValuesForProtocol(payload []byte, protocol string) (RequestAuditValueDetailValues, error) {
+	return DecodeRequestAuditValueDetailValuesForProtocols(payload, protocol, protocol)
+}
+
+// DecodeRequestAuditValueDetailValuesForProtocols 是读侧的双协议形式：入站头值按
+// inboundProtocol 复核，逐次尝试的头值按 wireProtocol 复核（与采集侧同一套协议校验，
+// 见 NormalizeRequestAuditValueDetailValuesForProtocols）。
+//
+// 调用方（仓储层）按**存储格式**决定入站协议：新明文行用入站路由推导出的协议；
+// 旧密文行在写下的那一刻还没有这个事实，因此仍按原「单协议」语义（inbound=wire）解读，
+// 不能把旧行重新按路由解释——那会把旧行里合法的入站头值判成读侧丢弃而整份拒绝。
+func DecodeRequestAuditValueDetailValuesForProtocols(payload []byte, inboundProtocol, wireProtocol string) (RequestAuditValueDetailValues, error) {
 	if len(payload) == 0 || len(payload) > RequestAuditValueDetailMaxReadBytes {
 		return RequestAuditValueDetailValues{}, errors.New("request audit value detail payload is out of bounds")
 	}
@@ -819,10 +973,16 @@ func DecodeRequestAuditValueDetailValues(payload []byte) (RequestAuditValueDetai
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return RequestAuditValueDetailValues{}, errors.New("request audit value detail payload has trailing data")
 	}
-	normalized, ok := NormalizeRequestAuditValueDetailValues(decoded)
+	normalized, dropped, ok := normalizeRequestAuditValueDetailValuesForProtocols(decoded, inboundProtocol, wireProtocol)
 	if !ok {
 		return RequestAuditValueDetailValues{}, errors.New("request audit value detail payload failed validation")
 	}
+	// 收到的载荷里有条目没通过本视图校验。这是**读侧自己的事实**，与载荷自带的
+	// truncated（采集时就没收下）是两条独立事实（ADR 0006）：既不并进 Truncated，
+	// 也不静默消失——静默丢掉会让剩下的列表被当成「客户端只发了这些」。它作为
+	// 传输专用的标记随返回值带出去，由揭示 DTO 与 Truncated 各自独立呈现。
+	// 被拒收的条目本身已经被丢掉，因此这里返回的仍然只有通过白名单与有界校验的值。
+	normalized.ValidationDropped = dropped
 	return normalized, nil
 }
 
@@ -847,6 +1007,7 @@ func requestAuditValueDetailValuesFromInput(in RequestAuditValueDetailInput) Req
 		item := RequestAuditValueDetailAttemptValues{
 			Index:           attempt.Index,
 			AccountID:       attempt.AccountID,
+			Protocol:        attempt.Protocol,
 			Model:           attempt.Model,
 			UpstreamStatus:  attempt.UpstreamStatus,
 			LatencyMillis:   attempt.LatencyMillis,
@@ -868,7 +1029,12 @@ func requestAuditValueDetailValuesFromInput(in RequestAuditValueDetailInput) Req
 // 消失，载荷就永远报不出 truncated（ADR 0006 要求「客户端只发了这些」与「我们只收了这些」
 // 可区分）。摘要只含计数，因此调用方绝不会把未知头名（可能承载认证通道）写成任何形式的记录。
 func RequestAuditValueDetailInboundHeaders(headers http.Header) (map[string]any, httpattempt.ClaudeHeaderValueOmission) {
-	return httpattempt.SanitizeClaudeRequestHeaderValuesWithOmission(headers)
+	values, omission, _ := RequestAuditValueDetailInboundHeadersForProtocol(headers, RequestAuditProtocolAnthropic)
+	return values, omission
+}
+
+func RequestAuditValueDetailInboundHeadersForProtocol(headers http.Header, protocol string) (map[string]any, httpattempt.ClaudeHeaderValueOmission, bool) {
+	return httpattempt.SanitizeProtocolRequestHeaderValues(protocol, headers)
 }
 
 // requestAuditValueDetailHeaderStrings 把净化器输出降为「一个名字一串有界值」。
@@ -949,12 +1115,13 @@ func RequestAuditValueDetailAttemptsFromHTTPMetadata(metadata []httpattempt.Meta
 		omission := item.RequestHeaderValueOmission.Merge(item.ResponseHeaderValueOmission)
 		if len(item.RequestHeaderValues) == 0 && len(item.ResponseHeaderValues) == 0 &&
 			strings.TrimSpace(item.MetadataUserID) == "" && item.LatencyMillis == nil && item.ProxyID <= 0 &&
-			!omission.Any() {
+			!omission.Any() && item.ValueProtocol == "" {
 			continue
 		}
 		attempts = append(attempts, RequestAuditValueDetailAttempt{
 			Index:                index + 1,
 			AccountID:            item.AccountID,
+			Protocol:             RequestAuditValueWireProtocolForMetadata(item),
 			Model:                item.Model,
 			MetadataUserID:       item.MetadataUserID,
 			UpstreamStatus:       cloneAuditInt(item.StatusCode),
@@ -971,7 +1138,7 @@ func RequestAuditValueDetailAttemptsFromHTTPMetadata(metadata []httpattempt.Meta
 func requestAuditValueDetailFields(in RequestAuditValueDetailInput, route string) RequestAuditValueDetailFields {
 	protocol := strings.TrimSpace(in.Protocol)
 	switch protocol {
-	case RequestAuditProtocolAnthropic, "bedrock":
+	case RequestAuditProtocolAnthropic, RequestAuditProtocolOpenAIChat, RequestAuditProtocolOpenAIResp, "bedrock":
 	default:
 		protocol = ""
 	}
@@ -1004,6 +1171,16 @@ type RequestAuditValueDetailCapture struct {
 	now  func() time.Time
 }
 
+var requestAuditValueDetailWrittenRows atomic.Uint64
+var requestAuditValueDetailWrittenBytes atomic.Uint64
+var requestAuditValueDetailInvalidRows atomic.Uint64
+var requestAuditValueDetailWriteFailures atomic.Uint64
+
+func RequestAuditValueDetailCaptureCounts() (writtenRows, writtenBytes, invalidRows, failures uint64) {
+	return requestAuditValueDetailWrittenRows.Load(), requestAuditValueDetailWrittenBytes.Load(),
+		requestAuditValueDetailInvalidRows.Load(), requestAuditValueDetailWriteFailures.Load()
+}
+
 // NewRequestAuditValueDetailCapture 构造采集接缝；gate 可为 nil（等价于全关）。
 func NewRequestAuditValueDetailCapture(repo RequestAuditValueDetailRepository, gate RequestAuditValueDetailGateReader) *RequestAuditValueDetailCapture {
 	return &RequestAuditValueDetailCapture{repo: repo, gate: gate, now: time.Now}
@@ -1025,15 +1202,13 @@ func (c *RequestAuditValueDetailCapture) clockNow() time.Time {
 
 // Enabled 报告此刻是否值得为本次逻辑请求复制值快照。
 //
-// 只有「运维允许」且「部署有稳定密钥」同时成立才为真。缺密钥时构建快照是纯粹的明文
-// 复制，注定被判为 skipped_encryption_unavailable，因此不应发生。
+// 只有当前已确认的运维门控允许时才复制值；新明文不要求旧解密密钥。
 //
 // 调用方（gateway 绑定阶段）用它决定是否在请求上下文上打
 // httpattempt.WithClaudeHeaderValueCapture 标记；传输层只认那个标记，
 // 因此这个判定点是关闭态下不复制明文的唯一开关。
 func (c *RequestAuditValueDetailCapture) Enabled(ctx context.Context) bool {
-	gate := c.gateFor(ctx)
-	return gate.CaptureAllowed && gate.EncryptionAvailable
+	return c.gateFor(ctx).CaptureAllowed
 }
 
 // Capture 在请求审计行已落库后尽力写入值明细。
@@ -1058,12 +1233,22 @@ func (c *RequestAuditValueDetailCapture) Capture(ctx context.Context, usageLog *
 		return
 	}
 	write.UsageLogID = usageLog.ID
+	if write.Reason == RequestAuditValueDetailSkippedInvalidValues || write.Reason == RequestAuditValueDetailSkippedTooManyAttempts {
+		requestAuditValueDetailInvalidRows.Add(1)
+	}
 	captureCtx, cancel := context.WithTimeout(detachedRequestAuditValueDetailContext(ctx), requestAuditValueDetailWriteTimeout)
 	defer cancel()
-	if _, err := c.repo.CreateRequestAuditValueDetail(captureCtx, *write); err != nil {
+	saved, err := c.repo.CreateRequestAuditValueDetail(captureCtx, *write)
+	if err != nil {
+		requestAuditValueDetailWriteFailures.Add(1)
 		// 只记原因码与状态：任何值、模型名或标识都不进日志。
 		logger.LegacyPrintf("service.request_audit_value_detail",
 			"Request audit value detail write failed: usage_log_id=%d state=%s reason=%s", usageLog.ID, write.State, write.Reason)
+		return
+	}
+	if saved.Stored && saved.StorageFormat == RequestAuditValueDetailStoragePlaintextUsageBound {
+		requestAuditValueDetailWrittenRows.Add(1)
+		requestAuditValueDetailWrittenBytes.Add(uint64(saved.PayloadBytes))
 	}
 }
 

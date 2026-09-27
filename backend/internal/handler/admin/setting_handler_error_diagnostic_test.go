@@ -123,6 +123,7 @@ func newErrorDiagnosticOperatorHandler(t *testing.T, stored map[string]string, k
 	gin.SetMode(gin.TestMode)
 	repo := &errorDiagnosticOperatorRepoStub{values: stored}
 	svc := service.NewSettingService(repo, errorDiagnosticOperatorTestConfig(keyConfigured))
+	svc.SetPlaintextCaptureSupportProbe(supportedPlaintextCaptureProbe{})
 	return NewSettingHandler(svc, nil, nil, nil, nil, nil, nil), repo
 }
 
@@ -258,7 +259,7 @@ func TestErrorDiagnosticRiskPhraseStatesDeclaredResidualRisks(t *testing.T) {
 // 声明原文与版本被钉住：措辞改动必须同时改本测试并提升版本常量，
 // 不允许在不提升版本的情况下放宽或模糊已声明的剩余风险（尤其是物理删除的延迟不保证上限）。
 func TestErrorDiagnosticRiskPhraseIsPinned(t *testing.T) {
-	require.Equal(t, "v2026.09.24.1", service.ErrorDiagnosticRiskAcknowledgementVersion)
+	require.Equal(t, "v2026.09.27.2", service.ErrorDiagnosticRiskAcknowledgementVersion)
 	require.Equal(t,
 		"Error diagnostic bodies and upstream 429 header values are retained for 7 days and sanitized metadata for 30 days; "+
 			"at expiry API reads are rejected immediately, while physical deletion is performed only in the online primary database "+
@@ -282,29 +283,29 @@ func TestErrorDiagnosticRiskPhraseIsPinned(t *testing.T) {
 	)
 }
 
-// errorDiagnosticPreviousRiskVersion／errorDiagnosticPreviousRiskPhraseEN 是上一版
-// （正文单层留存时期的）确认语句与版本，逐字保留。
+// errorDiagnosticPreviousRiskVersion／errorDiagnosticPreviousRiskPhraseEN 是先前
+// （仅密文正文与头值留存时期的）确认语句与版本，逐字保留。
 //
 // 它们不引用当前常量：这里要证明的正是「语句内容变化后，按旧语句做过的确认不再覆盖当前
 // 语句」，如果跟着当前常量漂移，这条证据就自己失效了。
 const (
-	errorDiagnosticPreviousRiskVersion  = "v2026.09.24"
-	errorDiagnosticPreviousRiskPhraseEN = "Error diagnostic bodies are retained for 7 days and sanitized metadata for 30 days; " +
+	errorDiagnosticPreviousRiskVersion  = "v2026.09.24.1"
+	errorDiagnosticPreviousRiskPhraseEN = "Error diagnostic bodies and upstream 429 header values are retained for 7 days and sanitized metadata for 30 days; " +
 		"at expiry API reads are rejected immediately, while physical deletion is performed only in the online primary database " +
 		"by periodic cleanup that backlog or downtime can delay without a guaranteed maximum; " +
 		"retained text is arbitrary client content and may contain credentials that filtering cannot identify; " +
+		"header values are captured only from an allowlist that excludes credential headers such as Authorization, Cookie, Set-Cookie and X-Api-Key, " +
+		"and header names outside that list are never captured; " +
 		"copies in replicas, backups, PITR and manual exports may persist and can be recovered there, " +
 		"and this feature is not a compliance deletion or data-subject erasure tool."
 )
 
-// 语句版本必须随语句内容一起提升：旧版本的确认记录不能覆盖当前语句。
-//
-// 这条测试是「不因为库里有一条旧确认就静默放行」的证据：语句里多出 429 头值这一层
-// 留存事实后，按旧语句确认过的部署必须被判为确认过期，只能重新逐字确认当前语句。
+// 新版切换采集路径时提升共享确认版本：旧记录即使确认了相同的七天密文声明，
+// 也不能让旧开关继续采任何新记录。历史密文读取仍保持原窗口；新明文另有各自的确认。
 func TestErrorDiagnosticRiskPhraseVersionTracksStatementChanges(t *testing.T) {
 	require.NotEqual(t, errorDiagnosticPreviousRiskVersion, service.ErrorDiagnosticRiskAcknowledgementVersion)
-	require.NotEqual(t, errorDiagnosticPreviousRiskPhraseEN, service.ErrorDiagnosticRiskAcknowledgementPhraseEN,
-		"语句内容变化必须同时提升版本，否则旧确认会被继续采信")
+	require.Equal(t, errorDiagnosticPreviousRiskPhraseEN, service.ErrorDiagnosticRiskAcknowledgementPhraseEN,
+		"共享语句仍描述旧密文风险，版本升级只要求管理员在新版重新确认")
 
 	previous := service.ErrorDiagnosticRiskAcknowledgement{
 		Version:     errorDiagnosticPreviousRiskVersion,
@@ -314,10 +315,10 @@ func TestErrorDiagnosticRiskPhraseVersionTracksStatementChanges(t *testing.T) {
 	}
 	require.False(t, previous.CoversCurrentStatement(), "旧版本语句不构成当前版本的确认")
 
-	// 版本对、原文旧（同一版本下语句被改写）同样不覆盖：版本与原文都必须匹配。
+	// 版本对、原文不是当前声明同样不覆盖：版本与原文都必须匹配。
 	require.False(t, service.ErrorDiagnosticRiskAcknowledgement{
 		Version:     service.ErrorDiagnosticRiskAcknowledgementVersion,
-		Phrase:      errorDiagnosticPreviousRiskPhraseEN,
+		Phrase:      "I acknowledge the old diagnostic mode",
 		AdminUserID: 7,
 		AcceptedAt:  time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
 	}.CoversCurrentStatement(), "版本匹配但原文是旧语句，不得放行")
@@ -616,17 +617,8 @@ func TestErrorDiagnosticOperatorSettingsOutdatedAcknowledgementDoesNotSilentlyEn
 	require.False(t, settings.BodyCaptureAllowed())
 	require.False(t, settings.HeaderValuesCaptureAllowed())
 
-	// 提交旧语句不能重新确认：逐字确认的必须是**当前**这段文字。
-	rec = putErrorDiagnosticOperatorSettings(t, h, map[string]any{
-		"enabled": true, "header_values_enabled": true,
-		"language": "en", "phrase": errorDiagnosticPreviousRiskPhraseEN,
-	}, 42, "")
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Equal(t, "ERROR_DIAGNOSTIC_RISK_ACK_INVALID", errorDiagnosticOperatorErrorReason(t, rec))
-	require.Contains(t, repo.values[service.SettingKeyErrorDiagnosticRiskAcknowledgement], errorDiagnosticPreviousRiskVersion,
-		"被拒的请求不得改写存量的确认记录")
-
-	// 逐字确认当前语句之后，头值留存才真正可开。
+	// 本次升级保持密文风险声明原文，但提升确认版本：旧版本不能自动延续采集；
+	// 操作员在新版显式重新提交同一段当前语句后，才产生当前版本的确认记录。
 	rec = putErrorDiagnosticOperatorSettings(t, h, map[string]any{
 		"enabled": true, "header_values_enabled": true,
 		"language": "en", "phrase": service.ErrorDiagnosticRiskAcknowledgementPhraseEN,
@@ -635,6 +627,8 @@ func TestErrorDiagnosticOperatorSettingsOutdatedAcknowledgementDoesNotSilentlyEn
 	status = decodeErrorDiagnosticOperatorStatus(t, rec)
 	require.True(t, status.RiskAcknowledgementCurrent)
 	require.True(t, status.HeaderValueRetentionAllowed)
+	require.Contains(t, repo.values[service.SettingKeyErrorDiagnosticRiskAcknowledgement], service.ErrorDiagnosticRiskAcknowledgementVersion,
+		"显式重新确认后才写入当前版本")
 }
 
 // 机器凭证不能代替操作员的书面确认：admin API key 一律不能开启。

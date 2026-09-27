@@ -110,6 +110,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	// 协议按入站路由（/v1/messages）给出，但真实上游形态是 OpenAI Chat Completions：
+	// 共享发送器因此把 429 头值这一层整体声明为出界（未采集），而不是套用 Claude Messages
+	// 的闭集白名单。详见 sendCCUpstreamRequest 的说明。
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "", ErrorDiagnosticProtocolMessages)
 	if err != nil {
 		return nil, err

@@ -147,22 +147,27 @@ export interface RequestAudit {
   metadata?: RequestAuditMetadata
 }
 
-// ==================== Request-audit value detail (Claude /v1/messages) ====================
+// ==================== Request-audit value detail (audited HTTP branches) ====================
 
 /**
  * Short-term value detail attached to a usage-owned request audit.
  *
  * A long-lived audit row never carries header *values*, a model name or parsed
  * client identifiers; this sidecar is the narrow, opt-in exception for requests
- * that entered on `/v1/messages` and really called an Anthropic upstream. Its
- * values are encrypted, readable for 7 days, and returned only by an explicit
- * POST — the GET is an envelope, and the envelope type below has no value
- * fields, so "the default read never returns values" is a type guarantee.
+ * that were really audited per attempt on the Messages, Chat Completions and
+ * Responses HTTP branches. Legacy rows from the first cut of this capability were
+ * Anthropic-only, encrypted and readable for 7 days; new rows are plaintext and
+ * live exactly as long as the usage record they belong to. Either way the values
+ * are returned only by an explicit POST — the GET is an envelope, and the
+ * envelope type below has no value fields, so "the default read never returns
+ * values" is a type guarantee.
  *
  * Everything here is re-validated at the boundary against the same closed
  * allowlists the backend persists with: a tampered or future response cannot
  * smuggle an unknown header name, a credential-shaped value or a model body
- * into the DOM.
+ * into the DOM. Those allowlists are per wire protocol and per direction, so the
+ * two protocols a record can carry (see `requestAuditValueDetailProtocols`) are
+ * read separately instead of one standing in for the other.
  */
 export const REQUEST_AUDIT_VALUE_DETAIL_STATES = [
   'not_observed',
@@ -181,16 +186,30 @@ export const REQUEST_AUDIT_VALUE_DETAIL_REASONS = [
   'skipped_encryption_unavailable',
   'skipped_invalid_values',
   'skipped_too_many_attempts',
+  'skipped_unsupported_protocol',
 ] as const
 export type RequestAuditValueDetailReason = (typeof REQUEST_AUDIT_VALUE_DETAIL_REASONS)[number]
 
 /** The GET view: what was collected, why not, and how long it stays readable. No values. */
 export interface RequestAuditValueDetailEnvelope {
   usage_log_id: number
+  /**
+   * Selects how the record is read. `plaintext_usage_bound` rows have an inbound
+   * route and a real upstream form that can differ; legacy `encrypted_v1` rows
+   * predate that fact and stay single-protocol.
+   */
+  storage_format?: 'encrypted_v1' | 'plaintext_usage_bound'
   state: RequestAuditValueDetailState
   /** Dropped when it is not one of the stable reason codes. */
   reason?: RequestAuditValueDetailReason
+  /** The inbound route the client called; the source of the inbound wire protocol. */
   route?: string
+  /**
+   * The wire protocol this logical request *really went out as*. It is not the
+   * protocol the client spoke: a Messages request can be converted to Chat
+   * Completions upstream. Use `requestAuditValueDetailProtocols` to read a reveal
+   * against both protocols instead of treating this one as either.
+   */
   protocol?: string
   client_status?: number
   attempt_count: number
@@ -217,6 +236,7 @@ export interface RequestAuditValueDetailInbound {
 
 export interface RequestAuditValueDetailAttemptValues {
   index: number
+  protocol?: string
   account_id?: number
   model?: string
   upstream_status?: number
@@ -246,11 +266,13 @@ export interface RequestAuditValueDetailValues {
   /** True when some submitted entries were not accepted; never render it as completeness. */
   truncated: boolean
   /**
-   * Derived by this decoder, never sent by the backend: true when the reveal
-   * payload carried at least one entry that did not pass the boundary checks
-   * below. It is the read-side counterpart of `truncated` and must be rendered
-   * too — a view that quietly dropped an entry while claiming to be complete
-   * would read as "the client only sent this".
+   * The read-side counterpart of `truncated`, and a separate fact from it: true when
+   * an entry the reveal carried was refused by the read side — either by the
+   * backend's read boundary (`validation_dropped` on the reveal response, which the
+   * admin never sees as a value) or by the boundary checks in this decoder. A
+   * payload's own `validation_dropped` key can never set it. It must be rendered
+   * too: a view that quietly dropped an entry while claiming to be complete would
+   * read as "the client only sent this".
    */
   validation_dropped: boolean
 }
@@ -258,6 +280,13 @@ export interface RequestAuditValueDetailValues {
 export interface RequestAuditValueDetailReveal {
   usage_log_id: number
   values: RequestAuditValueDetailValues
+  /**
+   * The backend's read-side statement: true when the stored payload carried an entry
+   * its own read boundary refused, so `values` is not everything the record holds. It
+   * is never part of the stored payload and stays independent of `values.truncated`,
+   * which speaks for the collection side.
+   */
+  validation_dropped?: boolean
 }
 
 /** Raised when a value-detail payload does not match the agreed contract. */
@@ -265,6 +294,85 @@ export class RequestAuditValueDetailPayloadError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'RequestAuditValueDetailPayloadError'
+  }
+}
+
+/**
+ * The two wire protocols one reveal payload has to be read against.
+ *
+ * A logical request can be converted on its way upstream: a Messages request may
+ * really go out as OpenAI Chat Completions, and the reverse. The inbound headers
+ * the record holds are the ones the *client* spoke, so they are read against the
+ * inbound protocol; every attempt went out as the real upstream protocol. Reading
+ * the inbound block with the outbound allowlist would treat the client's
+ * legitimate headers as names outside the closed set, empty the block and claim a
+ * `validation_dropped` the record never had (ADR 0006/0007).
+ */
+export interface RequestAuditValueDetailProtocols {
+  /** The closed allowlist for `values.inbound.request_headers`. */
+  inbound: string
+  /**
+   * The real upstream wire. Every attempt of one record uses this same wire, so it
+   * is the fallback for an attempt that does not name its own.
+   */
+  wire: string
+}
+
+/** The wire protocols this read side can interpret. */
+const SUPPORTED_VALUE_DETAIL_PROTOCOLS = [
+  'anthropic.messages',
+  'openai.chat.completions',
+  'openai.responses',
+] as const
+
+/** The inbound wire protocol each supported inbound route carries (mirrors the backend). */
+const VALUE_DETAIL_INBOUND_PROTOCOL_BY_ROUTE: Record<string, string> = {
+  '/v1/messages': 'anthropic.messages',
+  '/v1/chat/completions': 'openai.chat.completions',
+  '/v1/responses': 'openai.responses',
+  '/v1/responses/compact': 'openai.responses',
+}
+
+/**
+ * The single protocol every legacy row was written with, before the inbound route
+ * and the real upstream form could differ. It is also the conservative default for
+ * a caller with no envelope: a reveal only exists for a row whose protocol the
+ * backend could interpret, and the backend refuses to disclose the others.
+ */
+const LEGACY_VALUE_DETAIL_PROTOCOL = 'anthropic.messages'
+
+/**
+ * Derives the protocols a reveal must be read against from the envelope the server
+ * sent — the same way the backend's read side does.
+ *
+ * Legacy `encrypted_v1` rows keep their original single-protocol reading: they were
+ * written before "inbound route" and "real upstream form" were two separately
+ * recorded facts, so the record's own protocol explains both sides of it and must
+ * not be re-interpreted through its route. Anything that is not explicitly the new
+ * plaintext format is read that way too, so a missing or unknown `storage_format`
+ * cannot silently change how an existing row is understood.
+ *
+ * A plaintext row whose route carries no known inbound protocol (a route outside
+ * this capability's scope, or none at all) falls back to the record's own protocol
+ * as well, which is what the backend's read side does.
+ */
+export function requestAuditValueDetailProtocols(
+  envelope:
+    | Pick<RequestAuditValueDetailEnvelope, 'route' | 'protocol' | 'storage_format'>
+    | null
+    | undefined,
+): RequestAuditValueDetailProtocols {
+  const recordProtocol =
+    typeof envelope?.protocol === 'string' && envelope.protocol.trim() !== ''
+      ? envelope.protocol.trim()
+      : LEGACY_VALUE_DETAIL_PROTOCOL
+  if (envelope?.storage_format !== 'plaintext_usage_bound') {
+    return { inbound: recordProtocol, wire: recordProtocol }
+  }
+  const route = typeof envelope.route === 'string' ? envelope.route.trim() : ''
+  return {
+    inbound: VALUE_DETAIL_INBOUND_PROTOCOL_BY_ROUTE[route] ?? recordProtocol,
+    wire: recordProtocol,
   }
 }
 
@@ -304,6 +412,19 @@ const CLAUDE_REQUEST_HEADER_NAMES: Record<string, string> = {
   'x-stainless-runtime': 'X-Stainless-Runtime',
   'x-stainless-runtime-version': 'X-Stainless-Runtime-Version',
   'x-stainless-helper-method': 'X-Stainless-Helper-Method',
+}
+
+const OPENAI_REQUEST_HEADER_NAMES: Record<string, string> = {
+  host: 'Host',
+  'content-type': 'Content-Type',
+  accept: 'Accept',
+  'accept-encoding': 'Accept-Encoding',
+}
+
+const OPENAI_RESPONSE_HEADER_NAMES: Record<string, string> = {
+  'content-type': 'Content-Type',
+  'cache-control': 'Cache-Control',
+  'retry-after': 'Retry-After',
 }
 
 const CLAUDE_RESPONSE_HEADER_NAMES: Record<string, string> = {
@@ -430,12 +551,16 @@ function readHeaderMap(
   raw: unknown,
   direction: 'request' | 'response',
   drops: ValueDetailDropTracker,
+  protocol: string = 'anthropic.messages',
 ): RequestAuditValueDetailHeaders {
   if (raw === undefined || raw === null) return {}
   if (!isPlainRecord(raw)) {
     throw new RequestAuditValueDetailPayloadError('value detail headers are not an object')
   }
-  const allowed = direction === 'request' ? CLAUDE_REQUEST_HEADER_NAMES : CLAUDE_RESPONSE_HEADER_NAMES
+  const openaiWire = protocol === 'openai.responses' || protocol === 'openai.chat.completions'
+  const allowed = openaiWire
+    ? direction === 'request' ? OPENAI_REQUEST_HEADER_NAMES : OPENAI_RESPONSE_HEADER_NAMES
+    : direction === 'request' ? CLAUDE_REQUEST_HEADER_NAMES : CLAUDE_RESPONSE_HEADER_NAMES
   const headers: RequestAuditValueDetailHeaders = {}
   for (const [rawName, rawValues] of Object.entries(raw)) {
     const name = rawName.trim().toLowerCase()
@@ -512,7 +637,13 @@ function readOptionalTimestamp(raw: unknown): string | undefined {
   return raw
 }
 
-function readAttempt(raw: unknown, drops: ValueDetailDropTracker): RequestAuditValueDetailAttemptValues | null {
+/**
+ * Reads one upstream attempt. Each attempt is read against its *own* wire protocol
+ * when it states one, and against the record's real upstream protocol when it does
+ * not — never against the inbound protocol, which describes the client's side of a
+ * converted request and not the form this attempt was sent in.
+ */
+function readAttempt(raw: unknown, drops: ValueDetailDropTracker, wireProtocol: string): RequestAuditValueDetailAttemptValues | null {
   if (!isPlainRecord(raw)) {
     drops.dropped = true
     return null
@@ -523,10 +654,19 @@ function readAttempt(raw: unknown, drops: ValueDetailDropTracker): RequestAuditV
     return null
   }
 
+  const protocol =
+    typeof raw.protocol === 'string' && raw.protocol.trim() !== ''
+      ? raw.protocol.trim()
+      : wireProtocol
+  if (!(SUPPORTED_VALUE_DETAIL_PROTOCOLS as readonly string[]).includes(protocol)) {
+    drops.dropped = true
+    return null
+  }
   const attempt: RequestAuditValueDetailAttemptValues = {
     index,
-    request_headers: readHeaderMap(raw.request_headers, 'request', drops),
-    response_headers: readHeaderMap(raw.response_headers, 'response', drops),
+    protocol,
+    request_headers: readHeaderMap(raw.request_headers, 'request', drops, protocol),
+    response_headers: readHeaderMap(raw.response_headers, 'response', drops, protocol),
   }
   const accountId = readAttemptScalar(raw.account_id, 1, Number.MAX_SAFE_INTEGER, drops)
   if (accountId !== undefined) attempt.account_id = accountId
@@ -580,6 +720,9 @@ export function normalizeRequestAuditValueDetailEnvelope(
     capability_enabled: raw.capability_enabled === true,
   }
 
+  if (raw.storage_format === 'encrypted_v1' || raw.storage_format === 'plaintext_usage_bound') {
+    envelope.storage_format = raw.storage_format
+  }
   const reason = raw.reason
   if (
     typeof reason === 'string' &&
@@ -604,6 +747,10 @@ export function normalizeRequestAuditValueDetailEnvelope(
 
 export function normalizeRequestAuditValueDetailReveal(
   raw: unknown,
+  protocols: RequestAuditValueDetailProtocols = {
+    inbound: LEGACY_VALUE_DETAIL_PROTOCOL,
+    wire: LEGACY_VALUE_DETAIL_PROTOCOL,
+  },
 ): RequestAuditValueDetailReveal {
   if (!isPlainRecord(raw)) {
     throw new RequestAuditValueDetailPayloadError('value detail reveal is not an object')
@@ -622,9 +769,17 @@ export function normalizeRequestAuditValueDetailReveal(
   }
 
   const drops: ValueDetailDropTracker = { dropped: false }
+  // Both protocols are re-checked here: the inbound block is read against the
+  // protocol the client spoke and every attempt against the record's real upstream
+  // wire, so a payload can only be read when both are protocols this side knows.
+  for (const protocol of [protocols.inbound, protocols.wire]) {
+    if (!(SUPPORTED_VALUE_DETAIL_PROTOCOLS as readonly string[]).includes(protocol)) {
+      throw new RequestAuditValueDetailPayloadError('value detail protocol is not supported')
+    }
+  }
 
   const inbound: RequestAuditValueDetailInbound = {
-    request_headers: readHeaderMap(rawInbound.request_headers, 'request', drops),
+    request_headers: readHeaderMap(rawInbound.request_headers, 'request', drops, protocols.inbound),
   }
   const deviceId = readIdentifier(rawInbound.device_id, drops)
   if (deviceId !== undefined) inbound.device_id = deviceId
@@ -637,22 +792,25 @@ export function normalizeRequestAuditValueDetailReveal(
     inbound,
     attempts: [],
     truncated: rawValues.truncated === true,
-    // Filled in below from what this boundary actually refused; a payload cannot
-    // set it, in either direction.
+    // Filled in below from the two read-side sources; neither the payload's own
+    // `truncated` nor a `validation_dropped` key inside the payload can set it.
     validation_dropped: false,
   }
   const model = readModel(rawValues.model, drops)
   if (model !== undefined) values.model = model
   if (Array.isArray(rawValues.attempts)) {
     for (const rawAttempt of rawValues.attempts) {
-      const attempt = readAttempt(rawAttempt, drops)
+      const attempt = readAttempt(rawAttempt, drops, protocols.wire)
       if (attempt) values.attempts.push(attempt)
     }
   } else if (rawValues.attempts !== undefined) {
     // A present attempts block that is not a list is malformed, not empty.
     drops.dropped = true
   }
-  values.validation_dropped = drops.dropped
+  // One read-side fact, two sources: what the backend's read boundary refused
+  // before this decoder ever saw the payload (it reports those entries nowhere
+  // else), and what this decoder refused itself.
+  values.validation_dropped = drops.dropped || raw.validation_dropped === true
 
   return { usage_log_id: usageLogId, values }
 }
@@ -871,16 +1029,23 @@ export async function getRequestAuditValueDetail(
  * could be issued by a prefetcher, a speculator or a cache before the admin ever
  * asked for it, and its URL would end up in history. The response is marked
  * no-store so no intermediary keeps a copy even if it ignores the response header.
+ *
+ * The reveal response does not repeat which wire protocols the record was captured
+ * under, so the caller states them — derived from the envelope it is reading with
+ * `requestAuditValueDetailProtocols`. Omit them and the payload is read the way
+ * the legacy single-protocol rows were; the backend never discloses a payload for
+ * a record whose protocol it cannot interpret, so that default cannot widen a read.
  */
 export async function revealRequestAuditValueDetail(
-  id: number
+  id: number,
+  protocols?: RequestAuditValueDetailProtocols
 ): Promise<RequestAuditValueDetailReveal> {
   const { data } = await apiClient.post<unknown>(
     `/admin/usage/${id}/request-audit/value-detail`,
     undefined,
     { headers: NO_STORE_HEADERS }
   )
-  return normalizeRequestAuditValueDetailReveal(data)
+  return normalizeRequestAuditValueDetailReveal(data, protocols)
 }
 
 export const adminUsageAPI = {

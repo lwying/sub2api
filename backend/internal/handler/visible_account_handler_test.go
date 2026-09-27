@@ -389,6 +389,20 @@ func TestVisibleAccountHTTP_DefaultNoAccessThenAdminGrantThenRevoke(t *testing.T
 	require.Equal(t, 0, len(decodeAccountItems(t, doJSON(t, engine, http.MethodGet, "/api/v1/accounts", "", 1))))
 }
 
+func TestVisibleAccountHTTP_PassesAccountTypeFilterToScopedQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newVisibleAccountHTTPRepoFake()
+	repo.addUser(1, true, true)
+	currentUser := int64(1)
+	engine := visibleAccountTestRouter(repo, &currentUser)
+
+	rec := doJSON(t, engine, http.MethodGet, "/api/v1/accounts?platform=openai&account_type=%20UPSTREAM%20&search=oauth", "", 1)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "openai", repo.lastFilter.Platform)
+	require.Equal(t, "upstream", repo.lastFilter.AccountType)
+	require.Equal(t, "oauth", repo.lastFilter.Search)
+}
+
 func TestVisibleAccountHTTP_AccountStatusChangesTakeEffectImmediately(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newVisibleAccountHTTPRepoFake()

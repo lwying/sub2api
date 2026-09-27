@@ -31,7 +31,9 @@
         <dd class="font-mono text-gray-900 dark:text-dark-100">{{ detail.upstream_status }}</dd>
 
         <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.detail.metadataExpiresAt') }}</dt>
-        <dd class="font-mono text-gray-900 dark:text-dark-100">{{ formatDateTime(detail.metadata_expires_at) }}</dd>
+        <dd class="font-mono text-gray-900 dark:text-dark-100" data-testid="error-diagnostic-metadata-expiry">
+          {{ detail.usage_linked ? t('admin.errorDiagnostics.rules.plaintextLinked') : formatDateTime(detail.metadata_expires_at) }}
+        </dd>
 
         <template v-if="detail.body_expires_at">
           <dt class="text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.detail.bodyExpiresAt') }}</dt>
@@ -69,7 +71,27 @@
           {{ bodyReasonLabel(t, detail.reason) }}
         </p>
 
-        <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.errorDiagnostics.detail.notice') }}</p>
+        <!--
+          Provenance: which layer holds this body, and which rule decides when it
+          stops being readable. Without it a body sitting in the database as
+          plaintext looks exactly like one waiting on a key.
+        -->
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span
+            data-testid="error-diagnostic-body-format"
+            class="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-700 dark:bg-dark-900 dark:text-dark-200"
+          >
+            {{ retentionFormatLabel(t, detail.body_format) }}
+          </span>
+        </div>
+
+        <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+          {{ t(detail.body_format === 'plaintext' ? 'admin.errorDiagnostics.detail.plaintextNotice' : 'admin.errorDiagnostics.detail.notice') }}
+        </p>
+
+        <p data-testid="error-diagnostic-body-rule" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+          {{ bodyRuleLabel }}
+        </p>
 
         <div v-if="canReveal" class="mt-3">
           <button
@@ -134,8 +156,22 @@
           {{ headerReasonLabel(t, detail.header_reason) }}
         </p>
 
+        <!-- The same provenance question, answered for the header value layer. -->
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span
+            data-testid="error-diagnostic-header-format"
+            class="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-700 dark:bg-dark-900 dark:text-dark-200"
+          >
+            {{ retentionFormatLabel(t, detail.header_format) }}
+          </span>
+        </div>
+
         <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">
-          {{ t('admin.errorDiagnostics.detail.headerNotice') }}
+          {{ t(detail.header_format === 'plaintext' ? 'admin.errorDiagnostics.detail.plaintextHeaderNotice' : 'admin.errorDiagnostics.detail.headerNotice') }}
+        </p>
+
+        <p data-testid="error-diagnostic-header-rule" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+          {{ headerRuleLabel }}
         </p>
 
         <div v-if="canRevealHeaderValues" class="mt-3">
@@ -200,7 +236,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
@@ -214,16 +250,18 @@ import { getDiagnostic, revealDiagnosticBody, revealDiagnosticHeaders } from '..
 import {
   bodyReasonLabel,
   bodyStateLabel,
-  canRevealBody,
-  canRevealHeaders,
   formatDateTime,
   hasHeaderValuesSection,
   headerDirections,
   headerReasonLabel,
   headerStateLabel,
+  isBodyReadable,
+  isHeaderValuesReadable,
   isHeaderValuesStoredButExpired,
   isStoredButExpired,
   protocolLabel,
+  retentionFormatLabel,
+  retentionRuleLabel,
 } from '../labels'
 import type { DiagnosticAttempt, DiagnosticBodyReveal, DiagnosticHeaderReveal } from '../types'
 
@@ -268,6 +306,37 @@ const headersRevealFailed = ref(false)
  * never set for the plain failures above: the two are different outcomes.
  */
 const headersRevealBlockedReason = ref('')
+
+/**
+ * A coarse clock, refreshed while the drawer is open.
+ *
+ * The retention windows close on wall-clock time, not on a user action, so a
+ * plaintext body can become unreadable while the admin is still looking at it. A
+ * per-second timer would be wasteful for a 30-day window; a 30-second tick keeps
+ * the UI honest without keeping a busy loop alive when the drawer is closed.
+ */
+const now = ref(Date.now())
+let clockTimer: ReturnType<typeof setInterval> | undefined
+
+watch(
+  () => props.show,
+  (show) => {
+    if (clockTimer !== undefined) {
+      clearInterval(clockTimer)
+      clockTimer = undefined
+    }
+    if (!show) return
+    now.value = Date.now()
+    clockTimer = setInterval(() => {
+      now.value = Date.now()
+    }, 30_000)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (clockTimer !== undefined) clearInterval(clockTimer)
+})
 
 /** Wraps the step-up gated header reveal: prompt on refusal, retry once, then discard. */
 const stepUp = useStepUp()
@@ -320,10 +389,35 @@ function clearSensitiveState() {
   loading.value = false
 }
 
-const canReveal = computed(() => canRevealBody(detail.value?.body_state, detail.value?.body_expires_at))
+/**
+ * The reveal action follows the row's own retention rule, which now depends on
+ * its format: a plaintext row stops being readable at its metadata deadline when
+ * it is unlinked, and has no fixed deadline at all while it is linked.
+ */
+const canReveal = computed(() => isBodyReadable(detail.value, now.value))
 
-const canRevealHeaderValues = computed(() =>
-  canRevealHeaders(detail.value?.header_state, detail.value?.header_expires_at),
+const canRevealHeaderValues = computed(() => isHeaderValuesReadable(detail.value, now.value))
+
+/**
+ * The window can close while the drawer stays open, so the moment the rendered
+ * plaintext becomes unreadable it is dropped: the UI must not keep showing
+ * something the server would now refuse to hand over.
+ */
+watch([canReveal, canRevealHeaderValues], ([bodyReadable, headersReadable]) => {
+  if (!bodyReadable && revealedBody.value) {
+    revealedBody.value = null
+    revealedBodyOwner.value = null
+  }
+  if (!headersReadable && revealedHeaders.value) {
+    revealedHeaders.value = null
+    revealedHeadersOwner.value = null
+  }
+})
+
+/** Which rule governs this layer's readability, told in the admin's words. */
+const bodyRuleLabel = computed(() => retentionRuleLabel(t, detail.value?.body_format, detail.value?.usage_linked))
+const headerRuleLabel = computed(() =>
+  retentionRuleLabel(t, detail.value?.header_format, detail.value?.usage_linked),
 )
 
 /**
@@ -351,10 +445,20 @@ const showHeaderReason = computed(
 
 /** `stored` past its window is presented as expired, never as readable. */
 const effectiveHeaderStateLabel = computed(() => {
-  if (isHeaderValuesStoredButExpired(detail.value?.header_state, detail.value?.header_expires_at)) {
+  const current = detail.value
+  // A plaintext row has no seven-day header window: its moment is the metadata
+  // deadline (unlinked) or none at all (linked), so that is what is re-checked
+  // here. Presenting a closed window as readable is exactly what this guards.
+  if (current?.header_format === 'plaintext') {
+    if (current.header_state === 'stored' && !isHeaderValuesReadable(current, now.value)) {
+      return headerStateLabel(t, 'expired')
+    }
+    return headerStateLabel(t, current.header_state)
+  }
+  if (isHeaderValuesStoredButExpired(current?.header_state, current?.header_expires_at)) {
     return headerStateLabel(t, 'expired')
   }
-  return headerStateLabel(t, detail.value?.header_state)
+  return headerStateLabel(t, current?.header_state)
 })
 
 /**
@@ -363,10 +467,17 @@ const effectiveHeaderStateLabel = computed(() => {
  * read the server will refuse.
  */
 const effectiveBodyStateLabel = computed(() => {
-  if (isStoredButExpired(detail.value?.body_state, detail.value?.body_expires_at)) {
+  const current = detail.value
+  if (current?.body_format === 'plaintext') {
+    if (current.body_state === 'stored' && !isBodyReadable(current, now.value)) {
+      return bodyStateLabel(t, 'expired')
+    }
+    return bodyStateLabel(t, current.body_state)
+  }
+  if (isStoredButExpired(current?.body_state, current?.body_expires_at)) {
     return bodyStateLabel(t, 'expired')
   }
-  return bodyStateLabel(t, detail.value?.body_state)
+  return bodyStateLabel(t, current?.body_state)
 })
 
 /**

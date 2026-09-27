@@ -282,6 +282,45 @@ func (r *usageCleanupRepository) MarkTaskFailed(ctx context.Context, taskID int6
 	return err
 }
 
+// errPlaintextOwnershipUnpinned 表示在没有自建事务可用的删除路径上，执行器留不住所有权
+// 核对用的 ACCESS SHARE 锁，因而无法保证「核对时所有权外键在」这一结论在 DELETE 之前不被
+// 并发的 ALTER TABLE ... DROP CONSTRAINT 改写。旁路表已部署时这种组合一律失败关闭、保留
+// 数据。dashboard 的非事务分支用同样的规则（其哨兵为 errPlaintextOwnershipLockUnpinned）。
+var errPlaintextOwnershipUnpinned = errors.New(
+	"refusing usage deletion: plaintext sidecar tables are deployed but this executor cannot hold the ownership verification lock before DELETE")
+
+// isPlaintextOwnershipPinnableExecutor 只认可调用方明确持有的事务（*sql.Tx / *dbent.Tx）：
+// 只有它们能让 ACCESS SHARE 锁留到后续语句。自动提交的适配器取锁即释放，因此不算可钉住。
+func isPlaintextOwnershipPinnableExecutor(q sqlExecutor) bool {
+	switch q.(type) {
+	case *sql.Tx, *dbent.Tx:
+		return true
+	default:
+		return false
+	}
+}
+
+// ensurePlaintextOwnershipForUnmanagedExecutor 必须在「没有自建事务」的删除路径执行任何
+// usage 行 DELETE 之前调用：调用方事务上取 ACCESS SHARE 锁把「所有权外键仍在」钉到该事务
+// 结束，使并发的 DROP CONSTRAINT 不能在核对与 DELETE 之间生效；无法持锁的适配器只在两张
+// 旁路表都未部署（即尚未启用明文能力）时才保持原有行为放行，部署了却钉不住一律拒绝。
+func ensurePlaintextOwnershipForUnmanagedExecutor(ctx context.Context, q sqlExecutor) error {
+	if isPlaintextOwnershipPinnableExecutor(q) {
+		return ensureUsageCleanupPreservesPlaintextOwnership(ctx, q, true)
+	}
+	ownership, err := probePlaintextSidecarOwnership(ctx, q)
+	if err != nil {
+		return err
+	}
+	if err := ownership.verificationError(); err != nil {
+		return err
+	}
+	if ownership.valueDetailsExists || ownership.diagnosticsExists {
+		return errPlaintextOwnershipUnpinned
+	}
+	return nil
+}
+
 func (r *usageCleanupRepository) DeleteUsageLogsBatch(ctx context.Context, filters service.UsageCleanupFilters, limit int) (int64, error) {
 	if filters.StartTime.IsZero() || filters.EndTime.IsZero() {
 		return 0, fmt.Errorf("cleanup filters missing time range")
@@ -293,6 +332,10 @@ func (r *usageCleanupRepository) DeleteUsageLogsBatch(ctx context.Context, filte
 	args = append(args, limit)
 	if db, ok := r.sql.(*sql.DB); ok {
 		return r.deleteUsageLogsBatchWithRollupInvalidation(ctx, db, whereClause, args)
+	}
+	// 该分支没有自建事务，必须先确认能钉住所有权结论再删除，否则失败关闭、保留数据。
+	if err := ensurePlaintextOwnershipForUnmanagedExecutor(ctx, r.sql); err != nil {
+		return 0, err
 	}
 	query := fmt.Sprintf(`
 		WITH target AS (
@@ -334,6 +377,12 @@ func (r *usageCleanupRepository) deleteUsageLogsBatchWithRollupInvalidation(ctx 
 	}
 
 	if err := lockGroupUsageRollupState(ctx, tx); err != nil {
+		return rollback(err)
+	}
+	// 逐行 DELETE 依赖所有权外键把随 usage 明文一起带走；手工去掉外键的分区配置下同一条
+	// DELETE 会把值明细/已关联明文诊断留成孤儿，所以先在同一事务里核对所有权并钉住结论，
+	// 缺失即整批拒绝、保留数据。
+	if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, tx, true); err != nil {
 		return rollback(err)
 	}
 	query := fmt.Sprintf(`

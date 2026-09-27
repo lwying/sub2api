@@ -71,6 +71,27 @@ export async function list(
   return data
 }
 
+export interface AccountOptionItem {
+  id: number
+  name: string
+  platform: string
+  type: string
+  status: string
+}
+
+export async function listOptions(
+  page: number = 1,
+  pageSize: number = 20,
+  filters?: { platform?: string; type?: string; status?: string; group?: string; search?: string },
+  options?: { signal?: AbortSignal }
+): Promise<PaginatedResponse<AccountOptionItem>> {
+  const { data } = await apiClient.get<PaginatedResponse<AccountOptionItem>>('/admin/accounts/options', {
+    params: { page, page_size: pageSize, ...filters },
+    signal: options?.signal
+  })
+  return data
+}
+
 export interface AccountListWithEtagResult {
   notModified: boolean
   etag: string | null
@@ -1133,6 +1154,7 @@ export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsag
 
 export const accountsAPI = {
   list,
+  listOptions,
   listWithEtag,
   getUpstreamBillingRatesWithEtag,
   getById,

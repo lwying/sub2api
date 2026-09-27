@@ -217,7 +217,9 @@ func TestErrorDiagnosticsListDisclosesOnlyAllowlistedFields(t *testing.T) {
 	requireErrorDiagnosticKeys(t, envelope.Data.Items[0],
 		"id", "created_at", "protocol", "attempt_index", "upstream_status",
 		"usage_log_id", "body_state", "reason", "body_expires_at", "metadata_expires_at",
-		"header_state", "header_reason", "header_entry_count", "header_expires_at")
+		"header_state", "header_reason", "header_entry_count", "header_expires_at",
+		// 票据 08／09：留存格式与「是否随 usage 存在」必须披露，否则明文与密文看起来一样。
+		"body_format", "header_format", "usage_linked")
 
 	// 正文字段、头值内容字段与常见身份字段一律不得出现。
 	for _, forbidden := range []string{"body_text", "body_bytes", "account_id", "user_id", "api_key_id", "model", "headers",
@@ -254,7 +256,10 @@ func TestErrorDiagnosticsListOmitsUsageAndBodyExpiryWhenAbsent(t *testing.T) {
 	requireErrorDiagnosticKeys(t, envelope.Data.Items[0],
 		"id", "created_at", "protocol", "attempt_index", "upstream_status",
 		"body_state", "reason", "metadata_expires_at",
-		"header_state", "header_reason", "header_entry_count")
+		"header_state", "header_reason", "header_entry_count",
+		// 格式与关联是**行级事实**而非留存事实：没有正文／头值时也必须披露，
+		// 否则运维无法判断这一行为什么是「未观察到」而不是「接口不认识」。
+		"body_format", "header_format", "usage_linked")
 }
 
 // 已过 30 天到期的元数据即使仍被存储层返回，也不得披露。
@@ -489,7 +494,9 @@ func TestErrorDiagnosticsGetReturnsMetadataOnly(t *testing.T) {
 	requireErrorDiagnosticKeys(t, envelope.Data,
 		"id", "created_at", "protocol", "attempt_index", "upstream_status",
 		"usage_log_id", "body_state", "reason", "body_expires_at", "metadata_expires_at",
-		"header_state", "header_reason", "header_entry_count", "header_expires_at")
+		"header_state", "header_reason", "header_entry_count", "header_expires_at",
+		// 票据 08／09：留存格式与「是否随 usage 存在」必须披露，否则明文与密文看起来一样。
+		"body_format", "header_format", "usage_linked")
 	require.NotContains(t, recorder.Body.String(), `"body_text"`)
 	// 详情同样只披露头值状态，绝不带出任何头值内容。
 	require.NotContains(t, recorder.Body.String(), `"request_headers"`)

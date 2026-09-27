@@ -672,6 +672,16 @@ export default {
     empty: '暂无可用账号',
     emptyHint: '管理员尚未为你分配账号，或已分配的账号当前不可用。',
     viewDetail: '查看详情',
+    filters: {
+      search: '搜索平台、类型或账号 ID',
+      allPlatforms: '全部平台',
+      allTypes: '全部类型',
+    },
+    types: {
+      upstream: '上游',
+      bedrock: 'AWS Bedrock',
+      serviceAccount: '服务账号',
+    },
     columns: {
       platform: '平台',
       accountType: '账号类型',

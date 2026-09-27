@@ -654,6 +654,53 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	return accounts
 }
 
+type accountOptionItem struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Type     string `json:"type"`
+	Status   string `json:"status"`
+}
+
+// ListOptions returns the limited account fields needed to assign account visibility.
+// GET /api/v1/admin/accounts/options
+func (h *AccountHandler) ListOptions(c *gin.Context) {
+	page, pageSize := response.ParsePagination(c)
+	groupID := int64(0)
+	if raw := c.Query("group"); raw != "" {
+		if raw == accountListGroupUngroupedQueryValue {
+			groupID = service.AccountListGroupUngrouped
+		} else {
+			parsed, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || parsed < 0 {
+				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
+				return
+			}
+			groupID = parsed
+		}
+	}
+	search := strings.TrimSpace(c.Query("search"))
+	if runes := []rune(search); len(runes) > 100 {
+		search = string(runes[:100])
+	}
+	accounts, total, err := h.adminService.ListAccountOptions(
+		c.Request.Context(), page, pageSize, c.Query("platform"), c.Query("type"), c.Query("status"), search, groupID,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	items := make([]accountOptionItem, 0, len(accounts))
+	for _, account := range accounts {
+		items = append(items, accountOptionItem{
+			ID: account.ID, Name: account.Name, Platform: account.Platform,
+			Type: account.Type, Status: account.Status,
+		})
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Paginated(c, items, total, page, pageSize)
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {

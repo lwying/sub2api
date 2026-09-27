@@ -22,6 +22,23 @@
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
           </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <input
+              data-test="filter-search"
+              :value="searchQuery"
+              :placeholder="t('assignedAccounts.filters.search')"
+              class="input w-full sm:w-64"
+              @input="handleSearchInput"
+            />
+            <select data-test="filter-platform" :value="platformFilter" class="input w-40" @change="handlePlatformChange">
+              <option value="">{{ t('assignedAccounts.filters.allPlatforms') }}</option>
+              <option v-for="option in CONCRETE_PLATFORM_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <select data-test="filter-account-type" :value="typeFilter" class="input w-40" @change="handleTypeChange">
+              <option value="">{{ t('assignedAccounts.filters.allTypes') }}</option>
+              <option v-for="option in ACCOUNT_TYPE_OPTIONS" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
+            </select>
+          </div>
           <p class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-dark-800 dark:text-gray-400">
             {{ t('assignedAccounts.readOnlyNotice') }}
             {{ t('assignedAccounts.identityMaskedNotice') }}
@@ -153,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -175,6 +192,8 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { ASSIGNED_ACCOUNTS_FALLBACK_PATH } from '@/router/assignedAccountsAccess'
+import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
+import { ACCOUNT_TYPE_OPTIONS } from '@/constants/accountTypes'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -183,6 +202,10 @@ const authStore = useAuthStore()
 
 const accounts = ref<AssignedAccount[]>([])
 const loading = ref(false)
+const platformFilter = ref('')
+const typeFilter = ref('')
+const searchQuery = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | undefined
 const pagination = ref({
   page: 1,
   page_size: getPersistedPageSize(),
@@ -198,6 +221,7 @@ const detailAccountId = ref<number | null>(null)
 
 // 请求代次：重叠的列表/详情响应一律以最新一次为准，避免旧响应覆盖新状态。
 let listGeneration = 0
+let listController: AbortController | null = null
 let detailGeneration = 0
 
 const columns = computed((): Column[] => [
@@ -229,9 +253,16 @@ async function handleAccessRevoked(): Promise<void> {
 async function loadAccounts(): Promise<void> {
   // 翻页/刷新可能重叠：只有最新一次请求可以写入列表与计数。
   const generation = ++listGeneration
+  listController?.abort()
+  const controller = new AbortController()
+  listController = controller
   loading.value = true
   try {
-    const page = await assignedAccountsAPI.list(pagination.value.page, pagination.value.page_size)
+    const page = await assignedAccountsAPI.list(pagination.value.page, pagination.value.page_size, {
+      platform: platformFilter.value,
+      account_type: typeFilter.value,
+      search: searchQuery.value.trim()
+    }, { signal: controller.signal })
     if (generation !== listGeneration) return
     accounts.value = page.items
     pagination.value.total = page.total
@@ -310,6 +341,32 @@ function closeDetail(): void {
   detailAccountId.value = null
 }
 
+function refreshFilteredAccounts(): void {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = undefined
+  pagination.value.page = 1
+  void loadAccounts()
+}
+
+function handlePlatformChange(event: Event): void {
+  platformFilter.value = (event.target as HTMLSelectElement).value
+  refreshFilteredAccounts()
+}
+
+function handleTypeChange(event: Event): void {
+  typeFilter.value = (event.target as HTMLSelectElement).value
+  refreshFilteredAccounts()
+}
+
+function handleSearchInput(event: Event): void {
+  searchQuery.value = (event.target as HTMLInputElement).value
+  // An old response must not render while the new keyword is still debouncing.
+  listGeneration += 1
+  listController?.abort()
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(refreshFilteredAccounts, 300)
+}
+
 function handlePageChange(page: number): void {
   pagination.value.page = page
   loadAccounts()
@@ -323,4 +380,10 @@ function handlePageSizeChange(pageSize: number): void {
 }
 
 onMounted(loadAccounts)
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+  listController?.abort()
+  listGeneration += 1
+  detailGeneration += 1
+})
 </script>

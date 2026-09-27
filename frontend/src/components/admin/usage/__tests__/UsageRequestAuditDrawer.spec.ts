@@ -11,8 +11,11 @@ const mocks = vi.hoisted(() => ({
 /**
  * The value-detail "transport" mocks return RAW payloads which are then passed
  * through the real normalizers. That keeps the allowlist under test: a canary the
- * real boundary drops proves the guard, not the stub. `getRequestAudit` returns a
- * payload the component consumes as-is, so it is mocked directly.
+ * real boundary drops proves the guard, not the stub. The reveal carries the
+ * protocols the drawer derived from the envelope; they are forwarded to the real
+ * decoder so a wrong derivation is a failing test, not a stubbed one.
+ * `getRequestAudit` returns a payload the component consumes as-is, so it is
+ * mocked directly.
  */
 vi.mock('@/api/admin/usage', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/admin/usage')>()
@@ -21,8 +24,10 @@ vi.mock('@/api/admin/usage', async (importOriginal) => {
     getRequestAudit: mocks.getRequestAudit,
     getRequestAuditValueDetail: async (id: number) =>
       actual.normalizeRequestAuditValueDetailEnvelope(await mocks.getRequestAuditValueDetail(id)),
-    revealRequestAuditValueDetail: async (id: number) =>
-      actual.normalizeRequestAuditValueDetailReveal(await mocks.revealRequestAuditValueDetail(id)),
+    revealRequestAuditValueDetail: async (
+      id: number,
+      protocols: Parameters<typeof actual.normalizeRequestAuditValueDetailReveal>[1],
+    ) => actual.normalizeRequestAuditValueDetailReveal(await mocks.revealRequestAuditValueDetail(id), protocols),
   }
 })
 
@@ -95,7 +100,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
     'admin.usage.requestAudit.valueDetail.truncated':
       'Some submitted entries were not accepted, so this view may not list everything the client sent.',
     'admin.usage.requestAudit.valueDetail.validationDropped':
-      "Some retained values did not pass this view's validation, so it may not list everything the record holds.",
+      'Some retained values did not pass read-side validation (on the server or in this view), so it may not list everything the record holds.',
     'admin.usage.requestAudit.valueDetail.model': 'Model',
     'admin.usage.requestAudit.valueDetail.inbound': 'Inbound values',
     'admin.usage.requestAudit.valueDetail.deviceId': 'Device ID',
@@ -959,6 +964,57 @@ describe('UsageRequestAuditDrawer value detail', () => {
     expect(wrapper.find('[data-testid="request-audit-value-detail-truncated"]').exists()).toBe(false)
   })
 
+  /**
+   * A record can carry two different wire protocols: the client headers were spoken
+   * inbound, and the attempts went out as the converted form. Legacy rows were
+   * single-protocol, so one protocol explained both; a converted plaintext row
+   * (Messages inbound → OpenAI outbound) does not. Reading the inbound block against
+   * the outbound allowlist would empty it and report a `validation_dropped` the
+   * record never had.
+   */
+  it('reads a converted request’s inbound headers with the inbound wire, not the outbound one', async () => {
+    mocks.getRequestAuditValueDetail.mockResolvedValue({
+      ...VALUE_DETAIL_ENVELOPE,
+      route: '/v1/messages',
+      protocol: 'openai.chat.completions',
+      storage_format: 'plaintext_usage_bound',
+    })
+    mocks.revealRequestAuditValueDetail.mockResolvedValue({
+      usage_log_id: 51,
+      values: {
+        inbound: {
+          request_headers: {
+            'X-App': ['cli'],
+            'Anthropic-Beta': ['prompt-caching-2024-07-31'],
+          },
+        },
+        attempts: [
+          {
+            index: 1,
+            protocol: 'openai.chat.completions',
+            request_headers: { 'Content-Type': ['application/json'] },
+            response_headers: { 'Retry-After': ['30'] },
+          },
+        ],
+      },
+    })
+
+    const wrapper = mountValueDetailDrawer()
+    await flushPromises()
+    await wrapper.get(REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    const values = wrapper.get(VALUES_SELECTOR)
+    expect(values.text()).toContain('X-App')
+    expect(values.text()).toContain('cli')
+    expect(values.text()).toContain('prompt-caching-2024-07-31')
+    // The attempt really went out as OpenAI, so its own wire still explains it.
+    expect(values.text()).toContain('30')
+    expect(values.findAll('[data-testid="request-audit-value-detail-attempt"]')).toHaveLength(1)
+    // The client's own headers are the inbound wire's, not entries this view refused.
+    expect(wrapper.find('[data-testid="request-audit-value-detail-validation-dropped"]').exists()).toBe(false)
+  })
+
   it('renders a measured attempt latency and proxy id alongside the parsed identifiers', async () => {
     mocks.getRequestAuditValueDetail.mockResolvedValue(VALUE_DETAIL_ENVELOPE)
     mocks.revealRequestAuditValueDetail.mockResolvedValue({
@@ -1101,12 +1157,62 @@ describe('UsageRequestAuditDrawer value detail', () => {
 
     expect(
       wrapper.get('[data-testid="request-audit-value-detail-validation-dropped"]').text(),
-    ).toContain("did not pass this view's validation")
+    ).toContain('did not pass read-side validation')
     // The refused entry is gone, the rest of the view is still usable, and the
     // server's own truncation statement stays a separate fact from this one.
     expect(wrapper.html()).not.toContain('X-Unknown-Header')
     expect(wrapper.get(VALUES_SELECTOR).text()).toContain('application/json')
     expect(wrapper.find('[data-testid="request-audit-value-detail-truncated"]').exists()).toBe(false)
+  })
+
+  it('warns about a drop the backend read side made before this view saw the payload', async () => {
+    mocks.getRequestAuditValueDetail.mockResolvedValue(VALUE_DETAIL_ENVELOPE)
+    mocks.revealRequestAuditValueDetail.mockResolvedValue({
+      usage_log_id: 51,
+      // The backend refused an entry and took it out of the payload, so this view
+      // cannot count it; the statement has to come from the response.
+      validation_dropped: true,
+      values: {
+        inbound: { request_headers: { Accept: ['application/json'] } },
+        attempts: [],
+      },
+    })
+
+    const wrapper = mountValueDetailDrawer()
+    await flushPromises()
+    await wrapper.get(REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-validation-dropped"]').text(),
+    ).toContain('did not pass read-side validation')
+    expect(wrapper.find('[data-testid="request-audit-value-detail-truncated"]').exists()).toBe(false)
+  })
+
+  it('renders both warnings when the collection side and the read side each dropped an entry', async () => {
+    mocks.getRequestAuditValueDetail.mockResolvedValue(VALUE_DETAIL_ENVELOPE)
+    mocks.revealRequestAuditValueDetail.mockResolvedValue({
+      usage_log_id: 51,
+      validation_dropped: true,
+      values: {
+        inbound: { request_headers: { Accept: ['application/json'] } },
+        attempts: [],
+        truncated: true,
+      },
+    })
+
+    const wrapper = mountValueDetailDrawer()
+    await flushPromises()
+    await wrapper.get(REVEAL_SELECTOR).trigger('click')
+    await flushPromises()
+
+    // Two independent facts: neither warning may stand in for the other.
+    expect(wrapper.get('[data-testid="request-audit-value-detail-truncated"]').text()).toContain(
+      'Some submitted entries were not accepted',
+    )
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-validation-dropped"]').text(),
+    ).toContain('did not pass read-side validation')
   })
 
   /**

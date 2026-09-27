@@ -193,6 +193,7 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedInvalidates
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	expectPlaintextOwnershipPinned(mock)
 	mock.ExpectQuery(`(?s)DELETE FROM usage_logs.*RETURNING created_at`).
 		WithArgs(cutoff, usageLogsCleanupBatchSize).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).
@@ -245,6 +246,20 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionedSortsAndInvali
 		mock.ExpectExec(`UPDATE usage_group_rollup_state`).
 			WithArgs(partition.start, "Asia/Shanghai").
 			WillReturnResult(sqlmock.NewResult(0, 1))
+		// The guard takes a lock that conflicts with a concurrent link before it
+		// checks: a link committed after the check would otherwise be dropped
+		// without its cascade ever running.
+		mock.ExpectExec(`LOCK TABLE error_diagnostic_records`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`LOCK TABLE request_audit_value_details`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		expectPlaintextOwnershipVerified(mock)
+		mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
+			WithArgs(partition.name).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+		mock.ExpectQuery(`SELECT EXISTS.*error_diagnostic_records`).
+			WithArgs(partition.name).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 		mock.ExpectExec(`DROP TABLE IF EXISTS "` + partition.name + `"`).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
@@ -254,6 +269,7 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionedSortsAndInvali
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	expectPlaintextOwnershipPinned(mock)
 	mock.ExpectQuery(`(?s)SELECT tableoid, ctid.*WHERE created_at < \$1.*WHERE \(tableoid, ctid\) IN.*RETURNING created_at`).
 		WithArgs(cutoff, usageLogsCleanupBatchSize).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(cutoff.Add(-time.Hour)))
@@ -283,6 +299,7 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedFailureRoll
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	expectPlaintextOwnershipPinned(mock)
 	mock.ExpectQuery(`(?s)SELECT tableoid, ctid.*ORDER BY created_at ASC, id ASC.*DELETE FROM usage_logs.*RETURNING created_at`).
 		WithArgs(cutoff, usageLogsCleanupBatchSize).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(deletedAt))
@@ -316,12 +333,61 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionFailureRollsBack
 	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
 		WithArgs(aprilStart, "Asia/Shanghai").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`LOCK TABLE error_diagnostic_records`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`LOCK TABLE request_audit_value_details`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectPlaintextOwnershipVerified(mock)
+	mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
+		WithArgs("usage_logs_202604").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(`SELECT EXISTS.*error_diagnostic_records`).
+		WithArgs("usage_logs_202604").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`DROP TABLE IF EXISTS "usage_logs_202604"`).
 		WillReturnError(dropErr)
 	mock.ExpectRollback()
+	// A blocked partition DROP still allows safe row-level DELETE to advance
+	// retention and invoke FK cascades, then returns the DROP error for alerting.
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	expectPlaintextOwnershipPinned(mock)
+	mock.ExpectQuery(`(?s)SELECT tableoid, ctid.*WHERE created_at < \$1.*WHERE \(tableoid, ctid\) IN.*RETURNING created_at`).
+		WithArgs(cutoff, usageLogsCleanupBatchSize).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
+	mock.ExpectCommit()
 
 	err := repo.CleanupUsageLogs(context.Background(), cutoff)
 	require.ErrorIs(t, err, dropErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardAggregationPartitionDropRefusesLinkedDiagnosticPlaintext(t *testing.T) {
+	setGroupUsageRollupTestTimezone(t)
+	db, mock := newSQLMock(t)
+	defer func() { _ = db.Close() }()
+	month := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
+		WithArgs(month, "Asia/Shanghai").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`LOCK TABLE error_diagnostic_records`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`LOCK TABLE request_audit_value_details`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectPlaintextOwnershipVerified(mock)
+	mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
+		WithArgs("usage_logs_202604").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(`SELECT EXISTS.*error_diagnostic_records`).
+		WithArgs("usage_logs_202604").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectRollback()
+
+	err := dropUsageLogsPartitionWithRollupInvalidation(context.Background(), db, "usage_logs_202604", month)
+	require.ErrorContains(t, err, "refusing DROP")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

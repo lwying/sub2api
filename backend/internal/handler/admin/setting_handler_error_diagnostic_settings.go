@@ -31,9 +31,22 @@ type errorDiagnosticOperatorSettingsRequest struct {
 	//
 	// 未提交即按关闭处理：它与 body_retention_enabled 一样必须由本次请求显式表达，
 	// 不做隐式保留，也不会被正文开关顺带打开。
-	HeaderValuesEnabled bool   `json:"header_values_enabled"`
-	Language            string `json:"language"`
-	Phrase              string `json:"phrase"`
+	HeaderValuesEnabled bool `json:"header_values_enabled"`
+	// PlainBodyEnabled／PlainHeaderValuesEnabled 是两个**新明文层**的独立开关（票据 08／09）。
+	//
+	// 它们与两个密文层各自独立：各自的开关都不打开对方，也都不看稳定密钥。
+	// 与其它层一样，未提交即按关闭处理。
+	PlainBodyEnabled         bool   `json:"plain_body_enabled"`
+	PlainHeaderValuesEnabled bool   `json:"plain_header_values_enabled"`
+	Language                 string `json:"language"`
+	// Phrase 是采集门控（旧共享层）的逐字确认语句。
+	Phrase string `json:"phrase"`
+	// PlainBodyPhrase／PlainHeaderValuesPhrase 是两个新明文层各自的逐字确认语句。
+	//
+	// 三层语句分别讲三件不同的风险，因此不可复用同一个字段互相代替：服务端只在请求打开
+	// 对应层时才要求它，并要求与本层当前版本的语句逐字相同。
+	PlainBodyPhrase         string `json:"plain_body_phrase"`
+	PlainHeaderValuesPhrase string `json:"plain_header_values_phrase"`
 }
 
 var (
@@ -102,8 +115,12 @@ func (h *SettingHandler) UpdateErrorDiagnosticOperatorSettings(c *gin.Context) {
 		Enabled:                     req.Enabled,
 		BodyRetentionEnabled:        req.BodyRetentionEnabled,
 		HeaderValueRetentionEnabled: req.HeaderValuesEnabled,
+		PlainBodyEnabled:            req.PlainBodyEnabled,
+		PlainHeaderValuesEnabled:    req.PlainHeaderValuesEnabled,
 		Language:                    req.Language,
 		Phrase:                      req.Phrase,
+		PlainBodyPhrase:             req.PlainBodyPhrase,
+		PlainHeaderValuesPhrase:     req.PlainHeaderValuesPhrase,
 		AdminUserID:                 adminUserID,
 		IPAddress:                   ip.GetClientIP(c),
 		UserAgent:                   strings.TrimSpace(c.GetHeader("User-Agent")),

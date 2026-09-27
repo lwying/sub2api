@@ -61,6 +61,7 @@ func TestCreateRequestAuditValueDetailGuardsOnExistingAuditRow(t *testing.T) {
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(),
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now().UTC()))
 
@@ -137,10 +138,10 @@ func TestGetRequestAuditValueDetail(t *testing.T) {
 	mock.ExpectQuery(`FROM request_audit_value_details WHERE usage_log_id`).
 		WithArgs(int64(77)).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"usage_log_id", "state", "reason", "route", "protocol", "client_status",
+			"usage_log_id", "state", "reason", "storage_format", "route", "protocol", "client_status",
 			"attempt_count", "entry_count", "payload_bytes", "key_version",
 			"stored", "started_at", "completed_at", "expires_at", "created_at",
-		}).AddRow(int64(77), "stored", "retained", "/v1/messages", "anthropic.messages", 200,
+		}).AddRow(int64(77), "stored", "retained", service.RequestAuditValueDetailStorageEncryptedV1, "/v1/messages", "anthropic.messages", 200,
 			2, 5, 128, 3, true, now, nil, now.Add(service.RequestAuditValueDetailRetention), now))
 
 	detail, err := repo.GetRequestAuditValueDetail(context.Background(), 77)
@@ -181,41 +182,41 @@ func TestReadRequestAuditValueDetailValues(t *testing.T) {
 	ciphertext, err := valueCipher.Encrypt(payload)
 	require.NoError(t, err)
 
-	mock.ExpectQuery(`SELECT ciphertext, expires_at FROM request_audit_value_details`).
-		WillReturnRows(sqlmock.NewRows([]string{"ciphertext", "expires_at"}).
-			AddRow(ciphertext, now.Add(time.Hour)))
+	mock.ExpectQuery(`SELECT storage_format, route, protocol, ciphertext, plaintext_payload, expires_at`).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_format", "route", "protocol", "ciphertext", "plaintext_payload", "expires_at"}).
+			AddRow(service.RequestAuditValueDetailStorageEncryptedV1, service.RequestAuditValueDetailRouteMessages, service.RequestAuditProtocolAnthropic, ciphertext, nil, now.Add(time.Hour)))
 	values, err := repo.ReadRequestAuditValueDetailValues(context.Background(), 77, now)
 	require.NoError(t, err)
 	require.Equal(t, "claude-sonnet-4-5", values.Model)
 
 	// 已到期：即使密文还在，读取也必须拒绝。
-	mock.ExpectQuery(`SELECT ciphertext, expires_at FROM request_audit_value_details`).
-		WillReturnRows(sqlmock.NewRows([]string{"ciphertext", "expires_at"}).
-			AddRow(ciphertext, now.Add(-time.Second)))
+	mock.ExpectQuery(`SELECT storage_format, route, protocol, ciphertext, plaintext_payload, expires_at`).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_format", "route", "protocol", "ciphertext", "plaintext_payload", "expires_at"}).
+			AddRow(service.RequestAuditValueDetailStorageEncryptedV1, service.RequestAuditValueDetailRouteMessages, service.RequestAuditProtocolAnthropic, ciphertext, nil, now.Add(-time.Second)))
 	_, err = repo.ReadRequestAuditValueDetailValues(context.Background(), 77, now)
 	require.ErrorIs(t, err, service.ErrRequestAuditValueDetailGone)
 
 	// 已被清理（密文为 NULL）：同样是不可揭示，不是「从未留存」。
-	mock.ExpectQuery(`SELECT ciphertext, expires_at FROM request_audit_value_details`).
-		WillReturnRows(sqlmock.NewRows([]string{"ciphertext", "expires_at"}).
-			AddRow(nil, now.Add(time.Hour)))
+	mock.ExpectQuery(`SELECT storage_format, route, protocol, ciphertext, plaintext_payload, expires_at`).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_format", "route", "protocol", "ciphertext", "plaintext_payload", "expires_at"}).
+			AddRow(service.RequestAuditValueDetailStorageEncryptedV1, service.RequestAuditValueDetailRouteMessages, service.RequestAuditProtocolAnthropic, nil, nil, now.Add(time.Hour)))
 	_, err = repo.ReadRequestAuditValueDetailValues(context.Background(), 77, now)
 	require.ErrorIs(t, err, service.ErrRequestAuditValueDetailGone)
 
 	// 密文被篡改：认证失败即不可用，不返回部分明文。
 	tampered := append([]byte(nil), ciphertext...)
 	tampered[len(tampered)-1] ^= 0xff
-	mock.ExpectQuery(`SELECT ciphertext, expires_at FROM request_audit_value_details`).
-		WillReturnRows(sqlmock.NewRows([]string{"ciphertext", "expires_at"}).
-			AddRow(tampered, now.Add(time.Hour)))
+	mock.ExpectQuery(`SELECT storage_format, route, protocol, ciphertext, plaintext_payload, expires_at`).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_format", "route", "protocol", "ciphertext", "plaintext_payload", "expires_at"}).
+			AddRow(service.RequestAuditValueDetailStorageEncryptedV1, service.RequestAuditValueDetailRouteMessages, service.RequestAuditProtocolAnthropic, tampered, nil, now.Add(time.Hour)))
 	_, err = repo.ReadRequestAuditValueDetailValues(context.Background(), 77, now)
 	require.ErrorIs(t, err, service.ErrRequestAuditValueDetailGone)
 
 	// 有密文却没有密钥（配置被移除）：可重试的部署故障，不是「值已消失」。
 	noCipherRepo := NewRequestAuditValueDetailRepository(db, nil)
-	mock.ExpectQuery(`SELECT ciphertext, expires_at FROM request_audit_value_details`).
-		WillReturnRows(sqlmock.NewRows([]string{"ciphertext", "expires_at"}).
-			AddRow(ciphertext, now.Add(time.Hour)))
+	mock.ExpectQuery(`SELECT storage_format, route, protocol, ciphertext, plaintext_payload, expires_at`).
+		WillReturnRows(sqlmock.NewRows([]string{"storage_format", "route", "protocol", "ciphertext", "plaintext_payload", "expires_at"}).
+			AddRow(service.RequestAuditValueDetailStorageEncryptedV1, service.RequestAuditValueDetailRouteMessages, service.RequestAuditProtocolAnthropic, ciphertext, nil, now.Add(time.Hour)))
 	_, err = noCipherRepo.ReadRequestAuditValueDetailValues(context.Background(), 77, now)
 	require.ErrorIs(t, err, service.ErrRequestAuditValueDetailUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())

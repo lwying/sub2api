@@ -162,7 +162,13 @@ describe('error diagnostics API', () => {
     expect(url).toBe('/admin/error-diagnostics/diag_01HXYZ/body')
     expect(payload).toBeUndefined()
     expect(config.headers).toMatchObject({ 'Cache-Control': 'no-store' })
-    expect(reveal).toEqual({ body_text: '{"messages":[]}', body_bytes: 15 })
+    // 揭示响应随载荷一起披露来源：缺省（旧后端）按密文读，绝不声称是明文。
+    expect(reveal).toEqual({
+      body_text: '{"messages":[]}',
+      body_bytes: 15,
+      body_format: 'encrypted',
+      usage_linked: false,
+    })
   })
 
   it('drops unexpected fields from a reveal payload', async () => {
@@ -172,7 +178,12 @@ describe('error diagnostics API', () => {
 
     const reveal = await revealDiagnosticBody('diag_01HXYZ')
 
-    expect(Object.keys(reveal).sort()).toEqual(['body_bytes', 'body_text'])
+    expect(Object.keys(reveal).sort()).toEqual([
+      'body_bytes',
+      'body_format',
+      'body_text',
+      'usage_linked',
+    ])
     expect(JSON.stringify(reveal)).not.toContain('Bearer canary')
   })
 
@@ -255,6 +266,8 @@ describe('error diagnostics API', () => {
       response_headers: { 'Retry-After': '30' },
       header_entry_count: 3,
       header_expires_at: '2026-10-01T00:00:00Z',
+      header_format: 'encrypted',
+      usage_linked: false,
     })
   })
 

@@ -159,6 +159,13 @@ type SettingService struct {
 
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
+
+	// plaintextCaptureSupportProbe 报告本部署的数据库形态能否支撑「明文随 usage 消失」
+	// （ADR 0007；见 plaintext_capture_support.go）。未注入时三类新明文采集一律关闭；
+	// 结论带短 TTL 缓存，避免按上游尝试的热路径查询系统目录。
+	plaintextCaptureSupportProbe PlaintextCaptureSupportProbe
+	plaintextCaptureSupportCache atomic.Value // *cachedPlaintextCaptureSupport
+	plaintextCaptureSupportSF    singleflight.Group
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

@@ -3,8 +3,9 @@ package service
 // 值明细旁路的读取与运维接缝。
 //
 // 读取分成两步，且**默认视图不含值**：
-//   - GetRequestAuditValueDetail 返回信封（状态、原因、标量、计数、到期时刻），类型里没有值字段；
-//   - RevealRequestAuditValueDetail 是显式的揭示动作，只有它返回解密后的值。
+//   - GetRequestAuditValueDetail returns a value-free envelope and, for legacy
+//     encrypted rows, their seven-day deadline;
+//   - RevealRequestAuditValueDetail is the explicit value disclosure action.
 //
 // 运维开关（门控与书面风险确认）也走这个接缝，使采集、读取与运维三处用的是**同一份**
 // 门控判定，界面结论与采集结论不会各自漂移。
@@ -16,12 +17,18 @@ import (
 
 // RequestAuditValueDetailReveal 是**显式揭示动作**的响应载荷。
 //
-// 它只有两个字段：这条揭示属于哪条使用记录，以及揭示出来的值。
 // 信封字段（状态、原因、到期时刻）刻意不在这里——调用方应当先读默认视图，
-// 揭示只回答「值是什么」。
+// 揭示回答的是「值是什么」以及「这份列表是不是全部」。
 type RequestAuditValueDetailReveal struct {
 	UsageLogID int64                         `json:"usage_log_id"`
 	Values     RequestAuditValueDetailValues `json:"values"`
+	// ValidationDropped 是**读侧**的独立事实（ADR 0006）：载荷里有条目没通过读侧
+	// 白名单与有界校验，因此 Values 不是这条记录的全部内容。它与 Values.Truncated
+	// （采集侧：客户端发来时就没收下）是两条独立事实，必须分别呈现，不能互相冒充。
+	//
+	// 它是**传输专用**字段：只在为真时出现，存储载荷里永远没有它，因此「没有读侧
+	// 丢弃」时的响应形状与此前完全一致。
+	ValidationDropped bool `json:"validation_dropped,omitempty"`
 }
 
 // RequestAuditValueDetailService 是值明细的读取、揭示与运维接缝。
@@ -72,6 +79,7 @@ func (s *RequestAuditValueDetailService) GetRequestAuditValueDetail(ctx context.
 	now := s.clockNow()
 	envelope := RequestAuditValueDetailEnvelope{
 		UsageLogID:        detail.UsageLogID,
+		StorageFormat:     detail.StorageFormat,
 		State:             DescribeRequestAuditValueDetailState(detail, now),
 		Reason:            requestAuditValueDetailDiscloseReason(detail.Reason),
 		Route:             detail.Fields.Route,
@@ -93,7 +101,7 @@ func (s *RequestAuditValueDetailService) GetRequestAuditValueDetail(ctx context.
 	}
 	// 到期时刻只在「确实留存过」时才有意义：从未留存的行走
 	// not_observed／skipped，给出一个到期时刻会让界面暗示曾经有值可看。
-	if detail.Reason == RequestAuditValueDetailRetained && !detail.ExpiresAt.IsZero() {
+	if detail.Reason == RequestAuditValueDetailRetained && detail.StorageFormat != RequestAuditValueDetailStoragePlaintextUsageBound && !detail.ExpiresAt.IsZero() {
 		expiresAt := detail.ExpiresAt
 		envelope.ExpiresAt = &expiresAt
 	}
@@ -101,6 +109,11 @@ func (s *RequestAuditValueDetailService) GetRequestAuditValueDetail(ctx context.
 }
 
 // RevealRequestAuditValueDetail 是显式揭示动作：只有它返回解密后的值。
+//
+// 返回的 Values 只含通过白名单与有界校验的条目；读侧复核拒收过条目时，这一事实由
+// Values.ValidationDropped 带出（传输专用，不进存储载荷），调用方（handler）负责把它
+// 放进揭示 DTO 的 ValidationDropped 字段，使它与 Values.Truncated 分别呈现——读侧的
+// 丢弃不能显示成采集时的丢弃，也不能让记录看起来完整（ADR 0006）。
 //
 // 三种「没有值可给」必须分开：
 //   - ErrRequestAuditValueDetailNotFound：没有这条使用记录的值明细行；
@@ -168,7 +181,8 @@ func requestAuditValueDetailDiscloseReason(reason string) string {
 		RequestAuditValueDetailSkippedRetentionDisabled,
 		RequestAuditValueDetailSkippedEncryptionUnavailable,
 		RequestAuditValueDetailSkippedInvalidValues,
-		RequestAuditValueDetailSkippedTooManyAttempts:
+		RequestAuditValueDetailSkippedTooManyAttempts,
+		RequestAuditValueDetailSkippedUnsupportedProtocol:
 		return reason
 	default:
 		return RequestAuditValueDetailNotObserved

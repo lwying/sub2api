@@ -244,6 +244,29 @@ func TestGetErrorDiagnosticSettings_ComposesStoredValueWithWrittenAcknowledgemen
 	}
 }
 
+// TestPreviousSharedDiagnosticConsentStopsNewCaptureAfterUpgrade 固定升级边界：
+// 已确认过七天密文留存的旧共享语句，不授权新版继续采任何诊断记录；
+// 历史密文的读取仍由原到期规则负责，与本采集门控无关。
+func TestPreviousSharedDiagnosticConsentStopsNewCaptureAfterUpgrade(t *testing.T) {
+	ctx := context.Background()
+	repo := newErrorDiagnosticSettingRepoStub(map[string]string{
+		SettingKeyErrorDiagnostic: `{"enabled":true,"risk_acknowledged":true,"body_retention_enabled":true,"header_values_enabled":true,"plain_body_enabled":true,"plain_header_values_enabled":true}`,
+		SettingKeyErrorDiagnosticRiskAcknowledgement: errorDiagnosticAckJSONWithPhrase("v2026.09.24.1", ErrorDiagnosticRiskAcknowledgementPhraseEN),
+	})
+	settings := NewSettingService(repo, nil)
+	effective, err := settings.GetErrorDiagnosticSettings(ctx)
+	require.NoError(t, err)
+	require.False(t, effective.CaptureAllowed(), "an old shared acknowledgement must pause all new diagnostic capture")
+	require.False(t, effective.BodyCaptureAllowed())
+	require.False(t, effective.HeaderValuesCaptureAllowed())
+	require.False(t, effective.PlainBodyCaptureAllowed())
+	require.False(t, effective.PlainHeaderValuesCaptureAllowed())
+
+	stored, err := settings.ReadStoredErrorDiagnosticSettings(ctx)
+	require.NoError(t, err)
+	require.True(t, stored.Enabled, "keep the stored switch visible for explicit re-consent")
+}
+
 // TestErrorDiagnosticRiskAcknowledgementRequiresExactCurrentPhrase 覆盖确认校验的第二道门槛：
 // 版本、管理员 ID 与确认时间齐全还不够——语句原文必须与当前版本的两条语句之一**逐字**相同。
 //

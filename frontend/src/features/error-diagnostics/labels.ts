@@ -42,6 +42,7 @@ const BODY_REASON_KEYS: Record<DiagnosticBodyReason, string> = {
   skipped_incomplete_read: 'skipped_incomplete_read',
   skipped_encryption_unavailable: 'skipped_encryption_unavailable',
   skipped_body_retention_disabled: 'skipped_body_retention_disabled',
+  plain_body_retained: 'plain_body_retained',
 }
 
 export function protocolLabel(t: Translate, protocol: string | undefined): string {
@@ -88,6 +89,116 @@ export function formatDateTime(value: string | undefined): string {
   return new Date(parsed).toLocaleString()
 }
 
+// ---------------------------------------------------------------------------
+// Retention format (tickets 08/09)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which layer holds this fact: the legacy encrypted one (its own seven-day
+ * window, needs the old key) or the new plaintext one (stored unencrypted, alive
+ * with its usage record, 30 days when unlinked).
+ *
+ * A missing format is read as the legacy layer: that is the conservative reading
+ * and never claims something sits in the database unencrypted.
+ */
+export function retentionFormatLabel(t: Translate, format: string | undefined): string {
+  const key = format === 'plaintext' ? 'plaintext' : 'encrypted'
+  return t(`admin.errorDiagnostics.formats.${key}`)
+}
+
+/**
+ * Which rule governs readability, stated for the admin: the encrypted layer's own
+ * window, or the plaintext layer's "follows its usage / 30 days when unlinked".
+ */
+export function retentionRuleLabel(
+  t: Translate,
+  format: string | undefined,
+  usageLinked: boolean | undefined,
+): string {
+  if (format === 'plaintext') {
+    return t(
+      usageLinked === true
+        ? 'admin.errorDiagnostics.rules.plaintextLinked'
+        : 'admin.errorDiagnostics.rules.plaintextUnlinked',
+    )
+  }
+  return t('admin.errorDiagnostics.rules.encrypted')
+}
+
+/**
+ * When a plaintext row's own deadline falls, or `undefined` when it has none.
+ *
+ * A linked row is owned by its usage record: it has no fixed window of its own, so
+ * its metadata expiry is not its read deadline. An unlinked row stops being
+ * readable exactly at `metadata_expires_at`.
+ */
+export function plaintextReadDeadline(
+  usageLinked: boolean | undefined,
+  metadataExpiresAt: string | undefined,
+): string | undefined {
+  if (usageLinked === true) return undefined
+  return isTimestampString(metadataExpiresAt) ? metadataExpiresAt : undefined
+}
+
+/** True when the format-aware deadline has passed at `now`. */
+export function isPlaintextExpired(
+  usageLinked: boolean | undefined,
+  metadataExpiresAt: string | undefined,
+  now: number = Date.now(),
+): boolean {
+  const deadline = plaintextReadDeadline(usageLinked, metadataExpiresAt)
+  if (deadline === undefined) return false
+  return Date.parse(deadline) <= now
+}
+
+/** The fields both a body and a header section need to answer "still readable?". */
+export interface DiagnosticReadability {
+  body_format?: string
+  header_format?: string
+  usage_linked?: boolean
+  metadata_expires_at?: string
+  body_state?: string
+  body_expires_at?: string
+  header_state?: string
+  header_expires_at?: string
+}
+
+/**
+ * Whether the stored body may be revealed at `now`, format included.
+ *
+ * The server refuses a read the moment the window closes, so the UI must stop
+ * offering one at the same moment — and, for a plaintext row, that moment is the
+ * metadata deadline rather than the seven-day body window.
+ */
+export function isBodyReadable(
+  detail: DiagnosticReadability | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!detail) return false
+  if (detail.body_format === 'plaintext') {
+    if (detail.body_state !== 'stored') return false
+    return !isPlaintextExpired(detail.usage_linked, detail.metadata_expires_at, now)
+  }
+  return canRevealBody(detail.body_state, detail.body_expires_at, now)
+}
+
+/** The same question for the 429 header value layer. */
+export function isHeaderValuesReadable(
+  detail: DiagnosticReadability | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!detail) return false
+  if (detail.header_format === 'plaintext') {
+    if (detail.header_state !== 'stored') return false
+    return !isPlaintextExpired(detail.usage_linked, detail.metadata_expires_at, now)
+  }
+  return canRevealHeaders(detail.header_state, detail.header_expires_at, now)
+}
+
+function isTimestampString(value: string | undefined): value is string {
+  return typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Date.parse(value))
+}
+
 const HEADER_STATE_KEYS: Record<DiagnosticHeaderState, string> = {
   not_observed: 'notObserved',
   stored: 'stored',
@@ -103,6 +214,7 @@ const HEADER_REASON_KEYS: Record<DiagnosticHeaderReason, string> = {
   skipped_header_retention_disabled: 'skipped_header_retention_disabled',
   skipped_encryption_unavailable: 'skipped_encryption_unavailable',
   skipped_invalid_values: 'skipped_invalid_values',
+  plain_header_retained: 'plain_header_retained',
 }
 
 export function headerStateLabel(t: Translate, state: string | undefined): string {
@@ -191,6 +303,10 @@ export function matchesRiskPhrase(typed: string, required: string): boolean {
 const OPERATOR_ERROR_KEYS: Record<string, string> = {
   ERROR_DIAGNOSTIC_RISK_ACK_REQUIRED: 'phraseRequired',
   ERROR_DIAGNOSTIC_RISK_ACK_INVALID: 'phraseInvalid',
+  // 新明文层的拒绝对外只有两个新码：开不了时必须说清是哪一层的语句没对上，
+  // 不能让「明文正文没开」显示成「明文头值不能用」。
+  ERROR_DIAGNOSTIC_PLAIN_BODY_RISK_ACK_INVALID: 'plainBodyPhraseInvalid',
+  ERROR_DIAGNOSTIC_PLAIN_HEADER_RISK_ACK_INVALID: 'plainHeaderPhraseInvalid',
   ERROR_DIAGNOSTIC_BODY_KEY_UNAVAILABLE: 'keyUnavailable',
   // The two retention layers have their own key refusals: the UI must say which
   // layer could not be turned on, not that "retention" in general is unavailable.
@@ -198,6 +314,31 @@ const OPERATOR_ERROR_KEYS: Record<string, string> = {
   ERROR_DIAGNOSTIC_OPERATOR_SESSION_REQUIRED: 'sessionRequired',
   ERROR_DIAGNOSTIC_ADMIN_API_KEY_FORBIDDEN: 'adminApiKeyForbidden',
   ERROR_DIAGNOSTIC_SETTINGS_UNAVAILABLE: 'unavailable',
+  // The deployment premise refusal: the two plaintext layers cannot be turned on
+  // where the database cannot make plaintext disappear with its usage record. The
+  // status panel names the specific reason (partition / missing ownership / probe).
+  ERROR_DIAGNOSTIC_PLAINTEXT_DEPLOYMENT_UNSUPPORTED: 'deploymentUnsupported',
+}
+
+/**
+ * The closed set of deployment premise reasons, as stable i18n key suffixes.
+ *
+ * Unknown codes fall back to `unknown` instead of being echoed, so a future or
+ * malformed code cannot turn into free text on the panel — and a missing reason is
+ * never rendered as "supported".
+ */
+const PLAINTEXT_SUPPORT_REASON_KEYS: Record<string, string> = {
+  supported: 'deploymentSupported',
+  unsupported_partitioned_usage_logs: 'deploymentPartitioned',
+  unsupported_missing_ownership_foreign_key: 'deploymentMissingOwnership',
+  unsupported_unknown_deployment: 'deploymentUnknown',
+  probe_failed: 'deploymentProbeFailed',
+  probe_unavailable: 'deploymentProbeUnavailable',
+}
+
+export function plaintextSupportReasonLabelKey(reason: unknown): string {
+  const key = typeof reason === 'string' ? PLAINTEXT_SUPPORT_REASON_KEYS[reason] : undefined
+  return `admin.errorDiagnostics.operator.state.${key ?? 'deploymentUnknown'}`
 }
 
 export function operatorErrorMessage(t: Translate, reason: unknown): string {

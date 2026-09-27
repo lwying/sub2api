@@ -58,7 +58,7 @@ func toVisibleAccountDTO(view service.VisibleAccountView) visibleAccountDTO {
 }
 
 // List 返回当前用户的可见账号分页。
-// GET /api/v1/accounts?page=&page_size=&platform=&search=
+// GET /api/v1/accounts?page=&page_size=&platform=&account_type=&search=
 func (h *VisibleAccountHandler) List(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -70,10 +70,11 @@ func (h *VisibleAccountHandler) List(c *gin.Context) {
 
 	page, pageSize := response.ParsePagination(c)
 	filter := service.VisibleAccountFilter{
-		Platform: c.Query("platform"),
-		Search:   truncateSearch(c.Query("search")),
-		Page:     page,
-		PageSize: pageSize,
+		Platform:    c.Query("platform"),
+		AccountType: c.Query("account_type"),
+		Search:      truncateSearch(c.Query("search")),
+		Page:        page,
+		PageSize:    pageSize,
 	}
 
 	result, err := h.service.List(c.Request.Context(), subject.UserID, filter)

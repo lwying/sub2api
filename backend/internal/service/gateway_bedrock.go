@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -200,6 +201,9 @@ func (s *GatewayService) executeBedrockUpstream(
 			return nil, err
 		}
 
+		if httpattempt.ClaudeHeaderValueCaptureEnabled(upstreamReq.Context()) {
+			upstreamReq = upstreamReq.WithContext(WithRequestAuditValueWireProtocolOverride(upstreamReq.Context(), "bedrock"))
+		}
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, strings.TrimSpace(modelID), RequestAuditProtocolAnthropic,
 		)

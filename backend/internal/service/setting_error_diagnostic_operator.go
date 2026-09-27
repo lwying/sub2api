@@ -45,10 +45,10 @@ const (
 	// 语句内容变化时必须提升版本：已开启的部署不会自动继承新语句，操作员必须在下一次
 	// 更新时按新语句重新逐字确认（服务端每次更新都校验，见 UpdateErrorDiagnosticOperatorSettings）。
 	//
-	// v2026.09.24.1 起语句把 429 头值留存一并写进剩余风险：语句里多出一层留存事实时，
-	// 按旧语句做过的确认不再覆盖当前版本的语句，因此已存量的部署会被判为「确认过期」，
-	// 只能通过重新逐字确认当前语句继续采集——不因为库里有一条旧确认就静默放行。
-	ErrorDiagnosticRiskAcknowledgementVersion = "v2026.09.24.1"
+	// ADR 0007 要求升级切换采集路径后旧共享确认不能凭原有开关继续采集任何新记录
+	// （包括旧密文）；历史密文仍按原七天截止可读。新明文正文与头值还各自要求
+	// 独立的当前逐字确认，不能只凭这一份共享确认开启。
+	ErrorDiagnosticRiskAcknowledgementVersion = "v2026.09.27.2"
 
 	// ErrorDiagnosticRiskAcknowledgementPhraseEN / ZH 是必须逐字输入的确认语句。
 	//
@@ -182,6 +182,38 @@ type ErrorDiagnosticOperatorStatus struct {
 	// （见 CoversCurrentStatement）。为 false 时，即使门控布尔值为真，也没有覆盖当前语句的
 	// 书面确认——包括「版本正确但原文任意」这种伪造记录。
 	RiskAcknowledgementCurrent bool `json:"risk_acknowledgement_current"`
+
+	// 以下是两个**新明文层**（票据 08／09）的状态，形状与旧层一致但各自独立：
+	// 存量的布尔值如实回显，Allowed 是并入本层自己的逐字确认后的结论。
+	// 新层不参与密钥判定：新格式不加密，因此这里没有对应的 key 字段。
+	PlainBodyRetentionEnabled bool `json:"plain_body_enabled"`
+	PlainBodyRetentionAllowed bool `json:"plain_body_allowed"`
+	// PlainHeaderValueRetentionEnabled／Allowed 是新明文 429 头值层。
+	//
+	// 与正文层互相独立：任何一层的确认或开关都不打开另一层。
+	PlainHeaderValueRetentionEnabled bool `json:"plain_header_values_enabled"`
+	PlainHeaderValueRetentionAllowed bool `json:"plain_header_values_allowed"`
+	// 每一层各自的语句版本与原文，以及库里的确认记录：界面据此说清「哪一层的确认过期了」，
+	// 而不是只给一个无法解释的关闭状态。
+	PlainBodyRiskVersion           string                                  `json:"plain_body_risk_version"`
+	PlainBodyRiskPhraseEN          string                                  `json:"plain_body_risk_phrase_en"`
+	PlainBodyRiskPhraseZH          string                                  `json:"plain_body_risk_phrase_zh"`
+	PlainBodyRiskAcknowledgement   *ErrorDiagnosticRiskAcknowledgementView `json:"plain_body_risk_acknowledgement,omitempty"`
+	PlainBodyRiskAckCurrent        bool                                    `json:"plain_body_risk_acknowledgement_current"`
+	PlainHeaderRiskVersion         string                                  `json:"plain_header_risk_version"`
+	PlainHeaderRiskPhraseEN        string                                  `json:"plain_header_risk_phrase_en"`
+	PlainHeaderRiskPhraseZH        string                                  `json:"plain_header_risk_phrase_zh"`
+	PlainHeaderRiskAcknowledgement *ErrorDiagnosticRiskAcknowledgementView `json:"plain_header_risk_acknowledgement,omitempty"`
+	PlainHeaderRiskAckCurrent      bool                                    `json:"plain_header_risk_acknowledgement_current"`
+
+	// PlaintextCaptureSupported／PlaintextCaptureSupportReason 是两个**新明文层**共同的部署
+	// 前提结论（ADR 0007；票据 10）：本部署的数据库能不能保证「明文随 usage 消失」。
+	//
+	// 两层共用一条结论（同一张 error_diagnostic_records、同一个 usage 关联），但它是**新明文
+	// 专属**的门槛：存量开关、旧共享确认、旧密文正文/头值留存都不受它影响，界面上也不会
+	// 因为它把旧层说成不可用。Reason 是闭集原因码，不含数据库错误原文。
+	PlaintextCaptureSupported     bool   `json:"plaintext_capture_supported"`
+	PlaintextCaptureSupportReason string `json:"plaintext_capture_support_reason"`
 }
 
 // ErrorDiagnosticOperatorUpdateInput 是一次运维开关更新请求。
@@ -193,11 +225,26 @@ type ErrorDiagnosticOperatorUpdateInput struct {
 	// 门槛与正文留存相同：本次书面确认 + 可用稳定密钥。两者互不代替，也不互相影响
 	// （正文关闭时头值照常采集，反之亦然）。
 	HeaderValueRetentionEnabled bool
-	Language                    string
-	Phrase                      string
-	AdminUserID                 int64
-	IPAddress                   string
-	UserAgent                   string
+	// PlainBodyEnabled 是**新明文正文**层的独立开关（票据 08）。
+	//
+	// 门槛与旧层同形但**没有密钥这一环**：本次逐字确认本层自己的语句即可，且**必须**逐字确认
+	// 当前明文语句——旧共享语句一个字都打不开它（见 PlainBodyPhrase）。
+	PlainBodyEnabled bool
+	// PlainHeaderValuesEnabled 是**新明文 429 头值**层的独立开关（票据 09），
+	// 与正文层互相独立：各自的确认与开关都不打开对方。
+	PlainHeaderValuesEnabled bool
+	Language                 string
+	// Phrase 是采集门控（旧共享层）的书面确认语句。
+	Phrase string
+	// PlainBodyPhrase／PlainHeaderValuesPhrase 是两个新层各自的书面确认语句。
+	//
+	// 只有在本次请求要求打开对应层时才必填；语句原文必须与该层当前版本的语句逐字相同。
+	// 不复用 Phrase：三层的语句讲的是三件不同的风险，能互相代替就等于三份确认都没意义。
+	PlainBodyPhrase         string
+	PlainHeaderValuesPhrase string
+	AdminUserID             int64
+	IPAddress               string
+	UserAgent               string
 }
 
 // expectedErrorDiagnosticRiskPhrase 返回该语言下必须逐字输入的确认语句。
@@ -319,11 +366,48 @@ func (s *SettingService) ErrorDiagnosticRiskAcknowledgementCurrent(ctx context.C
 // 同时给出存量值与校验结论：存量读取失败返回错误（由调用方按不可用处理），
 // 绝不用「全关」掩盖存储故障；确认键读取失败同样返回错误，让界面显示「确认记录读不出来」，
 // 而不是把故障显示成「未确认」——两者对运维的含义完全不同。
+// errorDiagnosticPlaintextAcknowledgement 校验并编码某一新明文层本次的逐字确认。
+//
+// 三个事实必须同时成立：本层被请求打开、语句非空、语句与**本层当前版本**的语句逐字相同。
+// 请求里没有语句（或只有空白）与语句不对是两种不同的拒绝，因此返回不同的哨兵，
+// 但两者都不写入任何键：被拒的更新不能留下部分状态。
+func errorDiagnosticPlaintextAcknowledgement(spec plaintextRiskAcknowledgementSpec, requested bool, phrase string, input ErrorDiagnosticOperatorUpdateInput, invalid error) (string, error) {
+	if !requested {
+		return "", nil
+	}
+	trimmed := strings.TrimSpace(phrase)
+	if trimmed == "" {
+		return "", ErrErrorDiagnosticRiskAcknowledgementRequired
+	}
+	if trimmed != spec.expectedPhrase(input.Language) {
+		return "", invalid
+	}
+	payload, err := json.Marshal(ErrorDiagnosticRiskAcknowledgement{
+		Version:     spec.Version,
+		Phrase:      trimmed,
+		AdminUserID: input.AdminUserID,
+		IPAddress:   strings.TrimSpace(input.IPAddress),
+		UserAgent:   strings.TrimSpace(input.UserAgent),
+		AcceptedAt:  time.Now().UTC(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal plaintext risk acknowledgement: %w", err)
+	}
+	return string(payload), nil
+}
+
 func (s *SettingService) GetErrorDiagnosticOperatorStatus(ctx context.Context) (ErrorDiagnosticOperatorStatus, error) {
 	status := ErrorDiagnosticOperatorStatus{
 		RiskVersion:  ErrorDiagnosticRiskAcknowledgementVersion,
 		RiskPhraseEN: ErrorDiagnosticRiskAcknowledgementPhraseEN,
 		RiskPhraseZH: ErrorDiagnosticRiskAcknowledgementPhraseZH,
+
+		PlainBodyRiskVersion:    plainBodyRiskSpec.Version,
+		PlainBodyRiskPhraseEN:   plainBodyRiskSpec.PhraseEN,
+		PlainBodyRiskPhraseZH:   plainBodyRiskSpec.PhraseZH,
+		PlainHeaderRiskVersion:  plainHeaderRiskSpec.Version,
+		PlainHeaderRiskPhraseEN: plainHeaderRiskSpec.PhraseEN,
+		PlainHeaderRiskPhraseZH: plainHeaderRiskSpec.PhraseZH,
 	}
 	if s == nil || s.settingRepo == nil {
 		return ErrorDiagnosticOperatorStatus{}, ErrErrorDiagnosticSettingServiceUnavailable
@@ -337,11 +421,21 @@ func (s *SettingService) GetErrorDiagnosticOperatorStatus(ctx context.Context) (
 	if err != nil {
 		return ErrorDiagnosticOperatorStatus{}, err
 	}
+	plainBodyAck, err := s.getErrorDiagnosticRiskAcknowledgementByKey(ctx, SettingKeyErrorDiagnosticPlainBodyRiskAck)
+	if err != nil {
+		return ErrorDiagnosticOperatorStatus{}, err
+	}
+	plainHeaderAck, err := s.getErrorDiagnosticRiskAcknowledgementByKey(ctx, SettingKeyErrorDiagnosticPlainHeaderValuesRiskAck)
+	if err != nil {
+		return ErrorDiagnosticOperatorStatus{}, err
+	}
 
 	status.Enabled = stored.Enabled
 	status.RiskAcknowledged = stored.RiskAcknowledged
 	status.BodyRetentionEnabled = stored.BodyRetentionEnabled
 	status.HeaderValueRetentionEnabled = stored.HeaderValueRetentionEnabled
+	status.PlainBodyRetentionEnabled = stored.PlainBodyRetentionEnabled
+	status.PlainHeaderValueRetentionEnabled = stored.PlainHeaderValueRetentionEnabled
 	if ack != nil {
 		status.RiskAcknowledgement = &ErrorDiagnosticRiskAcknowledgementView{
 			Version:     ack.Version,
@@ -351,6 +445,12 @@ func (s *SettingService) GetErrorDiagnosticOperatorStatus(ctx context.Context) (
 		}
 		status.RiskAcknowledgementCurrent = ack.CoversCurrentStatement()
 	}
+	// 两个新层的确认记录各自回显并各自判定：界面必须能说清「哪一层的确认过期了」，
+	// 而不是把「有一条旧共享确认」显示成新层已确认。
+	status.PlainBodyRiskAcknowledgement = plaintextAcknowledgementView(plainBodyAck)
+	status.PlainBodyRiskAckCurrent = plainBodyRiskSpec.covers(plainBodyAck)
+	status.PlainHeaderRiskAcknowledgement = plaintextAcknowledgementView(plainHeaderAck)
+	status.PlainHeaderRiskAckCurrent = plainHeaderRiskSpec.covers(plainHeaderAck)
 
 	// 校验结论复用采集侧同一判定（ApplyErrorDiagnosticRiskAcknowledgement），
 	// 不在这里另写一份规则：存量布尔值 + 当前版本的有效书面确认，缺一不可。
@@ -360,6 +460,10 @@ func (s *SettingService) GetErrorDiagnosticOperatorStatus(ctx context.Context) (
 	// 而不是「开着但不解释」。
 	verified := s.applyErrorDiagnosticBodyRetentionKeyAvailability(
 		ApplyErrorDiagnosticRiskAcknowledgement(ctx, stored, s))
+	// 部署前提与采集侧用同一个收窄函数（同一个带缓存的探针），因此界面上两个新明文层的
+	// 结论与接缝实际会不会采完全一致：存量开着、确认也在、但部署不支持时，
+	// plain_*_allowed 是明确的 false，而不是「开着但不解释」。
+	verified = s.ApplyErrorDiagnosticPlaintextCaptureSupport(ctx, verified)
 	status.BodyEncryptionKeyAvailable = s.ErrorDiagnosticBodyEncryptionKeyAvailable()
 	status.CaptureAllowed = verified.CaptureAllowed()
 	status.BodyRetentionAllowed = verified.BodyCaptureAllowed()
@@ -368,6 +472,16 @@ func (s *SettingService) GetErrorDiagnosticOperatorStatus(ctx context.Context) (
 	// 注意这里**不**把结论写回读取器：收窄只用于展示（理由见
 	// errorDiagnosticHeaderValueRetentionAllowed）。
 	status.HeaderValueRetentionAllowed = errorDiagnosticHeaderValueRetentionAllowed(verified, status.BodyEncryptionKeyAvailable)
+	// 新明文层的结论用的是各自独立的确认与各自的存量开关，且**不并入密钥**：
+	// 明文本来就不加密，要求一个稳定密钥既说不通，也会把「明文本来就能落库」报成配置故障。
+	status.PlainBodyRetentionAllowed = plainBodyRiskSpec.covers(plainBodyAck) && verified.PlainBodyCaptureAllowed()
+	status.PlainHeaderValueRetentionAllowed = plainHeaderRiskSpec.covers(plainHeaderAck) && verified.PlainHeaderValuesCaptureAllowed()
+	// 部署前提单独回显：它不是某一层的开关，而是两层共同的数据库前提。原因码让界面能说清
+	// 「为什么开着却不允许采集」——分区、所有权外键缺失、探针查不出来，三者含义不同；
+	// 数据库错误原文不在这里出现。
+	support := s.PlaintextCaptureSupport(ctx)
+	status.PlaintextCaptureSupported = support.Supported
+	status.PlaintextCaptureSupportReason = support.Reason
 	return status, nil
 }
 
@@ -435,8 +549,26 @@ func (s *SettingService) UpdateErrorDiagnosticOperatorSettings(ctx context.Conte
 			}
 			settings.HeaderValueRetentionEnabled = true
 		}
-
-		ack := ErrorDiagnosticRiskAcknowledgement{
+		// 两个新明文层：各自需要自己被请求 + **本层自己的**逐字确认 + 部署前提。旧共享语句
+		// （phrase）不能代替它们，它们也不能互相代替；两层都不看密钥。
+		//
+		// 部署前提只在**至少一层被请求打开**时才查：数据库形态既不挡住旧密文层的开启，
+		// 也不挡住任何一层的关闭——降级方向永远放行（见 UpdateErrorDiagnosticOperatorSettings
+		// 顶部「关闭永远允许」的约定）。探针绕过缓存，见 rejectPlaintextCaptureEnablement。
+		if input.PlainBodyEnabled || input.PlainHeaderValuesEnabled {
+			if err := s.rejectPlaintextCaptureEnablement(ctx, ErrErrorDiagnosticPlaintextDeploymentUnsupported); err != nil {
+				return ErrorDiagnosticOperatorStatus{}, err
+			}
+		}
+		plainBodyAck, err := errorDiagnosticPlaintextAcknowledgement(plainBodyRiskSpec, input.PlainBodyEnabled, input.PlainBodyPhrase, input, ErrErrorDiagnosticPlainBodyRiskAcknowledgementInvalid)
+		if err != nil {
+			return ErrorDiagnosticOperatorStatus{}, err
+		}
+		plainHeaderAck, err := errorDiagnosticPlaintextAcknowledgement(plainHeaderRiskSpec, input.PlainHeaderValuesEnabled, input.PlainHeaderValuesPhrase, input, ErrErrorDiagnosticPlainHeaderValuesRiskAcknowledgementInvalid)
+		if err != nil {
+			return ErrorDiagnosticOperatorStatus{}, err
+		}
+		sharedAck := ErrorDiagnosticRiskAcknowledgement{
 			Version:     ErrorDiagnosticRiskAcknowledgementVersion,
 			Phrase:      phrase,
 			AdminUserID: input.AdminUserID,
@@ -444,11 +576,19 @@ func (s *SettingService) UpdateErrorDiagnosticOperatorSettings(ctx context.Conte
 			UserAgent:   strings.TrimSpace(input.UserAgent),
 			AcceptedAt:  time.Now().UTC(),
 		}
-		payload, err := json.Marshal(ack)
+		payload, err := json.Marshal(sharedAck)
 		if err != nil {
 			return ErrorDiagnosticOperatorStatus{}, fmt.Errorf("marshal error diagnostic risk acknowledgement: %w", err)
 		}
 		updates[SettingKeyErrorDiagnosticRiskAcknowledgement] = string(payload)
+		if input.PlainBodyEnabled {
+			settings.PlainBodyRetentionEnabled = true
+			updates[SettingKeyErrorDiagnosticPlainBodyRiskAck] = plainBodyAck
+		}
+		if input.PlainHeaderValuesEnabled {
+			settings.PlainHeaderValueRetentionEnabled = true
+			updates[SettingKeyErrorDiagnosticPlainHeaderValuesRiskAck] = plainHeaderAck
+		}
 	}
 
 	settingsPayload, err := json.Marshal(settings)
@@ -468,7 +608,13 @@ func (s *SettingService) UpdateErrorDiagnosticOperatorSettings(ctx context.Conte
 		"enabled", settings.Enabled,
 		"body_retention_enabled", settings.BodyRetentionEnabled,
 		"header_values_enabled", settings.HeaderValueRetentionEnabled,
+		// 新明文层的开关同样进审计：审计必须能回答「谁在什么时候打开了明文留存」，
+		// 而语句原文只落库、不进日志。
+		"plain_body_enabled", settings.PlainBodyRetentionEnabled,
+		"plain_header_values_enabled", settings.PlainHeaderValueRetentionEnabled,
 		"risk_version", ErrorDiagnosticRiskAcknowledgementVersion,
+		"plain_body_risk_version", plainBodyRiskSpec.Version,
+		"plain_header_risk_version", plainHeaderRiskSpec.Version,
 		"admin_user_id", input.AdminUserID,
 	)
 

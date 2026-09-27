@@ -83,6 +83,14 @@ func ProvideRequestAuditReservationRepository(repo service.RequestAuditRepositor
 	return forced, nil
 }
 
+func ProvideErrorDiagnosticUsageAttacher(repo service.ErrorDiagnosticRepository) (service.ErrorDiagnosticUsageAttacher, error) {
+	attacher, ok := repo.(service.ErrorDiagnosticUsageAttacher)
+	if !ok {
+		return nil, errors.New("error diagnostic repository lacks usage-link support")
+	}
+	return attacher, nil
+}
+
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
 	NewUserRepository,
@@ -103,6 +111,8 @@ var ProviderSet = wire.NewSet(
 	NewRequestAuditRepository,
 	ProvideRequestAuditFingerprinter,
 	ProvideRequestAuditReservationRepository,
+	NewPlaintextCaptureSupportProbe,
+	ProvideErrorDiagnosticUsageAttacher,
 	NewUsageBillingRepository,
 	NewBatchImageRepository,
 	NewIdempotencyRepository,

@@ -122,11 +122,16 @@
                 <td class="px-3 py-2 font-mono text-gray-900 dark:text-dark-100">{{ item.upstream_status }}</td>
                 <td class="px-3 py-2">
                   <div class="text-gray-900 dark:text-dark-100">{{ bodyStateLabel(t, item.body_state) }}</div>
+                  <div class="text-xs text-gray-500 dark:text-dark-400" data-testid="error-diagnostic-row-format">
+                    {{ retentionFormatLabel(t, item.body_format) }}
+                  </div>
                   <div v-if="item.reason !== undefined" class="text-xs text-gray-500 dark:text-dark-400" data-testid="error-diagnostic-row-reason">
                     {{ bodyReasonLabel(t, item.reason) }}
                   </div>
                 </td>
-                <td class="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-900 dark:text-dark-100">{{ formatDateTime(item.body_expires_at ?? item.metadata_expires_at) }}</td>
+                <td class="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-900 dark:text-dark-100" data-testid="error-diagnostic-row-expiry">
+                  {{ diagnosticExpiryLabel(item) }}
+                </td>
                 <td class="px-3 py-2 text-xs">
                   <!--
                     The usage record id is shown as plain text: there is no deep
@@ -182,7 +187,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import ErrorDiagnosticDetailDrawer from './components/ErrorDiagnosticDetailDrawer.vue'
 import ErrorDiagnosticOperatorSettings from './components/ErrorDiagnosticOperatorSettings.vue'
 import { getOperatorSettings, listDiagnostics } from './api'
-import { bodyReasonLabel, bodyStateLabel, formatDateTime, protocolLabel } from './labels'
+import { bodyReasonLabel, bodyStateLabel, formatDateTime, protocolLabel, retentionFormatLabel } from './labels'
 import type { DiagnosticAttempt, ErrorDiagnosticOperatorStatus } from './types'
 
 const { t } = useI18n()
@@ -205,6 +210,11 @@ let revision = 0
  * load must not invalidate a gate read that is still in flight, and vice versa.
  */
 let operatorRevision = 0
+
+function diagnosticExpiryLabel(item: DiagnosticAttempt): string {
+  if (item.usage_linked) return t('admin.errorDiagnostics.rules.plaintextLinked')
+  return formatDateTime(item.body_expires_at ?? item.metadata_expires_at)
+}
 
 async function load(nextPage: number) {
   const currentRevision = ++revision

@@ -616,6 +616,19 @@ func attachRequestAuditBestEffort(ctx context.Context, repo RequestAuditReposito
 	_ = AttachRequestAuditAfterUsageLog(auditCtx, repo, usageLog, input)
 }
 
+// attachErrorDiagnosticsAfterUsageBestEffort restores the request-scoped audit
+// fingerprint on worker contexts before linking real failed attempts to usage.
+// A missing fingerprint or store leaves diagnostics on their 30-day unlinked path.
+func attachErrorDiagnosticsAfterUsageBestEffort(ctx context.Context, store ErrorDiagnosticUsageAttacher, usageLogID int64, fp *RequestAuditFingerprintInput) {
+	if store == nil || usageLogID <= 0 || fp == nil {
+		return
+	}
+	linkCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	linkCtx = WithRequestAuditFingerprint(linkCtx, fp)
+	_, _ = AttachErrorDiagnosticsAfterUsage(linkCtx, store, usageLogID, time.Now().UTC())
+}
+
 func finalizeRequestAuditBestEffort(
 	ctx context.Context,
 	auditRepo RequestAuditRepository,
@@ -990,6 +1003,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		if input.RequestAuditValueDetail.Route != "" {
 			s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
 		}
+		attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -1034,6 +1048,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		if input.RequestAuditValueDetail.Route != "" {
 			s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
 		}
+		attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
@@ -1048,6 +1063,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if input.RequestAuditValueDetail.Route != "" {
 		s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
 	}
+	attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 
 	return nil
 }

@@ -46,6 +46,7 @@ func valueDetailScopeInput() RequestAuditValueDetailInput {
 		Attempts: []RequestAuditValueDetailAttempt{{
 			Index:          1,
 			AccountID:      42,
+			Protocol:       RequestAuditProtocolAnthropic,
 			Model:          "claude-sonnet-4-5",
 			MetadataUserID: valueDetailTestMetadataUserID,
 			UpstreamStatus: intPtrValueDetail(200),
@@ -76,8 +77,8 @@ func TestBuildRequestAuditValueDetailWriteScopeAndGate(t *testing.T) {
 	now := time.Now().UTC()
 
 	require.Nil(t, BuildRequestAuditValueDetailWrite(RequestAuditValueDetailInput{
-		Route: "/v1/chat/completions", Protocol: RequestAuditProtocolOpenAIChat,
-	}, valueDetailOpenGate(), now), "非 /v1/messages 路由必须按未采集处理，不落空壳行")
+		Route: "/v1/messages/count_tokens", Protocol: RequestAuditProtocolOpenAIChat,
+	}, valueDetailOpenGate(), now), "无实际审计尝试的 token 计数入口必须按未采集处理")
 
 	closed := BuildRequestAuditValueDetailWrite(valueDetailScopeInput(), RequestAuditValueDetailGate{}, now)
 	require.NotNil(t, closed)
@@ -85,14 +86,14 @@ func TestBuildRequestAuditValueDetailWriteScopeAndGate(t *testing.T) {
 	require.Equal(t, RequestAuditValueDetailSkippedRetentionDisabled, closed.Reason)
 	require.False(t, closed.Retained())
 
-	// 范围内路由但真实上游不是 Anthropic 形态：明确记不在范围，而不是未采集。
+	// 范围内路由但真实上游为未允许的签名协议：明确记不在范围。
 	outOfScope := BuildRequestAuditValueDetailWrite(func() RequestAuditValueDetailInput {
 		in := valueDetailScopeInput()
-		in.Protocol = RequestAuditProtocolOpenAIChat
+		in.Protocol = "bedrock"
 		return in
 	}(), valueDetailOpenGate(), now)
 	require.NotNil(t, outOfScope)
-	require.Equal(t, RequestAuditValueDetailSkippedOutOfScope, outOfScope.Reason)
+	require.Equal(t, RequestAuditValueDetailSkippedUnsupportedProtocol, outOfScope.Reason)
 }
 
 // Bedrock 形态的真实上游不在本能力范围内：记 skipped_out_of_scope，一个值都不留。
@@ -109,7 +110,7 @@ func TestBuildRequestAuditValueDetailWriteBedrockOutOfScopeRetainsNothing(t *tes
 	write := BuildRequestAuditValueDetailWrite(in, valueDetailOpenGate(), now)
 	require.NotNil(t, write)
 	require.Equal(t, RequestAuditValueDetailStateSkipped, write.State)
-	require.Equal(t, RequestAuditValueDetailSkippedOutOfScope, write.Reason)
+	require.Equal(t, RequestAuditValueDetailSkippedUnsupportedProtocol, write.Reason)
 	require.False(t, write.Retained())
 	require.Empty(t, write.Payload)
 	require.Zero(t, write.EntryCount)
@@ -124,7 +125,7 @@ func TestBuildRequestAuditValueDetailWriteBedrockOutOfScopeRetainsNothing(t *tes
 	require.NotContains(t, string(raw), "api.anthropic.com")
 
 	// 对外披露：原因是闭集里的「不在范围」，绝不显示成「已留存」。
-	require.Equal(t, RequestAuditValueDetailSkippedOutOfScope, requestAuditValueDetailDiscloseReason(write.Reason))
+	require.Equal(t, RequestAuditValueDetailSkippedUnsupportedProtocol, requestAuditValueDetailDiscloseReason(write.Reason))
 	require.Equal(t, RequestAuditValueDetailStateSkipped,
 		DescribeRequestAuditValueDetailState(RequestAuditValueDetail{Reason: write.Reason}, now))
 }
@@ -136,7 +137,7 @@ func TestBuildRequestAuditValueDetailWriteRetainsEncryptablePayload(t *testing.T
 	require.Equal(t, RequestAuditValueDetailStateStored, write.State)
 	require.Equal(t, RequestAuditValueDetailRetained, write.Reason)
 	require.True(t, write.Retained())
-	require.Equal(t, now.Add(RequestAuditValueDetailRetention), write.ExpiresAt)
+	require.True(t, write.ExpiresAt.IsZero(), "new plaintext details have no independent expiry")
 	require.Equal(t, "/v1/messages", write.Fields.Route)
 	require.Equal(t, 200, write.Fields.ClientStatus)
 	require.Equal(t, 1, write.AttemptCount)
@@ -193,15 +194,16 @@ func TestBuildRequestAuditValueDetailWriteRetainsModelOnly(t *testing.T) {
 	require.Empty(t, values.Attempts)
 }
 
-// 开关开着但没有稳定密钥：留下稳定原因码，而不是退化成未采集，也绝不明文落库。
+// 新明文能力不依赖旧密钥，但旧加密行仍要在揭示时用原密钥。
 func TestBuildRequestAuditValueDetailWriteEncryptionUnavailable(t *testing.T) {
 	now := time.Now().UTC()
 	write := BuildRequestAuditValueDetailWrite(valueDetailScopeInput(), RequestAuditValueDetailGate{CaptureAllowed: true}, now)
 	require.NotNil(t, write)
-	require.Equal(t, RequestAuditValueDetailStateSkipped, write.State)
-	require.Equal(t, RequestAuditValueDetailSkippedEncryptionUnavailable, write.Reason)
-	require.Empty(t, write.Payload)
-	require.NotZero(t, write.EntryCount)
+	require.Equal(t, RequestAuditValueDetailStateStored, write.State)
+	require.Equal(t, RequestAuditValueDetailStoragePlaintextUsageBound, write.StorageFormat)
+	require.Equal(t, RequestAuditValueDetailRetained, write.Reason)
+	require.NotEmpty(t, write.Payload)
+	require.True(t, write.ExpiresAt.IsZero())
 }
 
 // 尝试数超上限时整份不采：不把前 8 次冒充成「全部尝试」。
@@ -557,6 +559,73 @@ func TestDecodeRequestAuditValueDetailValuesRejectsTamperedPayloads(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, "claude-sonnet-4-5", decoded.Model)
 }
+
+// 读侧复核丢掉的条目是**读侧自己的事实**，与载荷自带的 truncated（采集时就没收下）
+// 是两条独立事实（ADR 0006）。读侧因此既不把它并进 truncated——那会让管理员把
+// 「读侧没收下」读成「客户端只发了这些」——也不让它静默消失，而是通过传输专用的
+// ValidationDropped 带出去，与 Truncated 各自呈现。
+//
+// 这类载荷不是本边界写下的那一份（密文被替换、旧版本载荷、直改库）：读侧照常返回能
+// 通过白名单的条目，同时如实声明「这条记录没列全」。
+func TestDecodeRequestAuditValueDetailValuesReportsReadSideDropsAsTheirOwnFact(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		// 闭集内的头名带着没通过取值族校验的值。
+		{"inbound header", `{"inbound":{"request_headers":{"User-Agent":["not-a-claude-client"]}}}`},
+		// 尝试级响应头同理，且丢弃发生在尝试内部。
+		{"attempt header", `{"attempts":[{"index":1,"response_headers":{"Retry-After":["not-a-number-or-date"]}}]}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			values, err := DecodeRequestAuditValueDetailValues([]byte(testCase.payload))
+			require.NoError(t, err)
+			require.True(t, values.ValidationDropped, "读侧丢过条目必须如实告警")
+			require.False(t, values.Truncated, "读侧的丢弃不得冒充成采集时的事实")
+		})
+	}
+}
+
+// 两条事实同时成立时必须都留下：载荷说采集侧丢过条目，读侧又拒收了别的条目。
+func TestDecodeRequestAuditValueDetailValuesKeepsBothDropFacts(t *testing.T) {
+	payload := []byte(`{"inbound":{"request_headers":{"User-Agent":["not-a-claude-client"]}},"truncated":true}`)
+	values, err := DecodeRequestAuditValueDetailValues(payload)
+	require.NoError(t, err)
+	require.True(t, values.Truncated, "采集侧的 truncated 是载荷说了算")
+	require.True(t, values.ValidationDropped, "读侧的丢弃是另一条事实")
+}
+
+// 载荷自带的 truncated 是采集侧的事实：读侧原样带出，不改写、也不因为读侧复核为零
+// 就清零。否则「采集时就没收下」这个事实会被读侧抹掉。
+func TestDecodeRequestAuditValueDetailValuesKeepsPayloadTruncatedUntouched(t *testing.T) {
+	payload := []byte(`{"inbound":{"request_headers":{"User-Agent":["claude-cli/2.1.258 (external, cli)"]}},"truncated":true}`)
+	values, err := DecodeRequestAuditValueDetailValues(payload)
+	require.NoError(t, err)
+	require.True(t, values.Truncated, "采集侧的 truncated 必须是载荷说了算")
+	require.False(t, values.ValidationDropped, "没丢过条目就不得告警")
+	require.Equal(t, []string{"claude-cli/2.1.258 (external, cli)"}, values.Inbound.RequestHeaders["User-Agent"])
+}
+
+// ValidationDropped 是**传输专用**的：它不能被写进存储载荷，也不能由载荷设置。
+// 否则「谁说的」就失去了保证——管理员无法分辨读侧的告警与载荷自称的完整性声明。
+func TestRequestAuditValueDetailValidationDroppedStaysOutOfTheStoredPayload(t *testing.T) {
+	values := RequestAuditValueDetailValues{
+		Inbound: RequestAuditValueDetailInboundValues{
+			RequestHeaders: map[string][]string{"Host": {"api.anthropic.com"}},
+		},
+		ValidationDropped: true,
+	}
+	encoded, err := EncodeRequestAuditValueDetailValues(values)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "validation_dropped", "读侧事实不得落进存储载荷")
+	require.NotContains(t, string(encoded), "ValidationDropped")
+
+	// 载荷试图自带这个键时必须被拒（未知字段），因此载荷永远无法自称读侧结论。
+	_, err = DecodeRequestAuditValueDetailValues([]byte(`{"inbound":{"request_headers":{}},"validation_dropped":true}`))
+	require.Error(t, err, "载荷不得设置传输专用的读侧事实")
+}
+
 
 // 确定性：同一份值必须产生同一份载荷，否则「以密文对比重复」会成为旁路。
 func TestEncodeRequestAuditValueDetailValuesIsDeterministic(t *testing.T) {

@@ -24,10 +24,15 @@ const client = vi.hoisted(() => ({
 vi.mock('@/api/client', () => ({ apiClient: client }))
 
 import { getOperatorSettings, updateOperatorSettings } from '../api'
+import { plaintextSupportReasonLabelKey, operatorErrorMessage } from '../labels'
 import { normalizeErrorDiagnosticOperatorStatus } from '../types'
 
 const PHRASE_EN = 'Statement EN: bodies 7 days, metadata 30 days, not an erasure tool.'
 const PHRASE_ZH = '确认语句：正文 7 天，元数据 30 天，不是擦除手段。'
+const PLAIN_BODY_PHRASE_EN = 'Plaintext EN: unencrypted at rest, follows its usage, 30 days unlinked.'
+const PLAIN_BODY_PHRASE_ZH = '明文语句：明文落库，随用量记录，未关联三十天。'
+const PLAIN_HEADER_PHRASE_EN = 'Plaintext headers EN: allowlist only, unencrypted at rest.'
+const PLAIN_HEADER_PHRASE_ZH = '明文头值语句：仅白名单，明文落库。'
 
 const status = (overrides: Record<string, unknown> = {}) => ({
   enabled: false,
@@ -38,10 +43,25 @@ const status = (overrides: Record<string, unknown> = {}) => ({
   body_retention_allowed: false,
   header_values_allowed: false,
   body_encryption_key_available: true,
-  risk_version: 'v2026.09.24.1',
+  risk_version: 'v2026.09.27.2',
   risk_phrase_en: PHRASE_EN,
   risk_phrase_zh: PHRASE_ZH,
   risk_acknowledgement_current: false,
+  // 新明文层（票据 08／09）：各自独立的开关、结论与语句。
+  plain_body_enabled: false,
+  plain_body_allowed: false,
+  plain_header_values_enabled: false,
+  plain_header_values_allowed: false,
+  plain_body_risk_version: 'v2026.09.27.1',
+  plain_body_risk_phrase_en: PLAIN_BODY_PHRASE_EN,
+  plain_body_risk_phrase_zh: PLAIN_BODY_PHRASE_ZH,
+  plain_header_risk_version: 'v2026.09.27.1',
+  plain_header_risk_phrase_en: PLAIN_HEADER_PHRASE_EN,
+  plain_header_risk_phrase_zh: PLAIN_HEADER_PHRASE_ZH,
+  plain_body_risk_acknowledgement_current: false,
+  plain_header_risk_acknowledgement_current: false,
+  plaintext_capture_supported: true,
+  plaintext_capture_support_reason: 'supported',
   ...overrides,
 })
 
@@ -71,7 +91,7 @@ describe('error diagnostic operator settings API', () => {
       body_retention_allowed: false,
       header_values_allowed: false,
       body_encryption_key_available: true,
-      risk_version: 'v2026.09.24.1',
+      risk_version: 'v2026.09.27.2',
       risk_acknowledgement_current: false,
     })
     expect(result.risk_phrase_en).toBe(PHRASE_EN)
@@ -86,8 +106,12 @@ describe('error diagnostic operator settings API', () => {
       enabled: true,
       body_retention_enabled: false,
       header_values_enabled: false,
+      plain_body_enabled: false,
+      plain_header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
+      plain_body_phrase: '',
+      plain_header_values_phrase: '',
     })
 
     expect(client.put).toHaveBeenCalledTimes(1)
@@ -95,12 +119,17 @@ describe('error diagnostic operator settings API', () => {
     expect(url).toBe('/admin/settings/error-diagnostic')
     // Whole-state update: the server treats an omitted field as off, so the client
     // must always state both retention layers and the acknowledgement it is making.
+    // 四个留存层都必须由本次请求显式表达，两个新明文层还各自带自己的语句。
     expect(Object.keys(payload).sort()).toEqual([
       'body_retention_enabled',
       'enabled',
       'header_values_enabled',
       'language',
       'phrase',
+      'plain_body_enabled',
+      'plain_body_phrase',
+      'plain_header_values_enabled',
+      'plain_header_values_phrase',
     ])
     expect(payload).toEqual({
       enabled: true,
@@ -108,6 +137,10 @@ describe('error diagnostic operator settings API', () => {
       header_values_enabled: false,
       language: 'en',
       phrase: PHRASE_EN,
+      plain_body_enabled: false,
+      plain_header_values_enabled: false,
+      plain_body_phrase: '',
+      plain_header_values_phrase: '',
     })
     expect(config.headers).toMatchObject({ 'Cache-Control': 'no-store' })
     expect(updated).toMatchObject({ enabled: true, capture_allowed: true })
@@ -292,5 +325,76 @@ describe('error diagnostic operator settings API', () => {
   it('never invents an acknowledgement currency the server did not report', () => {
     const result = normalizeErrorDiagnosticOperatorStatus(status({ risk_acknowledgement_current: undefined }))
     expect(result.risk_acknowledgement_current).toBe(false)
+  })
+
+  it('carries the plaintext deployment premise and its reason code', () => {
+    const result = normalizeErrorDiagnosticOperatorStatus(
+      status({
+        plaintext_capture_supported: false,
+        plaintext_capture_support_reason: 'unsupported_missing_ownership_foreign_key',
+      }),
+    )
+
+    expect(result.plaintext_capture_supported).toBe(false)
+    expect(result.plaintext_capture_support_reason).toBe('unsupported_missing_ownership_foreign_key')
+  })
+
+  it('rejects a payload whose deployment premise or reason is unreadable', () => {
+    // 结论读不出来时不得渲染成「关闭」：整个状态按不可读处理，由界面显示「不可读」而不是
+    // 一个没有理由的关闭。
+    expect(() =>
+      normalizeErrorDiagnosticOperatorStatus(status({ plaintext_capture_supported: 'false' })),
+    ).toThrow()
+    expect(() =>
+      normalizeErrorDiagnosticOperatorStatus(status({ plaintext_capture_supported: undefined })),
+    ).toThrow()
+    expect(() =>
+      normalizeErrorDiagnosticOperatorStatus(status({ plaintext_capture_support_reason: '' })),
+    ).toThrow()
+    expect(() =>
+      normalizeErrorDiagnosticOperatorStatus(status({ plaintext_capture_support_reason: undefined })),
+    ).toThrow()
+  })
+})
+
+describe('error diagnostic deployment premise copy', () => {
+  const t = (key: string) => key
+
+  it('maps every closed reason code to its own label key', () => {
+    expect(plaintextSupportReasonLabelKey('supported')).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentSupported',
+    )
+    expect(plaintextSupportReasonLabelKey('unsupported_partitioned_usage_logs')).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentPartitioned',
+    )
+    expect(plaintextSupportReasonLabelKey('unsupported_missing_ownership_foreign_key')).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentMissingOwnership',
+    )
+    expect(plaintextSupportReasonLabelKey('probe_failed')).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentProbeFailed',
+    )
+    expect(plaintextSupportReasonLabelKey('probe_unavailable')).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentProbeUnavailable',
+    )
+    // 未知码与缺失都落到「未知形态」，绝不回显服务端字符串。
+    expect(plaintextSupportReasonLabelKey('brand_new_code')).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentUnknown',
+    )
+    expect(plaintextSupportReasonLabelKey(undefined)).toBe(
+      'admin.errorDiagnostics.operator.state.deploymentUnknown',
+    )
+  })
+
+  it('gives the deployment refusal its own error copy, not the generic one', () => {
+    expect(
+      operatorErrorMessage(t, 'ERROR_DIAGNOSTIC_PLAINTEXT_DEPLOYMENT_UNSUPPORTED'),
+    ).toBe('admin.errorDiagnostics.operator.errors.deploymentUnsupported')
+    // 其它未知 reason 仍回落通用文案。
+    expect(operatorErrorMessage(t, 'SOMETHING_NEW')).toBe(
+      'admin.errorDiagnostics.operator.errors.generic',
+    )
+    expect(operatorErrorMessage(t, undefined)).toBe(
+      'admin.errorDiagnostics.operator.errors.generic',
+    )
   })
 })

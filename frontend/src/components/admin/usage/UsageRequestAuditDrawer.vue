@@ -192,7 +192,9 @@
           </p>
 
           <p class="mt-2 text-gray-500 dark:text-dark-400">
-            {{ t('admin.usage.requestAudit.valueDetail.notice') }}
+            {{ valueDetail.storage_format === 'plaintext_usage_bound'
+              ? t('admin.usage.requestAudit.valueDetail.plaintextUsageNotice')
+              : t('admin.usage.requestAudit.valueDetail.notice') }}
           </p>
 
           <div v-if="canRevealValueDetail" class="mt-3">
@@ -242,14 +244,14 @@
             </p>
 
             <!--
-              The read-side counterpart of `truncated`: the server did not drop an
-              entry, but this view refused one of the entries the payload carried.
-              The two are the same warning for the admin — "this list may not be
-              everything" — so at most one of them is rendered, and the server's own
-              statement wins when it is set.
+              The read-side counterpart of `truncated`, rendered as its own fact: the
+              backend's read boundary or this view refused an entry the reveal carried,
+              so this list is not everything the record holds. That is a different
+              statement from `truncated` (collection side), so both warnings are shown
+              when both hold — neither one may stand in for the other.
             -->
             <p
-              v-else-if="revealedValueDetail.values.validation_dropped"
+              v-if="revealedValueDetail.values.validation_dropped"
               data-testid="request-audit-value-detail-validation-dropped"
               class="text-amber-700 dark:text-amber-300"
             >
@@ -485,6 +487,7 @@ import {
   getRequestAuditValueDetail,
   isRequestAuditValueDetailExpired,
   isRequestAuditValueDetailNotFound,
+  requestAuditValueDetailProtocols,
   revealRequestAuditValueDetail,
   type RequestAudit,
   type RequestAuditValueDetailAttemptValues,
@@ -845,6 +848,7 @@ const VALUE_DETAIL_REASON_LABELS: Record<RequestAuditValueDetailReason, string> 
   skipped_encryption_unavailable: 'skippedEncryptionUnavailable',
   skipped_invalid_values: 'skippedInvalidValues',
   skipped_too_many_attempts: 'skippedTooManyAttempts',
+  skipped_unsupported_protocol: 'skippedUnsupportedProtocol',
 }
 
 /**
@@ -1015,6 +1019,11 @@ async function fetchValueDetail(id: number, revision: number) {
  * The route is step-up gated, so the click may be answered with STEP_UP_REQUIRED:
  * the controller then asks for a code and retries this same explicit POST once.
  * That retry is still a consequence of the click, never of a timer or a prefetch.
+ *
+ * The reveal response states no protocols, so they come from the envelope on
+ * screen: the inbound block is read against the protocol the client spoke (which
+ * the envelope's route names) and every attempt against the record's own real
+ * upstream protocol. A converted request has both, and they are not the same.
  */
 async function revealValueDetail() {
   const id = props.usageLogId
@@ -1025,7 +1034,8 @@ async function revealValueDetail() {
   valueDetailRevealFailed.value = false
   valueDetailRevealBlockedReason.value = ''
   try {
-    const revealed = await stepUp.run(() => revealRequestAuditValueDetail(id))
+    const protocols = requestAuditValueDetailProtocols(valueDetail.value)
+    const revealed = await stepUp.run(() => revealRequestAuditValueDetail(id, protocols))
     if (!isValueDetailRevealCurrent(currentRevision, id)) {
       discardRevealedValueDetail(currentRevision)
       return

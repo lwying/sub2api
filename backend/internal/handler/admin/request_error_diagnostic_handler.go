@@ -68,6 +68,18 @@ type RequestErrorDiagnosticView struct {
 	HeaderReason     string     `json:"header_reason"`
 	HeaderEntryCount int        `json:"header_entry_count"`
 	HeaderExpiresAt  *time.Time `json:"header_expires_at,omitempty"`
+
+	// 留存格式（票据 08／09）：encrypted＝旧密文层（自有七天窗口、需要旧密钥），
+	// plaintext＝新明文层（明文落库、随 usage 或三十天、不需要密钥）。
+	//
+	// 与状态分开披露：只给状态会让「明文留在库里」与「密文等着旧密钥」看起来一样。
+	BodyFormat   string `json:"body_format"`
+	HeaderFormat string `json:"header_format"`
+	// UsageLinked 报告新明文行是否已被可靠关联到一条使用记录。
+	//
+	// 为真时这一行**没有**自有到期窗口：它随使用记录删除，metadata_expires_at 不再是它的
+	// 读取上限（旧列的三十天只是「未关联时」的截止）。界面据此显示真实规则。
+	UsageLinked bool `json:"usage_linked"`
 }
 
 // NewRequestErrorDiagnosticHandler 构造错误诊断只读处理器。
@@ -204,10 +216,18 @@ func (h *RequestErrorDiagnosticHandler) RevealBody(c *gin.Context) {
 		return
 	}
 
-	switch record.BodyState {
+	// 到期规则随**格式**不同：旧密文是自有七天窗口，新明文是「关联则随 usage，
+	// 未关联则三十天整点拒绝」。用旧窗口判新行会让仍可读的明文被拒。
+	bodyState := record.BodyState
+	bodyReadable := record.BodyReadableAt(now)
+	if record.BodyFormat() == service.ErrorDiagnosticFormatPlaintext {
+		bodyState = record.PlainBodyState
+		bodyReadable = record.PlainBodyReadableAt(now)
+	}
+	switch bodyState {
 	case service.ErrorDiagnosticBodyStateStored:
-		// 正文可能在第 7 天后的清理与本次读取之间到期，这里再判一次。
-		if !record.BodyReadableAt(now) {
+		// 正文可能在到期时刻与本次读取之间不可读，这里再判一次。
+		if !bodyReadable {
 			response.ErrorFrom(c, errDiagnosticBodyGone)
 			return
 		}
@@ -222,9 +242,13 @@ func (h *RequestErrorDiagnosticHandler) RevealBody(c *gin.Context) {
 			response.ErrorFrom(c, errDiagnosticBodyGone)
 			return
 		}
+		// 格式随载荷一起披露：管理员必须知道这份正文是明文留在库里（没有加密保护、
+		// 随 usage 或三十天），还是旧密文（需要旧密钥、七天）。
 		response.Success(c, gin.H{
-			"body_text":  string(body),
-			"body_bytes": len(body),
+			"body_text":    string(body),
+			"body_bytes":   len(body),
+			"body_format":  discloseErrorDiagnosticFormat(record.BodyFormat()),
+			"usage_linked": record.PlainLinked,
 		})
 	case service.ErrorDiagnosticBodyStateExpired, service.ErrorDiagnosticBodyStatePurged:
 		response.ErrorFrom(c, errDiagnosticBodyGone)
@@ -268,10 +292,17 @@ func (h *RequestErrorDiagnosticHandler) RevealHeaderValues(c *gin.Context) {
 		return
 	}
 
-	switch record.HeaderState {
+	// 与正文同一约定：头值的到期规则也随格式不同（旧密文七天，新明文随 usage／三十天）。
+	headerState := record.HeaderState
+	headerReadable := record.HeaderValuesReadableAt(now)
+	if record.HeaderFormat() == service.ErrorDiagnosticFormatPlaintext {
+		headerState = record.PlainHeaderState
+		headerReadable = record.PlainHeaderValuesReadableAt(now)
+	}
+	switch headerState {
 	case service.ErrorDiagnosticHeaderStateStored:
-		// 头值可能在第 7 天后的清理与本次读取之间到期，这里再判一次。
-		if !record.HeaderValuesReadableAt(now) {
+		// 头值可能在到期时刻与本次读取之间不可读，这里再判一次。
+		if !headerReadable {
 			response.ErrorFrom(c, errDiagnosticHeaderValuesGone)
 			return
 		}
@@ -285,12 +316,23 @@ func (h *RequestErrorDiagnosticHandler) RevealHeaderValues(c *gin.Context) {
 			response.ErrorFrom(c, errDiagnosticHeaderValuesGone)
 			return
 		}
+		// 「只含白名单内允许记录的头值」这一披露口径随格式一起给出：快照本身从不断言
+		// 「上游只发了这些头」，两种格式下都不放宽这一点。
+		headerBytes := record.HeaderBytes
+		var headerExpiresAt any = record.HeaderExpiresAt
+		if record.HeaderFormat() == service.ErrorDiagnosticFormatPlaintext {
+			// 新明文层没有自有七天窗口；不构造假的公元 1 年到期时刻。
+			// 未关联时的截止由 metadata_expires_at 表达，已关联时随 usage 删除。
+			headerBytes, headerExpiresAt = record.PlainHeaderBytes, nil
+		}
 		response.Success(c, gin.H{
 			"request_headers":    values.Request,
 			"response_headers":   values.Response,
 			"header_entry_count": values.EntryCount(),
-			"header_bytes":       record.HeaderBytes,
-			"header_expires_at":  record.HeaderExpiresAt,
+			"header_bytes":       headerBytes,
+			"header_expires_at":  headerExpiresAt,
+			"header_format":      discloseErrorDiagnosticFormat(record.HeaderFormat()),
+			"usage_linked":       record.PlainLinked,
 		})
 	case service.ErrorDiagnosticHeaderStateExpired, service.ErrorDiagnosticHeaderStatePurged:
 		response.ErrorFrom(c, errDiagnosticHeaderValuesGone)
@@ -310,18 +352,33 @@ func discloseErrorDiagnosticRecord(record service.ErrorDiagnosticRecord) (Reques
 	if !ok {
 		return RequestErrorDiagnosticView{}, false
 	}
+	// 新明文行的事实来自明文列，旧行来自密文列：披露必须跟随**格式**，
+	// 否则一条明文存活的诊断会显示成「未观察到正文」。
+	bodyState, bodyReason := record.BodyState, record.BodyReason
+	headerState, headerReason := record.HeaderState, record.HeaderReason
+	headerEntryCount := record.HeaderEntryCount
+	if record.BodyFormat() == service.ErrorDiagnosticFormatPlaintext {
+		bodyState, bodyReason = record.PlainBodyState, record.PlainBodyReason
+	}
+	if record.HeaderFormat() == service.ErrorDiagnosticFormatPlaintext {
+		headerState, headerReason = record.PlainHeaderState, record.PlainHeaderReason
+		headerEntryCount = record.PlainHeaderEntryCount
+	}
 	view := RequestErrorDiagnosticView{
 		ID:                record.ID,
 		CreatedAt:         record.CreatedAt,
 		Protocol:          protocol,
 		AttemptIndex:      record.AttemptIndex,
 		UpstreamStatus:    record.UpstreamStatusCode,
-		BodyState:         discloseErrorDiagnosticBodyState(record.BodyState),
-		Reason:            discloseErrorDiagnosticBodyReason(record.BodyReason),
+		BodyState:         discloseErrorDiagnosticBodyState(bodyState),
+		Reason:            discloseErrorDiagnosticBodyReason(bodyReason),
 		MetadataExpiresAt: record.MetadataExpiresAt,
-		HeaderState:       discloseErrorDiagnosticHeaderState(record.HeaderState),
-		HeaderReason:      discloseErrorDiagnosticHeaderReason(record.HeaderReason),
-		HeaderEntryCount:  record.HeaderEntryCount,
+		HeaderState:       discloseErrorDiagnosticHeaderState(headerState),
+		HeaderReason:      discloseErrorDiagnosticHeaderReason(headerReason),
+		HeaderEntryCount:  headerEntryCount,
+		BodyFormat:        discloseErrorDiagnosticFormat(record.BodyFormat()),
+		HeaderFormat:      discloseErrorDiagnosticFormat(record.HeaderFormat()),
+		UsageLinked:       record.PlainLinked,
 	}
 	// HasUsage 才是「有关联使用记录」的事实，绝不从 UsageLogID == 0 反推。
 	if record.HasUsage && record.UsageLogID > 0 {
@@ -370,6 +427,7 @@ func discloseErrorDiagnosticBodyState(state string) string {
 func discloseErrorDiagnosticBodyReason(reason string) string {
 	switch reason {
 	case service.ErrorDiagnosticBodyRetained,
+		service.ErrorDiagnosticPlainBodyRetained,
 		service.ErrorDiagnosticBodySkippedNotTextJSON,
 		service.ErrorDiagnosticBodySkippedTooLarge,
 		service.ErrorDiagnosticBodySkippedAttachment,
@@ -381,6 +439,15 @@ func discloseErrorDiagnosticBodyReason(reason string) string {
 	default:
 		return service.ErrorDiagnosticBodyNotObserved
 	}
+}
+
+// discloseErrorDiagnosticFormat 只回声两种已知留存格式；未知值按旧密文处理——
+// 它是最保守的说法（需要密钥、有七天窗口），不会把未知的行说成「明文可读」。
+func discloseErrorDiagnosticFormat(format string) string {
+	if format == service.ErrorDiagnosticFormatPlaintext {
+		return service.ErrorDiagnosticFormatPlaintext
+	}
+	return service.ErrorDiagnosticFormatEncrypted
 }
 
 // discloseErrorDiagnosticHeaderState 只回声存储层的封闭集合；未知值按最保守的
@@ -402,6 +469,7 @@ func discloseErrorDiagnosticHeaderState(state string) string {
 func discloseErrorDiagnosticHeaderReason(reason string) string {
 	switch reason {
 	case service.ErrorDiagnosticHeaderRetained,
+		service.ErrorDiagnosticPlainHeaderRetained,
 		service.ErrorDiagnosticHeaderSkippedRetentionDisabled,
 		service.ErrorDiagnosticHeaderSkippedEncryptionUnavailable,
 		service.ErrorDiagnosticHeaderSkippedInvalidValues:

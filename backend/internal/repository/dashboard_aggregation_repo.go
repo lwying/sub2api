@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -237,6 +238,16 @@ func (r *dashboardAggregationRepository) CleanupUsageLogs(ctx context.Context, c
 	}
 	if isPartitioned {
 		if err := r.dropUsageLogsPartitions(ctx, cutoff); err != nil {
+			// Partition DROP skips row-level cascading for plaintext sidecars.
+			// Continue with bounded row deletes, which do invoke the FK actions
+			// whenever the ownership foreign keys are still in place; report the
+			// blocked DROP after that safe progress rather than stalling retention
+			// for every later cycle. When the ownership keys are gone the row
+			// deletes are refused too, so the error is returned with the data left
+			// untouched instead of trading the DROP for an orphan.
+			if cleanupErr := r.cleanupUsageLogsBatches(ctx, cutoff); cleanupErr != nil {
+				return errors.Join(err, cleanupErr)
+			}
 			return err
 		}
 	}
@@ -246,6 +257,159 @@ func (r *dashboardAggregationRepository) CleanupUsageLogs(ctx context.Context, c
 		return err
 	}
 	return r.SyncGroupUsageRollups(ctx, service.GroupUsageTodayStart(r.now()))
+}
+
+// errPlaintextOwnershipUnverified 表示随 usage 的明文旁路表已部署，但保证「usage 行真
+// 删除时它们同步消失」的数据库级所有权外键已经缺失（迁移 253/255 的单列
+// `REFERENCES usage_logs(id) ON DELETE CASCADE`，或分区父表上唯一可能的
+// (id, created_at) 复合形式）。此时删除 usage 行或 DROP 分区都会让明文变成没有任何
+// 外键动作能回收的孤儿，因此清理必须失败关闭：报错、保留数据。
+var errPlaintextOwnershipUnverified = errors.New(
+	"refusing usage cleanup: plaintext sidecar tables exist without an ON DELETE CASCADE ownership foreign key to usage_logs")
+
+// plaintextSidecarOwnership 是一次目录核对的结论：每张随 usage 明文旁路表是否已部署，
+// 以及它的所有权是否仍由数据库外键保证。没部署的表视为无需保护。
+type plaintextSidecarOwnership struct {
+	valueDetailsExists bool
+	valueDetailsOwned  bool
+	diagnosticsExists  bool
+	diagnosticsOwned   bool
+}
+
+// verificationError 在所有权不成立时返回带缺失列名的错误，成立时返回 nil。
+func (o plaintextSidecarOwnership) verificationError() error {
+	var missing []string
+	if !o.valueDetailsOwned {
+		missing = append(missing, "request_audit_value_details.usage_log_id")
+	}
+	if !o.diagnosticsOwned {
+		missing = append(missing, "error_diagnostic_records.plain_owner_usage_log_id")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w (%s)", errPlaintextOwnershipUnverified, strings.Join(missing, ", "))
+}
+
+// probePlaintextSidecarOwnership 用一次只读系统目录的查询回答：两张随 usage 明文旁路表
+// 是否存在，以及各自的所有权外键是否仍在。所有权判定要求：外键（contype='f'）、
+// ON DELETE CASCADE（confdeltype='c'）、被引用列是 usage_logs、**与旁路表在同一个
+// schema**（不是只比表名，否则同名表或跨 schema 的同名表会被误判为已保证），且
+// conkey 里确实包含该旁路表的所有权列。查询不扫描业务行，也不处理不存在的表。
+func probePlaintextSidecarOwnership(ctx context.Context, q sqlQueryer) (plaintextSidecarOwnership, error) {
+	const query = `
+		WITH sidecars AS (
+			SELECT to_regclass('request_audit_value_details') AS value_details,
+			       to_regclass('error_diagnostic_records') AS diagnostics
+		)
+		SELECT
+			sidecars.value_details IS NOT NULL AS value_details_exists,
+			sidecars.value_details IS NULL OR EXISTS (
+				SELECT 1
+				FROM pg_constraint con
+				JOIN pg_class parent ON parent.oid = con.confrelid
+				JOIN pg_class child ON child.oid = con.conrelid
+				JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+				WHERE con.conrelid = sidecars.value_details
+				  AND con.contype = 'f'
+				  AND con.confdeltype = 'c'
+				  AND parent.relname = 'usage_logs'
+				  AND parent.relnamespace = child.relnamespace
+				  AND att.attname = 'usage_log_id'
+			) AS value_details_owned,
+			sidecars.diagnostics IS NOT NULL AS diagnostics_exists,
+			sidecars.diagnostics IS NULL OR EXISTS (
+				SELECT 1
+				FROM pg_constraint con
+				JOIN pg_class parent ON parent.oid = con.confrelid
+				JOIN pg_class child ON child.oid = con.conrelid
+				JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+				WHERE con.conrelid = sidecars.diagnostics
+				  AND con.contype = 'f'
+				  AND con.confdeltype = 'c'
+				  AND parent.relname = 'usage_logs'
+				  AND parent.relnamespace = child.relnamespace
+				  AND att.attname = 'plain_owner_usage_log_id'
+			) AS diagnostics_owned
+		FROM sidecars
+	`
+	var ownership plaintextSidecarOwnership
+	if err := scanSingleRow(ctx, q, query, nil,
+		&ownership.valueDetailsExists, &ownership.valueDetailsOwned,
+		&ownership.diagnosticsExists, &ownership.diagnosticsOwned,
+	); err != nil {
+		return plaintextSidecarOwnership{}, err
+	}
+	return ownership, nil
+}
+
+// errPlaintextOwnershipLockUnpinned 表示调用方的执行器不是可确认的事务，因此无法把
+// 「核对时所有权外键在」这一结论钉到 DELETE：锁一旦离开语句就可能被并发的
+// ALTER TABLE ... DROP CONSTRAINT 改写。旁路表已部署时一律拒绝删除。
+var errPlaintextOwnershipLockUnpinned = errors.New(
+	"refusing usage cleanup: this adapter cannot hold the plaintext ownership lock before deleting usage rows")
+
+// deployedSidecars 返回已部署（存在）的明文旁路表名。
+func (o plaintextSidecarOwnership) deployedSidecars() []string {
+	deployed := make([]string, 0, 2)
+	if o.valueDetailsExists {
+		deployed = append(deployed, "request_audit_value_details")
+	}
+	if o.diagnosticsExists {
+		deployed = append(deployed, "error_diagnostic_records")
+	}
+	return deployed
+}
+
+// ensureUsageCleanupPreservesPlaintextOwnership 必须在执行删除的同一个事务里、且在任何
+// usage 行 DELETE 与任何分区 DROP 之前调用。数据库级所有权不成立时一律返回错误并保留
+// 数据：不做「先删 usage 行再看孤儿」的任何尝试，外键缺失就是不删。
+//
+// lockPlaintextSidecars=true 只允许在调用方明确持有事务时传（*sql.DB 下守卫自己开的
+// 事务，或调用方的 *sql.Tx）：守卫在确认所有权成立后对已部署的旁路表取 ACCESS SHARE
+// 锁，再重新核对一次。ACCESS SHARE 只与 ALTER TABLE 需要的 ACCESS EXCLUSIVE 冲突，不会
+// 挡住采集写入（ROW EXCLUSIVE），却能把「核对时外键在」钉到事务结束，使并发的
+// ALTER TABLE ... DROP CONSTRAINT 无法在核对与 DELETE 之间生效。分区 DROP 门禁已持有
+// 更强的 SHARE ROW EXCLUSIVE 锁（走 false）。无法确认事务的适配器不得传 true：它连
+// 「锁还在不在」都证明不了，只能失败关闭——见 cleanupUsageLogsBatches 的非事务分支。
+func ensureUsageCleanupPreservesPlaintextOwnership(
+	ctx context.Context,
+	q sqlExecutor,
+	lockPlaintextSidecars bool,
+) error {
+	ownership, err := probePlaintextSidecarOwnership(ctx, q)
+	if err != nil {
+		return err
+	}
+	if err := ownership.verificationError(); err != nil {
+		return err
+	}
+	if !lockPlaintextSidecars {
+		return nil
+	}
+	// 只锁已部署的表：未部署的能力没有可孤儿化的行，也不该让 LOCK 因缺表而报错。
+	sidecars := make([]string, 0, 2)
+	if ownership.valueDetailsExists {
+		sidecars = append(sidecars, "request_audit_value_details")
+	}
+	if ownership.diagnosticsExists {
+		sidecars = append(sidecars, "error_diagnostic_records")
+	}
+	if len(sidecars) == 0 {
+		return nil
+	}
+	for _, table := range sidecars {
+		if _, err := q.ExecContext(ctx, "LOCK TABLE "+pq.QuoteIdentifier(table)+" IN ACCESS SHARE MODE"); err != nil {
+			return err
+		}
+	}
+	// 拿锁之前可能刚好有一次并发的 DROP CONSTRAINT 提交；拿锁之后外键状态才是稳定的，
+	// 所以重新核对一次再决定是否允许删除。
+	ownership, err = probePlaintextSidecarOwnership(ctx, q)
+	if err != nil {
+		return err
+	}
+	return ownership.verificationError()
 }
 
 func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Context, cutoff time.Time) error {
@@ -262,6 +426,23 @@ func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Con
 			continue
 		}
 
+		// 该分支没有 *sql.DB 可用，因而拿不到「自己开事务」的保证。只有调用方明确传进来的
+		// 事务（*sql.Tx）才可能把 ACCESS SHARE 锁留到 DELETE；其它执行器（连接池包装、
+		// 自动提交适配器）连「锁还在不在」都证明不了，一律失败关闭：只要旁路表已部署就
+		// 拒绝删除，两张表都未部署（该能力未部署/未迁移）时照常推进保留期。
+		if _, callerTx := r.sql.(*sql.Tx); callerTx {
+			if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, r.sql, true); err != nil {
+				return err
+			}
+		} else {
+			ownership, err := probePlaintextSidecarOwnership(ctx, r.sql)
+			if err != nil {
+				return err
+			}
+			if deployed := ownership.deployedSidecars(); len(deployed) > 0 {
+				return fmt.Errorf("%w (%s)", errPlaintextOwnershipLockUnpinned, strings.Join(deployed, ", "))
+			}
+		}
 		res, err := r.sql.ExecContext(ctx, `
 			WITH victims AS (
 				SELECT tableoid, ctid
@@ -297,6 +478,11 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 	}
 
 	if err := lockGroupUsageRollupState(ctx, tx); err != nil {
+		return rollback(err)
+	}
+	// 逐行 DELETE 依赖所有权外键把随 usage 明文一起带走；外键被手工去掉后同一条
+	// DELETE 会把明文留成孤儿，所以先在同一事务里核对所有权并钉住结论，缺失即整批拒绝。
+	if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, tx, true); err != nil {
 		return rollback(err)
 	}
 	rows, err := tx.QueryContext(ctx, `
@@ -638,10 +824,10 @@ func (r *dashboardAggregationRepository) dropUsageLogsPartitions(ctx context.Con
 		}
 		return nil
 	}
-	for _, partition := range partitions {
-		if _, err := r.sql.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", pq.QuoteIdentifier(partition.name))); err != nil {
-			return err
-		}
+	if len(partitions) > 0 {
+		// A DROP does not run row-level ON DELETE CASCADE. This adapter cannot
+		// synchronously guard the deletion, so fail closed.
+		return fmt.Errorf("usage partition %s requires transactional plaintext diagnostic cleanup before DROP", partitions[0].name)
 	}
 	return nil
 }
@@ -661,6 +847,60 @@ func dropUsageLogsPartitionWithRollupInvalidation(ctx context.Context, db *sql.D
 	}
 	if err := invalidateGroupUsageRollupsAt(ctx, tx, monthStart); err != nil {
 		return rollback(err)
+	}
+	// PostgreSQL partition DROP bypasses row-level FK deletion. Refuse the
+	// DROP while the victim partition owns any plaintext diagnostic rows;
+	// usage retention can still proceed by ordinary batched DELETE (which
+	// invokes the ON DELETE CASCADE FK). A caller must not bypass this guard.
+	//
+	// The check and the DROP must also not race a concurrent link: a plaintext
+	// diagnostic that acquires its usage owner between the two statements would
+	// be dropped without its cascade ever running. SHARE ROW EXCLUSIVE conflicts
+	// with the ROW EXCLUSIVE taken by that linking UPDATE, so a link either
+	// committed before this lock (and is therefore visible to the check below) or
+	// waits until this transaction has finished.
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE error_diagnostic_records IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return rollback(err)
+	}
+	// A concurrent value-detail INSERT could commit after the EXISTS check but
+	// before the partition DROP. Serialize both writes and the check with this
+	// table lock so the usage-owned plaintext cannot be orphaned.
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE request_audit_value_details IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return rollback(err)
+	}
+	// 上面两个 EXISTS 只按「受害分区此刻仍有可关联的 usage 行」判断，一旦前一轮清理
+	// 已经把 usage 行删掉（或外键缺失让它们变成孤儿），分区看起来就干净了。因此在
+	// DROP 之前先在同一事务里核对所有权：旁路表已部署而所有权外键缺失时拒绝 DROP，
+	// 不能把「已经没人指认的明文」随分区一起丢掉。这里已持有 SHARE ROW EXCLUSIVE
+	// （强于 ACCESS SHARE），并发的 DROP CONSTRAINT 无法在核对与 DROP 之间生效。
+	if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, tx, false); err != nil {
+		return rollback(fmt.Errorf("usage partition %s: %w", name, err))
+	}
+	var linkedValueDetails bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM request_audit_value_details v
+			JOIN usage_logs u ON u.id = v.usage_log_id
+			WHERE u.tableoid = $1::regclass
+			  AND v.storage_format = 'plaintext_usage_bound'
+		)`, name).Scan(&linkedValueDetails); err != nil {
+		return rollback(err)
+	}
+	if linkedValueDetails {
+		return rollback(fmt.Errorf("usage partition %s contains usage-owned plaintext value details; refusing DROP", name))
+	}
+	var linkedPlaintext bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM error_diagnostic_records d
+			JOIN usage_logs u ON u.id = d.plain_owner_usage_log_id
+			WHERE u.tableoid = $1::regclass
+			  AND d.plain_record
+		)`, name).Scan(&linkedPlaintext); err != nil {
+		return rollback(err)
+	}
+	if linkedPlaintext {
+		return rollback(fmt.Errorf("usage partition %s contains linked plaintext diagnostics; refusing DROP", name))
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", pq.QuoteIdentifier(name))); err != nil {
 		return rollback(err)

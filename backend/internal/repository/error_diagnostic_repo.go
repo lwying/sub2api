@@ -34,7 +34,11 @@ const errorDiagnosticRecordColumns = `
 	body_state, body_reason, (body_ciphertext IS NOT NULL), body_bytes, body_key_version,
 	created_at, metadata_expires_at, body_expires_at,
 	header_state, header_reason, (header_ciphertext IS NOT NULL), header_bytes, header_key_version,
-	header_entry_count, header_expires_at
+	header_entry_count, header_expires_at,
+	plain_record, plain_owner_usage_log_id,
+	(plain_body_payload IS NOT NULL), plain_body_state, plain_body_reason, plain_body_bytes,
+	(plain_header_payload IS NOT NULL), plain_header_state, plain_header_reason,
+	plain_header_bytes, plain_header_entry_count
 `
 
 type errorDiagnosticRowScanner interface {
@@ -46,6 +50,7 @@ func scanErrorDiagnosticRecord(row errorDiagnosticRowScanner) (service.ErrorDiag
 	var usageLogID sql.NullInt64
 	var bodyExpiresAt sql.NullTime
 	var headerExpiresAt sql.NullTime
+	var plainOwner sql.NullInt64
 	err := row.Scan(
 		&record.ID, &usageLogID, &record.Protocol, &record.AttemptIndex, &record.Stage,
 		&record.UpstreamStatusCode, &record.BodyState, &record.BodyReason, &record.BodyStored,
@@ -53,6 +58,10 @@ func scanErrorDiagnosticRecord(row errorDiagnosticRowScanner) (service.ErrorDiag
 		&bodyExpiresAt,
 		&record.HeaderState, &record.HeaderReason, &record.HeaderStored, &record.HeaderBytes,
 		&record.HeaderKeyVersion, &record.HeaderEntryCount, &headerExpiresAt,
+		&record.PlainRecord, &plainOwner,
+		&record.PlainBodyStored, &record.PlainBodyState, &record.PlainBodyReason, &record.PlainBodyBytes,
+		&record.PlainHeaderStored, &record.PlainHeaderState, &record.PlainHeaderReason,
+		&record.PlainHeaderBytes, &record.PlainHeaderEntryCount,
 	)
 	if err != nil {
 		return service.ErrorDiagnosticRecord{}, err
@@ -66,6 +75,15 @@ func scanErrorDiagnosticRecord(row errorDiagnosticRowScanner) (service.ErrorDiag
 	}
 	if headerExpiresAt.Valid {
 		record.HeaderExpiresAt = headerExpiresAt.Time
+	}
+	// 新明文行的「有关联使用记录」由**所有者**列回答，而不是旧的可空 usage_log_id：
+	// 旧列的 SET NULL 语义与新层的级联所有权是两件事，混用会把「曾经关联过、现已被置空」
+	// 显示成仍然有人拥有它。有一个就披露一个，两个都有时以新层的所有者为准。
+	if plainOwner.Valid {
+		record.PlainLinked = true
+		record.PlainOwnerUsageLogID = plainOwner.Int64
+		record.UsageLogID = plainOwner.Int64
+		record.HasUsage = true
 	}
 	return record, nil
 }
@@ -124,7 +142,11 @@ func (r *errorDiagnosticRepository) CreateErrorDiagnostic(ctx context.Context, w
 	}
 
 	var usageLogID any
-	if write.Attempt.UsageLogID > 0 {
+	if write.Attempt.UsageLogID > 0 && !write.PlainRecord {
+		// 新明文行的所有权只由 plain_owner_usage_log_id（可验证关联后写入、级联删除）表达：
+		// 存储层的互斥约束不允许一行同时带旧的可空关联与新层的所有者，而且旧列是 SET NULL
+		// 语义，用它当所有人的话「用了这条 usage 的明文」会活得比 usage 还久。
+		// 写入时所有者必为空（此刻还没有验证过任何关联），因此明文行一律不带旧关联。
 		usageLogID = write.Attempt.UsageLogID
 	}
 	// ciphertext 保持 any：nil 才会被绑定成 SQL NULL。
@@ -176,14 +198,32 @@ func (r *errorDiagnosticRepository) CreateErrorDiagnostic(ctx context.Context, w
 		HeaderExpiresAt:  headerExpiresAt.Time,
 	}
 
+	plain := newPlainDiagnosticColumns(write)
+	record.PlainRecord = plain.record
+	record.PlainBodyState = plain.bodyState
+	record.PlainBodyReason = plain.bodyReason
+	record.PlainBodyBytes = plain.bodyBytes
+	record.PlainBodyStored = plain.bodyPayload != nil
+	record.PlainHeaderState = plain.headerState
+	record.PlainHeaderReason = plain.headerReason
+	record.PlainHeaderBytes = plain.headerBytes
+	record.PlainHeaderEntryCount = plain.headerEntryCount
+	record.PlainHeaderStored = plain.headerPayload != nil
+
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO error_diagnostic_records (
 			diagnostic_id, usage_log_id, protocol, attempt_index, stage, upstream_status,
 			body_state, body_reason, body_ciphertext, body_key_version, body_bytes,
 			created_at, metadata_expires_at, body_expires_at,
 			header_state, header_reason, header_ciphertext, header_key_version, header_bytes,
-			header_entry_count, header_expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			header_entry_count, header_expires_at,
+			plain_record, plain_owner_usage_log_id, plain_link_digest,
+			plain_link_attempt_index, plain_link_wire_status,
+			plain_body_state, plain_body_reason, plain_body_payload, plain_body_bytes,
+			plain_header_state, plain_header_reason, plain_header_payload,
+			plain_header_bytes, plain_header_entry_count
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+			$22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
 		RETURNING created_at
 	`,
 		record.ID, usageLogID, record.Protocol, record.AttemptIndex, record.Stage, record.UpstreamStatusCode,
@@ -191,11 +231,144 @@ func (r *errorDiagnosticRepository) CreateErrorDiagnostic(ctx context.Context, w
 		now, metadataExpiresAt, bodyExpiresAt,
 		headerState, headerReason, headerCiphertextParam, headerKeyVersion, headerPayloadBytes,
 		headerEntryCount, headerExpiresAt,
+		plain.record, plain.ownerUsageLogID, plain.linkDigest,
+		plain.linkAttemptIndex, plain.linkWireStatus,
+		plain.bodyState, plain.bodyReason, plain.bodyPayload, plain.bodyBytes,
+		plain.headerState, plain.headerReason, plain.headerPayload,
+		plain.headerBytes, plain.headerEntryCount,
 	).Scan(&record.CreatedAt)
 	if err != nil {
 		return service.ErrorDiagnosticRecord{}, fmt.Errorf("create error diagnostic: %w", err)
 	}
 	return record, nil
+}
+
+// plainDiagnosticMaxHeaderEntryCount 是存储层对明文头值条数的硬上限
+// （见迁移 255 的 error_diagnostic_plain_header_pair）。
+const plainDiagnosticMaxHeaderEntryCount = 64
+
+// plainDiagnosticColumns 是一次插入要绑定到新明文列上的值。
+//
+// 每个字段都必须是**已收敛**的：落库值不满足存储层封闭集合时，宁可把该层记成未采集，
+// 也不能让整次写入失败——诊断写入是 fail-open 的旁路，一条约束冲突会把整条观察丢掉，
+// 而「丢整行」比「少一层」严重得多。
+type plainDiagnosticColumns struct {
+	record           bool
+	ownerUsageLogID  any
+	linkDigest       any
+	linkAttemptIndex any
+	linkWireStatus   any
+	bodyState        string
+	bodyReason       string
+	bodyPayload      any
+	bodyBytes        int
+	headerState      string
+	headerReason     string
+	headerPayload    any
+	headerBytes      int
+	headerEntryCount int
+}
+
+// newPlainDiagnosticColumns 把服务侧的写入决定收敛成可落库的明文列。
+//
+// 旧格式的行（PlainRecord=false）在这里落成「明文列全部未采集」：它们不是新格式，
+// 因此新列一个事实都不冒充，读取侧据 plain_record 走旧路径。
+func newPlainDiagnosticColumns(write service.ErrorDiagnosticWrite) plainDiagnosticColumns {
+	columns := plainDiagnosticColumns{
+		record:       write.PlainRecord,
+		bodyState:    service.ErrorDiagnosticBodyStateNotObserved,
+		bodyReason:   service.ErrorDiagnosticBodyNotObserved,
+		headerState:  service.ErrorDiagnosticHeaderStateNotObserved,
+		headerReason: service.ErrorDiagnosticHeaderNotObserved,
+	}
+	if !write.PlainRecord {
+		return columns
+	}
+	columns.ownerUsageLogID = nil
+	// 关联三元组只在「可验证的关联摘要 + 在界内的真实序号与状态」同时成立时写入。
+	// 存储层要求三者同进同出，缺一个就整组留空：那一行因此永远不可关联，只能按三十天截止，
+	// 而不是拿一个兜底推断的序号去猜一条关联。
+	if len(write.PlainLinkDigest) == 64 &&
+		write.PlainLinkAttemptIndex >= 1 && write.PlainLinkAttemptIndex <= service.ErrorDiagnosticMaxAttemptIndex &&
+		write.PlainLinkWireStatus >= 400 && write.PlainLinkWireStatus <= 599 {
+		columns.linkDigest = write.PlainLinkDigest
+		columns.linkAttemptIndex = write.PlainLinkAttemptIndex
+		columns.linkWireStatus = write.PlainLinkWireStatus
+	}
+
+	columns.bodyState, columns.bodyReason, columns.bodyPayload, columns.bodyBytes = normalizePlainBodyColumns(
+		write.PlainBodyState, write.PlainBodyReason, write.PlainBodyPayload)
+	columns.headerState, columns.headerReason, columns.headerPayload, columns.headerBytes, columns.headerEntryCount =
+		normalizePlainHeaderColumns(write.PlainHeaderState, write.PlainHeaderReason, write.PlainHeaderPayload, write.PlainHeaderEntryCount)
+	return columns
+}
+
+// normalizePlainBodyColumns 收敛新明文正文列的落库值。
+func normalizePlainBodyColumns(state, reason string, payload []byte) (string, string, any, int) {
+	if state != service.ErrorDiagnosticBodyStateStored {
+		switch state {
+		case service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyStateSkipped:
+			return state, plainDiagnosticAllowedBodyReason(reason), nil, 0
+		default:
+			// 未知状态：按未采集落库，绝不自称已留存。
+			return service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved, nil, 0
+		}
+	}
+	if len(payload) == 0 || len(payload) > service.ErrorDiagnosticMaxBodyBytes {
+		return service.ErrorDiagnosticBodyStateSkipped, service.ErrorDiagnosticBodySkippedTooLarge, nil, 0
+	}
+	if reason != service.ErrorDiagnosticPlainBodyRetained {
+		// 自称已留存却带着另一个原因码：这不是可解释的组合，按未采集处理。
+		return service.ErrorDiagnosticBodyStateNotObserved, service.ErrorDiagnosticBodyNotObserved, nil, 0
+	}
+	return service.ErrorDiagnosticBodyStateStored, service.ErrorDiagnosticPlainBodyRetained, payload, len(payload)
+}
+
+// normalizePlainHeaderColumns 收敛新明文 429 头值列的落库值。
+func normalizePlainHeaderColumns(state, reason string, payload []byte, entryCount int) (string, string, any, int, int) {
+	if state != service.ErrorDiagnosticHeaderStateStored {
+		switch state {
+		case service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderStateSkipped:
+			return state, plainDiagnosticAllowedHeaderReason(reason), nil, 0, 0
+		default:
+			return service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved, nil, 0, 0
+		}
+	}
+	// 条数上限与存储层的互斥约束一致：超出即整层判为不合格（绝不部分写入）。
+	if len(payload) == 0 || len(payload) > service.ErrorDiagnosticMaxHeaderPayloadBytes ||
+		entryCount <= 0 || entryCount > plainDiagnosticMaxHeaderEntryCount {
+		return service.ErrorDiagnosticHeaderStateSkipped, service.ErrorDiagnosticHeaderSkippedInvalidValues, nil, 0, 0
+	}
+	if reason != service.ErrorDiagnosticPlainHeaderRetained {
+		return service.ErrorDiagnosticHeaderStateNotObserved, service.ErrorDiagnosticHeaderNotObserved, nil, 0, 0
+	}
+	return service.ErrorDiagnosticHeaderStateStored, service.ErrorDiagnosticPlainHeaderRetained, payload, len(payload), entryCount
+}
+
+// plainDiagnosticAllowedBodyReason 只回声新明文正文列的封闭原因码集合；
+// 未知值按未采集处理，不回显任意字符串（否则约束会拒绝整次插入）。
+func plainDiagnosticAllowedBodyReason(reason string) string {
+	switch reason {
+	case service.ErrorDiagnosticBodySkippedNotTextJSON,
+		service.ErrorDiagnosticBodySkippedTooLarge,
+		service.ErrorDiagnosticBodySkippedAttachment,
+		service.ErrorDiagnosticBodySkippedKnownCredential,
+		service.ErrorDiagnosticBodySkippedIncompleteRead,
+		service.ErrorDiagnosticBodySkippedRetentionDisabled:
+		return reason
+	default:
+		return service.ErrorDiagnosticBodyNotObserved
+	}
+}
+
+// plainDiagnosticAllowedHeaderReason 只回声新明文头值列的封闭原因码集合。
+func plainDiagnosticAllowedHeaderReason(reason string) string {
+	switch reason {
+	case service.ErrorDiagnosticHeaderSkippedRetentionDisabled, service.ErrorDiagnosticHeaderSkippedInvalidValues:
+		return reason
+	default:
+		return service.ErrorDiagnosticHeaderNotObserved
+	}
 }
 
 func (r *errorDiagnosticRepository) GetErrorDiagnostic(ctx context.Context, id string) (service.ErrorDiagnosticRecord, error) {
@@ -223,10 +396,12 @@ func (r *errorDiagnosticRepository) ListErrorDiagnosticsByUsageLog(ctx context.C
 	if usageLogID <= 0 {
 		return nil, nil
 	}
+	// 两条所有权列都要匹配：旧列是可空的 SET NULL 关联，新明文层用 plain_owner_usage_log_id
+	// （级联所有权）。只查旧列会让「这次失败尝试属于这条使用记录」的明文行彻底看不见。
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+errorDiagnosticRecordColumns+`
 		FROM error_diagnostic_records
-		WHERE usage_log_id = $1
+		WHERE usage_log_id = $1 OR plain_owner_usage_log_id = $1
 		ORDER BY created_at ASC, attempt_index ASC, diagnostic_id ASC
 		LIMIT $2
 	`, usageLogID, limit)
@@ -259,6 +434,9 @@ func (r *errorDiagnosticRepository) ListRecentErrorDiagnostics(ctx context.Conte
 //
 // 与 ListRecentErrorDiagnostics 不同，这里在 SQL 层就排除已过第 30 天的行，
 // 因此翻页时不会出现「第 1 页少了几条、第 2 页又补回来」的错位。
+//
+// 已关联 usage 的新明文行不受三十天约束（它们随 usage 存在），因此这个谓词必须显式放行它们：
+// 否则一条仍然有人拥有、仍然可读的明文诊断会在第三十天从管理端消失。
 func (r *errorDiagnosticRepository) ListRecentErrorDiagnosticPage(ctx context.Context, protocol string, now time.Time, offset, limit int) ([]service.ErrorDiagnosticRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, service.ErrErrorDiagnosticUnavailable
@@ -266,7 +444,7 @@ func (r *errorDiagnosticRepository) ListRecentErrorDiagnosticPage(ctx context.Co
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+errorDiagnosticRecordColumns+`
 		FROM error_diagnostic_records
-		WHERE metadata_expires_at > $1
+		WHERE (metadata_expires_at > $1 OR (plain_record AND plain_owner_usage_log_id IS NOT NULL))
 		  AND ($2 = '' OR protocol = $2)
 		ORDER BY created_at DESC, diagnostic_id DESC
 		OFFSET $3 LIMIT $4
@@ -279,6 +457,9 @@ func (r *errorDiagnosticRepository) ListRecentErrorDiagnosticPage(ctx context.Co
 }
 
 // CountRecentErrorDiagnostics 统计仍可读（未过第 30 天）的诊断条数。
+//
+// 谓词必须与分页查询逐字一致（含「已关联明文行不受三十天约束」这一条），
+// 否则 total 与 items 会各说各话。
 func (r *errorDiagnosticRepository) CountRecentErrorDiagnostics(ctx context.Context, protocol string, now time.Time) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, service.ErrErrorDiagnosticUnavailable
@@ -287,7 +468,7 @@ func (r *errorDiagnosticRepository) CountRecentErrorDiagnostics(ctx context.Cont
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM error_diagnostic_records
-		WHERE metadata_expires_at > $1
+		WHERE (metadata_expires_at > $1 OR (plain_record AND plain_owner_usage_log_id IS NOT NULL))
 		  AND ($2 = '' OR protocol = $2)
 	`, now.UTC(), protocol).Scan(&count)
 	if err != nil {
@@ -473,11 +654,14 @@ func (r *errorDiagnosticRepository) ReadErrorDiagnosticCleanupBacklog(ctx contex
 		backlog.OldestBodyOverdueAt = oldestBody.Time
 	}
 
+	// 已关联 usage 的明文行不构成记录积压：它们的三十天列只是「未关联时的读取上限」，
+	// 不是删除时刻。把它们算成积压会让监控长期报出一个永远不会被清理的数字。
 	var oldestRecord sql.NullTime
 	err = r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*), MIN(metadata_expires_at)
 		FROM error_diagnostic_records
 		WHERE metadata_expires_at <= $1
+		  AND NOT (plain_record AND plain_owner_usage_log_id IS NOT NULL)
 	`, now).Scan(&backlog.RecordsOverdue, &oldestRecord)
 	if err != nil {
 		return service.ErrorDiagnosticCleanupBacklog{}, fmt.Errorf("read error diagnostic record backlog: %w", err)
@@ -500,12 +684,51 @@ func (r *errorDiagnosticRepository) ReadErrorDiagnosticCleanupBacklog(ctx contex
 	if oldestHeaderValue.Valid {
 		backlog.OldestHeaderOverdueAt = oldestHeaderValue.Time
 	}
+
+	// 新明文层的积压单独观测：它们是**明文**残留，与旧密文残留的处置不同，
+	// 合并成一个数会让运维看不出哪一层在落后。只统计未关联且已过 metadata_expires_at 的行——
+	// 已关联的明文随使用记录存在，没有自有到期时刻。
+	var oldestPlainBody sql.NullTime
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(metadata_expires_at)
+		FROM error_diagnostic_records
+		WHERE plain_record
+		  AND plain_owner_usage_log_id IS NULL
+		  AND plain_body_payload IS NOT NULL
+		  AND metadata_expires_at <= $1
+	`, now).Scan(&backlog.PlainBodiesOverdue, &oldestPlainBody)
+	if err != nil {
+		return service.ErrorDiagnosticCleanupBacklog{}, fmt.Errorf("read error diagnostic plain body backlog: %w", err)
+	}
+	if oldestPlainBody.Valid {
+		backlog.OldestPlainBodyOverdueAt = oldestPlainBody.Time
+	}
+
+	var oldestPlainHeader sql.NullTime
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(metadata_expires_at)
+		FROM error_diagnostic_records
+		WHERE plain_record
+		  AND plain_owner_usage_log_id IS NULL
+		  AND plain_header_payload IS NOT NULL
+		  AND metadata_expires_at <= $1
+	`, now).Scan(&backlog.PlainHeaderValuesOverdue, &oldestPlainHeader)
+	if err != nil {
+		return service.ErrorDiagnosticCleanupBacklog{}, fmt.Errorf("read error diagnostic plain header value backlog: %w", err)
+	}
+	if oldestPlainHeader.Valid {
+		backlog.OldestPlainHeaderOverdueAt = oldestPlainHeader.Time
+	}
 	return backlog, nil
 }
 
 // DeleteExpiredErrorDiagnostics 在在线主库物理删除已到第 30 天的整行元数据。
 //
 // 不触碰 usage_logs：诊断的过期与使用记录的清理互不阻塞。
+//
+// **已关联的新明文行不在范围内**：它们的所有者是使用记录，三十天只是「未关联时」的读取
+// 上限，不是删除时刻。把它们按三十天删掉会让明文早于 usage 消失（更糟的是，那会让
+// 「已关联」看起来和「未关联」没有区别）。它们的物理删除由 usage 级联负责。
 func (r *errorDiagnosticRepository) DeleteExpiredErrorDiagnostics(ctx context.Context, now time.Time, batch int) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, service.ErrErrorDiagnosticUnavailable
@@ -515,6 +738,7 @@ func (r *errorDiagnosticRepository) DeleteExpiredErrorDiagnostics(ctx context.Co
 		WHERE diagnostic_id IN (
 			SELECT diagnostic_id FROM error_diagnostic_records
 			WHERE metadata_expires_at <= $1
+			  AND NOT (plain_record AND plain_owner_usage_log_id IS NOT NULL)
 			ORDER BY metadata_expires_at ASC
 			LIMIT $2
 		)

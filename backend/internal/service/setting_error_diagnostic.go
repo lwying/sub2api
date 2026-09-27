@@ -96,5 +96,11 @@ func (s *SettingService) GetErrorDiagnosticSettings(ctx context.Context) (ErrorD
 		return ErrorDiagnosticSettings{}, err
 	}
 	effective := ApplyErrorDiagnosticRiskAcknowledgement(ctx, stored, s)
+	// 两个新明文层各自并入自己的逐字确认；它们与旧层互不影响，因此合并函数只收窄新层的
+	// 布尔值，不触碰 Enabled／RiskAcknowledged／BodyRetentionEnabled／HeaderValueRetentionEnabled。
+	effective = ApplyErrorDiagnosticPlaintextRiskAcknowledgement(ctx, effective, s)
+	// 再并入**部署前提**（ADR 0007；票据 10）：数据库不能保证明文随 usage 消失时，
+	// 两个新明文层一律关闭。同样只收窄这两个新层，旧密文与元数据采集不受影响。
+	effective = s.ApplyErrorDiagnosticPlaintextCaptureSupport(ctx, effective)
 	return s.applyErrorDiagnosticBodyRetentionKeyAvailability(effective), nil
 }

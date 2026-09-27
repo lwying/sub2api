@@ -66,7 +66,7 @@ func TestClaudeAuditValueDetailRejectsFreeFormPlaintextProtocol(t *testing.T) {
 	in := RequestAuditValueDetailInput{Route: "/v1/messages", Protocol: "token=private", Model: "claude-sonnet-4-5"}
 	write := BuildRequestAuditValueDetailWrite(in, RequestAuditValueDetailGate{CaptureAllowed: true, EncryptionAvailable: true}, time.Now())
 	require.NotNil(t, write)
-	require.Equal(t, RequestAuditValueDetailSkippedOutOfScope, write.Reason)
+	require.Equal(t, RequestAuditValueDetailSkippedUnsupportedProtocol, write.Reason)
 	require.Empty(t, write.Fields.Protocol)
 	require.Empty(t, write.Payload)
 }
@@ -78,7 +78,7 @@ func TestClaudeAuditValueDetailBedrockIsMarkedOutOfScope(t *testing.T) {
 	}
 	write := BuildRequestAuditValueDetailWrite(in, RequestAuditValueDetailGate{CaptureAllowed: true, EncryptionAvailable: true}, time.Now())
 	require.NotNil(t, write)
-	require.Equal(t, RequestAuditValueDetailSkippedOutOfScope, write.Reason)
+	require.Equal(t, RequestAuditValueDetailSkippedUnsupportedProtocol, write.Reason)
 	require.Empty(t, write.Payload)
 }
 

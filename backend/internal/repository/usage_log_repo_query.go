@@ -87,7 +87,33 @@ func (r *usageLogRepository) ListByModelAndTimeRange(ctx context.Context, modelN
 	return logs, nil, err
 }
 
+// Delete 删除单条使用记录。随 usage 的明文旁路（请求审计值明细、已关联的明文错误诊断）
+// 靠 usage_logs 上的 ON DELETE CASCADE 所有权外键回收；手工分区等去掉外键的配置下
+// 直接 DELETE 会把明文留成没有任何外键动作能回收的孤儿，因此删除前必须核对所有权，
+// 缺失时失败关闭、保留数据，绝不先删 usage 行再留孤儿。
 func (r *usageLogRepository) Delete(ctx context.Context, id int64) error {
+	if r.db != nil {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		// 核对成立后取 ACCESS SHARE 锁把「外键仍在」钉到事务结束，再执行删除：并发的
+		// ALTER TABLE ... DROP CONSTRAINT 不能在核对与 DELETE 之间生效。
+		if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, tx, true); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM usage_logs WHERE id = $1", id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		return tx.Commit()
+	}
+	// 没有连接池可自建事务（例如调用方传入的 ent.Tx / sql.Tx）：在调用方事务上取锁钉住
+	// 结论；无法持锁的适配器在旁路表已部署时失败关闭，绝不在核对与删除之间留下窗口。
+	if err := ensurePlaintextOwnershipForUnmanagedExecutor(ctx, r.sql); err != nil {
+		return err
+	}
 	_, err := r.sql.ExecContext(ctx, "DELETE FROM usage_logs WHERE id = $1", id)
 	return err
 }

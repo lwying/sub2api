@@ -39,6 +39,8 @@ export const DIAGNOSTIC_BODY_REASONS = [
   'skipped_incomplete_read',
   'skipped_encryption_unavailable',
   'skipped_body_retention_disabled',
+  // 新明文层（票据 08）：正文以明文留在库里，与密文层的 retained 分开。
+  'plain_body_retained',
 ] as const
 export type DiagnosticBodyReason = (typeof DIAGNOSTIC_BODY_REASONS)[number]
 
@@ -61,6 +63,8 @@ export const DIAGNOSTIC_HEADER_REASONS = [
   'skipped_header_retention_disabled',
   'skipped_encryption_unavailable',
   'skipped_invalid_values',
+  // 新明文层（票据 09）：头值以明文留在库里。
+  'plain_header_retained',
 ] as const
 export type DiagnosticHeaderReason = (typeof DIAGNOSTIC_HEADER_REASONS)[number]
 
@@ -95,13 +99,45 @@ export interface DiagnosticAttempt {
   header_entry_count?: number
   /** Present whenever header values were ever retained (stored / expired / purged). */
   header_expires_at?: string
+
+  /**
+   * Which retention format this row uses.
+   *
+   * `encrypted` is the legacy layer: its own seven-day window and a key that must
+   * still be configured. `plaintext` is the new layer: stored unencrypted, alive
+   * with its usage record when linked, and readable for 30 days when not.
+   *
+   * The two are deliberately separate from the state: without this field a body
+   * sitting in the database as plaintext would be indistinguishable in the UI from
+   * one waiting on a key.
+   */
+  body_format?: DiagnosticRetentionFormat
+  header_format?: DiagnosticRetentionFormat
+  /**
+   * True when a plaintext row is owned by a usage record. It then has no fixed
+   * window of its own: it is deleted with that usage record, and
+   * `metadata_expires_at` is NOT its read deadline (that cutoff only applies while
+   * the row is unlinked).
+   */
+  usage_linked?: boolean
 }
 
 export type DiagnosticAttemptPage = PaginatedResponse<DiagnosticAttempt>
 
+/**
+ * Retention formats. A missing literal (an older backend build) is read as
+ * `encrypted`: the conservative reading, which never claims that something is
+ * sitting in the database as plaintext.
+ */
+export const DIAGNOSTIC_RETENTION_FORMATS = ['encrypted', 'plaintext'] as const
+export type DiagnosticRetentionFormat = (typeof DIAGNOSTIC_RETENTION_FORMATS)[number]
+
 export interface DiagnosticBodyReveal {
   body_text: string
   body_bytes: number
+  /** Provenance of the payload just disclosed; missing means the legacy layer. */
+  body_format?: DiagnosticRetentionFormat
+  usage_linked?: boolean
 }
 
 /** Raised when a payload does not match the agreed diagnostics contract. */
@@ -181,6 +217,15 @@ export function normalizeDiagnosticAttempt(raw: unknown): DiagnosticAttempt {
   if (oneOf(DIAGNOSTIC_BODY_REASONS, raw.reason)) {
     attempt.reason = raw.reason
   }
+  // A missing format is the legacy one: never claim plaintext without the server
+  // saying so.
+  attempt.body_format = oneOf(DIAGNOSTIC_RETENTION_FORMATS, raw.body_format)
+    ? raw.body_format
+    : 'encrypted'
+  attempt.header_format = oneOf(DIAGNOSTIC_RETENTION_FORMATS, raw.header_format)
+    ? raw.header_format
+    : 'encrypted'
+  attempt.usage_linked = raw.usage_linked === true
   if (isTimestamp(raw.body_expires_at)) {
     attempt.body_expires_at = raw.body_expires_at
   }
@@ -230,7 +275,12 @@ export function normalizeDiagnosticBodyReveal(raw: unknown): DiagnosticBodyRevea
     throw new DiagnosticPayloadError('revealed body payload has no byte count')
   }
 
-  return { body_text: raw.body_text, body_bytes: raw.body_bytes }
+  const reveal: DiagnosticBodyReveal = { body_text: raw.body_text, body_bytes: raw.body_bytes }
+  reveal.body_format = oneOf(DIAGNOSTIC_RETENTION_FORMATS, raw.body_format)
+    ? raw.body_format
+    : 'encrypted'
+  reveal.usage_linked = raw.usage_linked === true
+  return reveal
 }
 
 /** True when a `stored` body is already past its own expiry and must not be read. */
@@ -258,6 +308,9 @@ export interface DiagnosticHeaderReveal {
   response_headers: Record<string, string>
   header_entry_count: number
   header_expires_at?: string
+  /** Provenance of the values just disclosed; missing means the legacy layer. */
+  header_format?: DiagnosticRetentionFormat
+  usage_linked?: boolean
 }
 
 /**
@@ -423,6 +476,10 @@ export function normalizeDiagnosticHeaderReveal(raw: unknown): DiagnosticHeaderR
   if (isTimestamp(raw.header_expires_at)) {
     reveal.header_expires_at = raw.header_expires_at
   }
+  reveal.header_format = oneOf(DIAGNOSTIC_RETENTION_FORMATS, raw.header_format)
+    ? raw.header_format
+    : 'encrypted'
+  reveal.usage_linked = raw.usage_linked === true
   return reveal
 }
 
@@ -491,6 +548,44 @@ export interface ErrorDiagnosticOperatorStatus {
   risk_acknowledgement?: ErrorDiagnosticRiskAcknowledgementView
   /** False both when no record exists and when the record covers an older statement. */
   risk_acknowledgement_current: boolean
+
+  /**
+   * The two new plaintext layers (tickets 08/09). Same shape as the layers above,
+   * but each has its own statement and neither needs a key: plaintext is stored
+   * unencrypted, so requiring one would report a working configuration as broken.
+   */
+  plain_body_enabled: boolean
+  plain_body_allowed: boolean
+  plain_header_values_enabled: boolean
+  plain_header_values_allowed: boolean
+  plain_body_risk_version: string
+  plain_body_risk_phrase_en: string
+  plain_body_risk_phrase_zh: string
+  plain_body_risk_acknowledgement?: ErrorDiagnosticRiskAcknowledgementView
+  plain_body_risk_acknowledgement_current: boolean
+  plain_header_risk_version: string
+  plain_header_risk_phrase_en: string
+  plain_header_risk_phrase_zh: string
+  plain_header_risk_acknowledgement?: ErrorDiagnosticRiskAcknowledgementView
+  plain_header_risk_acknowledgement_current: boolean
+
+  /**
+   * Deployment premise (ADR 0007) of the two plaintext layers.
+   *
+   * Plaintext rows have to disappear together with the usage record they are linked
+   * to, which only the database's ownership foreign key can promise. When this is
+   * false the two plaintext layers are refused on this deployment: their `*_allowed`
+   * conclusions go false whatever the stored switches and statements say. It does
+   * not affect the ciphertext layers or the metadata capture, and it is not a
+   * statement about any acknowledgement.
+   */
+  plaintext_capture_supported: boolean
+  /**
+   * Closed reason code behind `plaintext_capture_supported`: partitioned
+   * `usage_logs`, a dropped ownership foreign key, or a probe that could not answer.
+   * It never carries a database error, and unknown codes are shown as "unknown".
+   */
+  plaintext_capture_support_reason: string
 }
 
 /**
@@ -502,8 +597,18 @@ export interface ErrorDiagnosticOperatorUpdateInput {
   enabled: boolean
   body_retention_enabled: boolean
   header_values_enabled: boolean
+  plain_body_enabled: boolean
+  plain_header_values_enabled: boolean
   language: OperatorAckLanguage
   phrase: string
+  /**
+   * The two plaintext layers have statements of their own: they describe a
+   * different risk (unencrypted at rest, alive with their usage record,
+   * 30 days when unlinked). Reusing one field for all three would make the three
+   * statements interchangeable, which they are not.
+   */
+  plain_body_phrase: string
+  plain_header_values_phrase: string
 }
 
 /** Every gate flag must be a real boolean; a missing one must not be read as false. */
@@ -516,6 +621,11 @@ const OPERATOR_GATE_FLAGS = [
   'body_retention_allowed',
   'header_values_allowed',
   'body_encryption_key_available',
+  'plain_body_enabled',
+  'plain_body_allowed',
+  'plain_header_values_enabled',
+  'plain_header_values_allowed',
+  'plaintext_capture_supported',
 ] as const
 
 function normalizeRiskAcknowledgement(raw: unknown): ErrorDiagnosticRiskAcknowledgementView | undefined {
@@ -558,6 +668,27 @@ export function normalizeErrorDiagnosticOperatorStatus(raw: unknown): ErrorDiagn
   if (!isNonEmptyString(raw.risk_phrase_en) || !isNonEmptyString(raw.risk_phrase_zh)) {
     throw new DiagnosticPayloadError('operator status risk statement is missing')
   }
+  for (const statement of [
+    'plain_body_risk_version',
+    'plain_body_risk_phrase_en',
+    'plain_body_risk_phrase_zh',
+    'plain_header_risk_version',
+    'plain_header_risk_phrase_en',
+    'plain_header_risk_phrase_zh',
+  ] as const) {
+    if (!isNonEmptyString(raw[statement])) {
+      // A statement the UI cannot show is a statement the operator cannot give
+      // verbatim, so the whole status is treated as unreadable rather than rendered
+      // with an empty required phrase.
+      throw new DiagnosticPayloadError(`operator status ${statement} is missing`)
+    }
+  }
+  if (!isNonEmptyString(raw.plaintext_capture_support_reason)) {
+    // The reason is the entire explanation for a stored plaintext switch that is not
+    // collecting. Rendering without it would leave the operator with "off" and no
+    // way to tell a partition from a probe failure, so the status is unreadable.
+    throw new DiagnosticPayloadError('operator status plaintext_capture_support_reason is missing')
+  }
 
   const status: ErrorDiagnosticOperatorStatus = {
     enabled: raw.enabled as boolean,
@@ -572,11 +703,39 @@ export function normalizeErrorDiagnosticOperatorStatus(raw: unknown): ErrorDiagn
     risk_phrase_en: raw.risk_phrase_en as string,
     risk_phrase_zh: raw.risk_phrase_zh as string,
     risk_acknowledgement_current: raw.risk_acknowledgement_current === true,
+    plain_body_enabled: raw.plain_body_enabled as boolean,
+    plain_body_allowed: raw.plain_body_allowed as boolean,
+    plain_header_values_enabled: raw.plain_header_values_enabled as boolean,
+    plain_header_values_allowed: raw.plain_header_values_allowed as boolean,
+    plain_body_risk_version: raw.plain_body_risk_version as string,
+    plain_body_risk_phrase_en: raw.plain_body_risk_phrase_en as string,
+    plain_body_risk_phrase_zh: raw.plain_body_risk_phrase_zh as string,
+    plain_header_risk_version: raw.plain_header_risk_version as string,
+    plain_header_risk_phrase_en: raw.plain_header_risk_phrase_en as string,
+    plain_header_risk_phrase_zh: raw.plain_header_risk_phrase_zh as string,
+    plain_body_risk_acknowledgement_current: raw.plain_body_risk_acknowledgement_current === true,
+    plain_header_risk_acknowledgement_current:
+      raw.plain_header_risk_acknowledgement_current === true,
+    plaintext_capture_supported: raw.plaintext_capture_supported as boolean,
+    plaintext_capture_support_reason: raw.plaintext_capture_support_reason as string,
   }
 
   const acknowledgement = normalizeRiskAcknowledgement(raw.risk_acknowledgement)
   if (acknowledgement) {
     status.risk_acknowledgement = acknowledgement
+  }
+
+  status.plain_body_enabled = raw.plain_body_enabled as boolean
+  status.plain_body_allowed = raw.plain_body_allowed as boolean
+  status.plain_header_values_enabled = raw.plain_header_values_enabled as boolean
+  status.plain_header_values_allowed = raw.plain_header_values_allowed as boolean
+  const plainBodyAcknowledgement = normalizeRiskAcknowledgement(raw.plain_body_risk_acknowledgement)
+  if (plainBodyAcknowledgement) {
+    status.plain_body_risk_acknowledgement = plainBodyAcknowledgement
+  }
+  const plainHeaderAcknowledgement = normalizeRiskAcknowledgement(raw.plain_header_risk_acknowledgement)
+  if (plainHeaderAcknowledgement) {
+    status.plain_header_risk_acknowledgement = plainHeaderAcknowledgement
   }
 
   return status

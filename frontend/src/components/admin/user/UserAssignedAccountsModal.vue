@@ -87,6 +87,31 @@
             @input="handleSearchInput"
           />
 
+          <div class="mt-3 flex flex-wrap gap-2">
+            <select data-test="candidate-platform" v-model="candidatePlatform" class="input w-36" @change="handleCandidateFilterChange">
+              <option value="">{{ t('assignedAccounts.filters.allPlatforms') }}</option>
+              <option v-for="option in CONCRETE_PLATFORM_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <select data-test="candidate-type" v-model="candidateType" class="input w-36" @change="handleCandidateFilterChange">
+              <option value="">{{ t('assignedAccounts.filters.allTypes') }}</option>
+              <option v-for="option in ACCOUNT_TYPE_OPTIONS" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
+            </select>
+            <select data-test="candidate-status" v-model="candidateStatus" class="input w-36" @change="handleCandidateFilterChange">
+              <option value="">{{ t('admin.accounts.allStatus') }}</option>
+              <option value="active">{{ t('admin.accounts.status.active') }}</option>
+              <option value="inactive">{{ t('admin.accounts.status.inactive') }}</option>
+              <option value="error">{{ t('admin.accounts.status.error') }}</option>
+              <option value="rate_limited">{{ t('admin.accounts.status.rateLimited') }}</option>
+              <option value="temp_unschedulable">{{ t('admin.accounts.status.tempUnschedulable') }}</option>
+              <option value="unschedulable">{{ t('admin.accounts.status.unschedulable') }}</option>
+            </select>
+            <select data-test="candidate-group" v-model="candidateGroup" class="input w-40" :disabled="groupsFailed" @change="handleCandidateFilterChange">
+              <option value="">{{ t('admin.accounts.allGroups') }}</option>
+              <option v-if="!groupsFailed" value="ungrouped">{{ t('admin.accounts.ungroupedGroup') }}</option>
+              <option v-for="group in candidateGroups" :key="group.id" :value="String(group.id)">{{ group.name }}</option>
+            </select>
+          </div>
+
           <ul v-if="visibleCandidates.length > 0" class="mt-2 space-y-1" data-test="candidate-list">
             <li
               v-for="candidate in visibleCandidates"
@@ -152,12 +177,15 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
-import type { AdminUser, AccountListItem, PaginatedResponse } from '@/types'
+import type { AdminUser, AdminGroup, PaginatedResponse } from '@/types'
+import type { AccountOptionItem } from '@/api/admin/accounts'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useAppStore } from '@/stores/app'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
+import { ACCOUNT_TYPE_OPTIONS } from '@/constants/accountTypes'
 
 interface GrantAccount {
   id: number
@@ -167,13 +195,7 @@ interface GrantAccount {
   status: string
 }
 
-interface AccountOption {
-  id: number
-  name: string
-  platform: string
-  type: string
-  status: string
-}
+type AccountOption = AccountOptionItem
 
 const CANDIDATE_KEY = 'accounts'
 const CANDIDATE_PAGE_SIZE = 20
@@ -192,6 +214,12 @@ const enabled = ref(false)
 const assigned = ref<GrantAccount[]>([])
 
 const search = ref('')
+const candidatePlatform = ref('')
+const candidateType = ref('')
+const candidateStatus = ref('')
+const candidateGroup = ref('')
+const candidateGroups = ref<AdminGroup[]>([])
+const groupsFailed = ref(false)
 const candidates = ref<AccountOption[]>([])
 const candidatePage = ref(1)
 const candidateTotal = ref(0)
@@ -290,7 +318,7 @@ function toGrantAccount(account: {
   }
 }
 
-function toAccountOption(account: AccountListItem): AccountOption {
+function toAccountOption(account: AccountOptionItem): AccountOption {
   return {
     id: account.id,
     name: account.name ?? '',
@@ -351,6 +379,12 @@ function resetForNewUser(): void {
   assigned.value = []
   accountDetails.clear()
   search.value = ''
+  candidatePlatform.value = ''
+  candidateType.value = ''
+  candidateStatus.value = ''
+  candidateGroup.value = ''
+  candidateGroups.value = []
+  groupsFailed.value = false
   candidateSearch.clearKey(CANDIDATE_KEY)
   candidates.value = []
   candidatePage.value = 1
@@ -361,15 +395,20 @@ function resetForNewUser(): void {
   submitting.value = false
 }
 
-const candidateSearch = useKeyedDebouncedSearch<PaginatedResponse<AccountListItem>>({
+function candidateFilters(keyword: string): { platform?: string; type?: string; status?: string; group?: string; search?: string } {
+  const filters: { platform?: string; type?: string; status?: string; group?: string; search?: string } = {}
+  if (keyword.trim()) filters.search = keyword.trim()
+  if (candidatePlatform.value) filters.platform = candidatePlatform.value
+  if (candidateType.value) filters.type = candidateType.value
+  if (candidateStatus.value) filters.status = candidateStatus.value
+  if (!groupsFailed.value && candidateGroup.value) filters.group = candidateGroup.value
+  return filters
+}
+
+const candidateSearch = useKeyedDebouncedSearch<PaginatedResponse<AccountOptionItem>>({
   delay: 300,
-  search: (keyword, context) => {
-    const filters: { lite: string; search?: string } = { lite: '1' }
-    if (keyword.trim() !== '') {
-      filters.search = keyword.trim()
-    }
-    return adminAPI.accounts.list(1, CANDIDATE_PAGE_SIZE, filters, { signal: context.signal })
-  },
+  search: (keyword, context) =>
+    adminAPI.accounts.listOptions(1, CANDIDATE_PAGE_SIZE, candidateFilters(keyword), { signal: context.signal }),
   onSuccess: (_key, page) => {
     candidates.value = page.items.map(toAccountOption)
     candidatePage.value = 1
@@ -385,24 +424,26 @@ const candidateSearch = useKeyedDebouncedSearch<PaginatedResponse<AccountListIte
   }
 })
 
-function handleSearchInput(): void {
-  // 搜索词变化即作废在途的 load-more：否则旧搜索词的第 2 页会追加到新搜索结果之后，
-  // 并把页数与总数改写成旧搜索词的值。
+function handleCandidateFilterChange(): void {
+  // All filters invalidate page-two requests, not just the keyword.
   candidateGeneration += 1
   loadMoreController?.abort()
   loadMoreController = null
+  candidates.value = []
+  candidatePage.value = 1
+  candidateTotal.value = 0
   candidatesLoading.value = true
   candidatesFailed.value = false
   candidateSearch.trigger(CANDIDATE_KEY, search.value)
 }
 
+function handleSearchInput(): void {
+  handleCandidateFilterChange()
+}
+
 /** 追加下一页候选账号（服务端分页），使授权不再受首屏数量限制。 */
 async function loadMoreCandidates(): Promise<void> {
-  const keyword = search.value.trim()
-  const filters: { lite: string; search?: string } = { lite: '1' }
-  if (keyword !== '') {
-    filters.search = keyword
-  }
+  const filters = candidateFilters(search.value)
 
   loadMoreController?.abort()
   const controller = new AbortController()
@@ -414,7 +455,7 @@ async function loadMoreCandidates(): Promise<void> {
   candidatesLoading.value = true
 
   try {
-    const page = await adminAPI.accounts.list(nextPage, CANDIDATE_PAGE_SIZE, filters, {
+    const page = await adminAPI.accounts.listOptions(nextPage, CANDIDATE_PAGE_SIZE, filters, {
       signal: controller.signal
     })
     if (!isCurrent()) return
@@ -498,6 +539,15 @@ async function load(): Promise<void> {
   if (generation !== requestGeneration) return
   candidatesLoading.value = true
   candidateSearch.trigger(CANDIDATE_KEY, '')
+  try {
+    const groups = await adminAPI.groups.getAll()
+    if (generation !== requestGeneration) return
+    candidateGroups.value = groups
+  } catch {
+    if (generation !== requestGeneration) return
+    groupsFailed.value = true
+    candidateGroup.value = ''
+  }
 }
 
 /**

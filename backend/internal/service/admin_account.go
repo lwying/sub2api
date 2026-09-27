@@ -35,6 +35,33 @@ func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int,
 	return accounts, result.Total, nil
 }
 
+// ListAccountOptions shares the account-list scope but folds historical manual-disable values into one option.
+func (s *adminServiceImpl) ListAccountOptions(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64) ([]Account, int64, error) {
+	if groupID > 0 {
+		if err := s.ValidateAccountGroupBindings(ctx, []int64{groupID}); err != nil {
+			return nil, 0, err
+		}
+	}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: "name", SortOrder: "asc"}
+	if options, ok := s.accountRepo.(interface {
+		ListAccountOptions(context.Context, pagination.PaginationParams, string, string, string, string, int64) ([]Account, *pagination.PaginationResult, error)
+	}); ok {
+		accounts, result, err := options.ListAccountOptions(ctx, params, platform, accountType, status, search, groupID)
+		if err != nil {
+			return nil, 0, err
+		}
+		return accounts, result.Total, nil
+	}
+	// 没有并集能力时不得退回精确过滤：inactive 与 disabled 在候选口径里是同一个「停用」
+	// 选项（见 repository.ListAccountOptions 的归一化），精确匹配只返回其中一个，会静默
+	// 少给候选。status 由调用方原样传入，这里必须用与 repository 相同的「去空白 + 忽略
+	// 大小写」归一化再判断，否则 status=disabled 或 InActive 这类写法会绕过守卫。
+	if normalized := strings.TrimSpace(status); strings.EqualFold(normalized, StatusInactive) || strings.EqualFold(normalized, StatusDisabled) {
+		return nil, 0, fmt.Errorf("account candidate status union is unavailable")
+	}
+	return s.ListAccounts(ctx, page, pageSize, platform, accountType, status, search, groupID, "", "name", "asc")
+}
+
 func (s *adminServiceImpl) ListAccountsForSchedulerScoreFilter(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error) {
 	if s == nil || s.accountRepo == nil {
 		return nil, nil

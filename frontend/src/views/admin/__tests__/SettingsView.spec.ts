@@ -2220,6 +2220,9 @@ function requestAuditValueDetailStatus(
     risk_phrase_en: REQUEST_AUDIT_VALUE_DETAIL_PHRASE_EN,
     risk_phrase_zh: REQUEST_AUDIT_VALUE_DETAIL_PHRASE_ZH,
     risk_acknowledgement_current: false,
+    // 部署前提（ADR 0007）：数据库能否保证明文随 usage 消失。默认成立，具体形态由用例覆盖。
+    plaintext_capture_supported: true,
+    plaintext_capture_support_reason: "supported",
     ...overrides,
   };
 }
@@ -2420,6 +2423,12 @@ describe("admin SettingsView request-audit value detail operator gate", () => {
       },
       { status: 403, key: "forbidden" },
       { status: 503, reason: "REQUEST_AUDIT_VALUE_DETAIL_SETTINGS_UNAVAILABLE", key: "unavailable" },
+      {
+        // 部署前提拒绝：409 必须有自己的文案，不能被并进通用 rejected。
+        status: 409,
+        reason: "REQUEST_AUDIT_VALUE_DETAIL_DEPLOYMENT_UNSUPPORTED",
+        key: "deploymentUnsupported",
+      },
       { status: 503, key: "unavailable" },
     ];
 
@@ -2454,6 +2463,56 @@ describe("admin SettingsView request-audit value detail operator gate", () => {
     }
   });
 
+  it("explains a refused deployment premise instead of blaming the acknowledgement", async () => {
+    // 存量开着、确认也是当前版本，但数据库形态不支持新明文：这时说「没有确认」会把
+    // 操作员引到一个永远开不了采集的按钮上，必须给出部署原因。
+    getRequestAuditValueDetailOperatorSettings.mockResolvedValue(
+      requestAuditValueDetailStatus({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: false,
+        risk_acknowledgement_current: true,
+        plaintext_capture_supported: false,
+        plaintext_capture_support_reason: "unsupported_partitioned_usage_logs",
+      }),
+    );
+
+    const wrapper = await mountGatewayTab();
+
+    const mismatch = wrapper.get('[data-testid="request-audit-value-detail-mismatch"]');
+    expect(mismatch.text()).toContain(
+      "admin.settings.requestAuditValueDetail.state.deploymentPartitioned",
+    );
+    expect(mismatch.text()).not.toContain("captureMismatchNoAck");
+    expect(mismatch.text()).not.toContain("captureMismatchStaleAck");
+    // 结论仍然是「未采集」：部署前提不放行，也不假装放行。
+    expect(
+      wrapper.get('[data-testid="request-audit-value-detail-capture"]').attributes("data-state"),
+    ).toBe("off");
+  });
+
+  it("names a probe failure as a probe failure, without any database detail", async () => {
+    getRequestAuditValueDetailOperatorSettings.mockResolvedValue(
+      requestAuditValueDetailStatus({
+        enabled: true,
+        risk_acknowledged: true,
+        capture_allowed: false,
+        risk_acknowledgement_current: true,
+        plaintext_capture_supported: false,
+        plaintext_capture_support_reason: "probe_failed",
+      }),
+    );
+
+    const wrapper = await mountGatewayTab();
+
+    const mismatch = wrapper.get('[data-testid="request-audit-value-detail-mismatch"]');
+    expect(mismatch.text()).toContain(
+      "admin.settings.requestAuditValueDetail.state.deploymentProbeFailed",
+    );
+    expect(mismatch.text()).not.toContain("password");
+    expect(mismatch.text()).not.toContain("pq:");
+  });
+
   it("keeps the operator copy in both locales", () => {
     const en = enSettings.settings.requestAuditValueDetail;
     const zh = zhSettings.settings.requestAuditValueDetail;
@@ -2465,5 +2524,19 @@ describe("admin SettingsView request-audit value detail operator gate", () => {
     expect(zh.enable.notice).toContain("逐字");
     expect(en.errors.phraseInvalid.length).toBeGreaterThan(0);
     expect(zh.errors.phraseInvalid.length).toBeGreaterThan(0);
+    // 部署前提的六种原因码与它的拒绝文案在两种语言里都必须存在。
+    for (const key of [
+      "deploymentSupported",
+      "deploymentPartitioned",
+      "deploymentMissingOwnership",
+      "deploymentProbeFailed",
+      "deploymentProbeUnavailable",
+      "deploymentUnknown",
+    ] as const) {
+      expect(en.state[key].length).toBeGreaterThan(0);
+      expect(zh.state[key].length).toBeGreaterThan(0);
+    }
+    expect(en.errors.deploymentUnsupported.length).toBeGreaterThan(0);
+    expect(zh.errors.deploymentUnsupported.length).toBeGreaterThan(0);
   });
 });

@@ -97,6 +97,6 @@ describe('error diagnostics locale', () => {
     const bodyStateKeys = enKeys.filter((key) => key.startsWith('errorDiagnostics.bodyStates.'))
     const reasonKeys = enKeys.filter((key) => key.startsWith('errorDiagnostics.reasons.'))
     expect(bodyStateKeys).toHaveLength(6) // 5 persisted states + unknown
-    expect(reasonKeys).toHaveLength(10) // 9 persisted reasons + unknown
+    expect(reasonKeys).toHaveLength(11) // 10 persisted reasons (incl. the plaintext layer) + unknown
   })
 })
