@@ -3,7 +3,6 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -266,19 +265,18 @@ func resolveClaudeFingerprintIDs(account *Account, clientSessionID string, mode 
 
 // claudeFingerprintUserIDComponents 读出可收敛的客户端身份组件。
 //
-// 只接受**新（JSON）格式且完整**的身份，判据用仓库既有的 ParseMetadataUserID
-// （它同时认旧拼接格式，且 JSON 格式要求 device_id / session_id 都非空）。
+// 判据用仓库既有的 ParseMetadataUserID，它同时认两种形态：
+//   - 新（JSON）格式：要求 device_id 与 session_id 都非空；
+//   - 旧拼接格式 user_<dev>_account_<uuid>_session_<uuid>：真实 Claude Code 仍在用
+//     （见测试夹具 fixtures/real-cc-body.json，其 metadata.user_id 就是旧格式）。
 //
-// 为什么旧格式与「缺字段」一律不收敛：
-//   - 旧拼接格式（CLI < 2.1.78）若走重建路径，device 模式会丢掉 account_uuid 与
-//     session_id，产出一个连 ParseMetadataUserID 都认不出的身份；session 模式则取不到
-//     客户端会话，所有此类客户端会塌成同一个账号级会话——两者都比「不改」更糟。
-//   - 按旧格式回写又取决于账号指纹的 CLI 版本，那是身份伪装层的决定，不在这里重复。
-//
-// 因此与「没有 metadata.user_id」同等对待：不收敛、原样透传。
+// 只有「读不出的身份」才不收敛（缺失、空串、JSON 但缺字段、任意非规范字符串）：
+// 此时既没有可收敛掉的客户端身份，凭空合成一份又会让所有此类客户端塌成同一个
+// 账号级会话，与 session/full 模式的语义相反。旧格式**不再**被归入此类——它可读，
+// 因此按原格式收敛并原格式回写（见 applyClaudeFingerprintToUserIDJSON）。
 func claudeFingerprintUserIDComponents(raw string) (*ParsedUserID, bool) {
 	parsed := ParseMetadataUserID(raw)
-	if parsed == nil || !parsed.IsNewFormat {
+	if parsed == nil {
 		return nil, false
 	}
 	return parsed, true
@@ -358,10 +356,15 @@ func stageClaudeFingerprintForBody(c *gin.Context, account *Account, body []byte
 	return next
 }
 
-// applyClaudeFingerprintToUserIDJSON 是唯一改写核心：改写 metadata["user_id"] 的
-// JSON 字符串。它作用在一个已解码的小对象上，调用方负责取用与回写：
+// applyClaudeFingerprintToUserIDJSON 是唯一改写核心：按组件改写并回写
+// metadata["user_id"]。它作用在一个已解码的小对象上，调用方负责取用与回写：
 // 转发热路径（applyClaudeFingerprintClientMetadataRaw）用 gjson 只取出这一小块、
 // 改完再 sjson 拼回，全程不碰 body 其余字节。收敛语义因此只有这一份实现。
+//
+// 回写格式跟随客户端原始形态（ParsedUserID.IsNewFormat）：旧拼接格式仍原样是旧拼接
+// 格式，只有 device_id 等组件被替换。这一点很重要——真实 Claude Code 至今仍在发旧
+// 拼接格式，若一律转成 JSON，body 形态就会与该客户端的 UA 版本自相矛盾；而若为图省事
+// 跳过旧格式，功能对真实流量就等于不生效（设备与会话原样泄露给上游）。
 func applyClaudeFingerprintToUserIDJSON(metadata map[string]any, ids *claudeFingerprintIDs) bool {
 	if metadata == nil || ids == nil {
 		return false
@@ -370,24 +373,17 @@ func applyClaudeFingerprintToUserIDJSON(metadata map[string]any, ids *claudeFing
 	userIDRaw, _ := metadata["user_id"].(string)
 	parsed, ok := claudeFingerprintUserIDComponents(userIDRaw)
 	if !ok {
-		// 不可读的客户端身份（缺失、旧拼接格式、新格式但缺字段）一律原样透传，
-		// 不重建：重建会丢组件或把客户端塌成账号级会话（见
-		// claudeFingerprintUserIDComponents 的说明）。
+		// 读不出的身份一律原样透传，不重建：重建会丢组件或把客户端塌成账号级会话
+		// （见 claudeFingerprintUserIDComponents 的说明）。
 		return false
 	}
 
-	// 按 jsonUserID 结构化改写后回写，字段顺序固定为真实 Claude Code 的顺序
-	// （device_id / account_uuid / session_id）；用 map 序列化会按字母序重排。
-	next := jsonUserID{
-		DeviceID:    parsed.DeviceID,
-		AccountUUID: parsed.AccountUUID,
-		SessionID:   parsed.SessionID,
-	}
+	deviceID, accountUUID, sessionID := parsed.DeviceID, parsed.AccountUUID, parsed.SessionID
 
 	modified := false
 
-	if ids.deviceID != "" && next.DeviceID != ids.deviceID {
-		next.DeviceID = ids.deviceID
+	if ids.deviceID != "" && deviceID != ids.deviceID {
+		deviceID = ids.deviceID
 		modified = true
 	}
 
@@ -395,12 +391,12 @@ func applyClaudeFingerprintToUserIDJSON(metadata map[string]any, ids *claudeFing
 	case claudeFingerprintDevice:
 		// 仅收敛 device_id，account_uuid / session_id 保留客户端原值
 	case claudeFingerprintSession, claudeFingerprintFull:
-		if ids.accountUUID != "" && next.AccountUUID != ids.accountUUID {
-			next.AccountUUID = ids.accountUUID
+		if ids.accountUUID != "" && accountUUID != ids.accountUUID {
+			accountUUID = ids.accountUUID
 			modified = true
 		}
-		if ids.sessionID != "" && next.SessionID != ids.sessionID {
-			next.SessionID = ids.sessionID
+		if ids.sessionID != "" && sessionID != ids.sessionID {
+			sessionID = ids.sessionID
 			modified = true
 		}
 	}
@@ -409,11 +405,17 @@ func applyClaudeFingerprintToUserIDJSON(metadata map[string]any, ids *claudeFing
 		return false
 	}
 
-	encoded, err := json.Marshal(next)
-	if err != nil {
+	candidate := FormatMetadataUserIDInFormat(deviceID, accountUUID, sessionID, parsed.IsNewFormat)
+
+	// 自校验：旧拼接格式对组件有字面形态要求（device 必须 64 位十六进制、account 只能
+	// 十六进制与连字符、session 必须 36 位）。account_uuid 来自账号 extra，管理员可改，
+	// device_id 亦可由 extra 覆写；写进去若让结果无法解析，下游读 metadata.user_id 的
+	// 头同步与审计会静默失效。此时宁可本次不收敛，也不要把身份写成自己都读不出的样子。
+	if ParseMetadataUserID(candidate) == nil {
 		return false
 	}
-	metadata["user_id"] = string(encoded)
+
+	metadata["user_id"] = candidate
 	return true
 }
 

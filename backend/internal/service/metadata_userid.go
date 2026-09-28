@@ -72,7 +72,19 @@ func ParseMetadataUserID(raw string) *ParsedUserID {
 // appropriate for the given CLI version. Components are the rewritten values
 // (not necessarily the originals).
 func FormatMetadataUserID(deviceID, accountUUID, sessionID, uaVersion string) string {
-	if IsNewMetadataFormatVersion(uaVersion) {
+	return FormatMetadataUserIDInFormat(deviceID, accountUUID, sessionID, IsNewMetadataFormatVersion(uaVersion))
+}
+
+// FormatMetadataUserIDInFormat 按调用方**显式给定**的格式重建 metadata.user_id。
+//
+// 与 FormatMetadataUserID 的区别只有一个：格式从哪来。前者从 UA 里的 CLI 版本推断，
+// 这里由调用方给——用于按「正文里客户端的原始形态」回写（ParsedUserID.IsNewFormat）。
+// 两者可能不一致（UA 报新版本、正文却仍是旧拼接格式，见 ParseMetadataUserID 的注释），
+// 此时按正文回写才不会让同一请求的格式与 UA 自相矛盾。
+//
+// 两套模板只在这里各写一份，FormatMetadataUserID 也复用本函数。
+func FormatMetadataUserIDInFormat(deviceID, accountUUID, sessionID string, newFormat bool) string {
+	if newFormat {
 		b, _ := json.Marshal(jsonUserID{
 			DeviceID:    deviceID,
 			AccountUUID: accountUUID,
