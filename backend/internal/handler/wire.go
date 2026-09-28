@@ -128,6 +128,7 @@ func ProvideGatewayHandler(
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
 	h.securityAuditCoordinator = coordinator
+	h.claude429Cooldown = service.NewClaude429CooldownGate(settingService, gatewayService.Claude429CooldownStore())
 	h.SetKeyBillingSnapshotService(keyBillingSnapshot)
 	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
 	gatewayService.SetErrorDiagnosticUsageAttacher(errorDiagnosticAttacher)
@@ -165,6 +166,7 @@ func ProvideOpenAIGatewayHandler(
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
+	h.claude429Cooldown = service.NewClaude429CooldownGate(gatewayService.Claude429CooldownSettings(), gatewayService.Claude429CooldownStore())
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
 	return h

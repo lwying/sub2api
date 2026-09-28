@@ -1126,8 +1126,16 @@ export default {
       },
       rateLimit429AccountLimit: {
         title: '单次请求 429 账号上限',
-        description: '同一次请求中，最多允许多少个不同上游账号在同账号重试结束后返回 429；不会冷却共享 API Key。',
+        description: '同一次请求中，最多允许多少个不同上游账号在同账号重试结束后返回 429；不会冷却共享 API Key。可选在此上限触顶后，按会话或设备追加跨请求冷却。',
         maxAccounts: '最多 429 账号数（1–100）',
+        crossRequestEnabled: '启用跨请求冷却',
+        crossRequestEnabledHint: '仅在达到上面的 429 账号数后生效：按所选粒度短时拦截同一客户的后续 Claude 消息请求，不会冷却整把共享 API Key。',
+        crossRequestScope: '冷却粒度',
+        crossRequestScopeSession: '会话级',
+        crossRequestScopeDevice: '设备级',
+        crossRequestScopeHint: '会话级：同一设备新开会话不再命中；设备级：同一设备的新会话仍会命中。两种粒度都只在客户端身份完整且头部与正文一致时生效。',
+        crossRequestCooldownSeconds: '冷却时长（秒）',
+        crossRequestCooldownSecondsHint: '范围 1–7200 秒；修改只影响之后写入的冷却记录，已写入的记录按原时长自然过期。',
         saved: '单次请求 429 账号上限已保存',
         loadFailed: '读取 429 账号上限失败',
         saveFailed: '保存 429 账号上限失败'

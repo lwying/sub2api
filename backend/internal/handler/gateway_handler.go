@@ -58,6 +58,7 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	claude429Cooldown         *service.Claude429CooldownGate
 	keyBillingSnapshot        *service.KeyBillingSnapshotService
 }
 
@@ -169,6 +170,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 	body = parsedReq.Body.Bytes()
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
@@ -255,6 +257,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.logHit(c, seconds)
+		h.errorResponseWithCode(c, http.StatusTooManyRequests, "rate_limit_error", claude429CooldownCode, claude429CooldownMessage)
+		return
+	}
 
 	// 1. 首先获取用户并发槽位
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
@@ -542,6 +550,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					case FailoverContinue:
 						continue
 					case FailoverExhausted:
+						claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformGemini, streamStarted)
 						return
 					case FailoverCanceled:
@@ -1190,6 +1199,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						delete(sessionSlotAccounts, account.ID)
 						continue
 					case FailoverExhausted:
+						claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, account.Platform, streamStarted)
 						return
 					case FailoverCanceled:

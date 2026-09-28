@@ -23,6 +23,8 @@ func TestLogicalRequestStopsAfterTwoDistinct429Accounts(t *testing.T) {
 	second := NewFailoverState(10, false)
 	second.SetRequest429AccountLimit(limit)
 	require.Equal(t, FailoverExhausted, second.HandleFailoverError(context.Background(), unscheduler, 12, service.PlatformAnthropic, 0, err429))
+	require.True(t, second.Request429CapReached(), "only N genuinely exhausted may write cross-request cooldown")
+	require.False(t, first.Request429CapReached())
 	require.Equal(t, 2, limit.Count())
 
 	nextRequest := NewFailoverState(10, false)
@@ -58,6 +60,7 @@ func TestSameAccountMultiple429CountsOnce(t *testing.T) {
 	// 第二个不同账号 429 才触顶。
 	require.Equal(t, FailoverExhausted, fs.HandleFailoverError(ctx, unscheduler, 21, service.PlatformAnthropic, 0, retryable429))
 	require.Equal(t, 2, limit.Count())
+	require.True(t, fs.Request429CapReached())
 }
 
 // TestCanceledClientDoesNotConsume429Budget 覆盖验收标准 4：请求取消不应被视为
@@ -72,6 +75,7 @@ func TestCanceledClientDoesNotConsume429Budget(t *testing.T) {
 	action := fs.HandleFailoverError(ctx, &mockTempUnscheduler{}, 30, service.PlatformAnthropic, 0, &service.UpstreamFailoverError{StatusCode: http.StatusTooManyRequests})
 	require.Equal(t, FailoverCanceled, action)
 	require.Equal(t, 0, limit.Count())
+	require.False(t, fs.Request429CapReached())
 }
 
 // TestNon429FailureDoesNotConsume429Budget 覆盖验收标准 3：先发生非 429 失败，
@@ -109,4 +113,5 @@ func TestNoNextAccount429NeitherSwitchesNorConsumesBudget(t *testing.T) {
 	require.Equal(t, FailoverExhausted, action)
 	require.Equal(t, 0, limit.Count())
 	require.Equal(t, 0, fs.SwitchCount)
+	require.False(t, fs.Request429CapReached())
 }

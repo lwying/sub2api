@@ -32,8 +32,12 @@ func (s *SettingService) GetRateLimit429AccountLimit(ctx context.Context) (int, 
 }
 
 func (s *SettingService) SetRateLimit429AccountLimit(ctx context.Context, limit int) error {
+	return s.SetRateLimit429AccountLimitWithCooldown(ctx, limit, nil)
+}
+
+func validateRateLimit429AccountLimit(limit int) error {
 	if limit < minRateLimit429AccountLimit || limit > maxRateLimit429AccountLimit {
 		return fmt.Errorf("max_accounts must be between 1-100")
 	}
-	return s.settingRepo.SetMultiple(ctx, map[string]string{SettingKeyRateLimit429AccountLimit: strconv.Itoa(limit)})
+	return nil
 }

@@ -128,6 +128,7 @@ type FailoverState struct {
 	FailedAccountIDs       map[int64]struct{}
 	SameAccountRetryCount  map[int64]int
 	request429AccountLimit *Request429AccountLimit
+	request429CapReached   bool
 	LastFailoverErr        *service.UpstreamFailoverError
 	ForceCacheBilling      bool
 	hasBoundSession        bool
@@ -155,6 +156,11 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 
 func (s *FailoverState) SetRequest429AccountLimit(limit *Request429AccountLimit) {
 	s.request429AccountLimit = limit
+}
+
+// Request429CapReached distinguishes the N-account stop from other failover exhaustion.
+func (s *FailoverState) Request429CapReached() bool {
+	return s != nil && s.request429CapReached
 }
 
 // RecordProfitVeto 记录一次分组利润门终检否决：把账号加入排除列表（同时登记到
@@ -246,6 +252,7 @@ func (s *FailoverState) HandleFailoverError(
 	// 加入失败列表
 	s.FailedAccountIDs[accountID] = struct{}{}
 	if s.request429AccountLimit.Record(accountID, failoverErr) {
+		s.request429CapReached = true
 		logger.FromContext(ctx).Warn("gateway.failover_429_account_limit_reached",
 			zap.Int("failed_429_accounts", s.request429AccountLimit.Count()))
 		return FailoverExhausted

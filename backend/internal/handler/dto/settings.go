@@ -472,8 +472,30 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int  `json:"cooldown_seconds"`
 }
 
+// RateLimit429AccountLimit 单次请求 429 账号上限（N）及其同一功能区域内的跨请求冷却配置。
+//
+// MaxAccounts 的含义不变（每次逻辑请求允许因 429 停止换号的不同上游账号数，1–100）；
+// Enabled/Scope/CooldownSeconds 是可选跨请求部分，默认关闭 / 会话级 / 60 秒，
+// 与上游账号级 429 回避（RateLimit429CooldownSettings）不是同一来源。
 type RateLimit429AccountLimit struct {
-	MaxAccounts int `json:"max_accounts"`
+	MaxAccounts     int    `json:"max_accounts"`
+	Enabled         bool   `json:"enabled"`
+	Scope           string `json:"scope"`
+	CooldownSeconds int    `json:"cooldown_seconds"`
+}
+
+// UpdateRateLimit429AccountLimitRequest 是 PUT 请求体。新字段用指针区分「未提交」与「显式提交」：
+// 只提交 max_accounts 的旧客户端不会重置已保存的跨请求冷却配置。
+type UpdateRateLimit429AccountLimitRequest struct {
+	MaxAccounts     int     `json:"max_accounts"`
+	Enabled         *bool   `json:"enabled"`
+	Scope           *string `json:"scope"`
+	CooldownSeconds *int    `json:"cooldown_seconds"`
+}
+
+// HasCooldownFields 报告请求是否提交了任何跨请求冷却字段。
+func (r UpdateRateLimit429AccountLimitRequest) HasCooldownFields() bool {
+	return r.Enabled != nil || r.Scope != nil || r.CooldownSeconds != nil
 }
 
 type OpenAIImagesOAuthUnavailableCooldownSettings struct {

@@ -1348,15 +1348,84 @@ export async function updateRateLimit429CooldownSettings(
 
 // ==================== Request-scoped 429 Account Limit ====================
 
+/**
+ * 跨请求冷却的作用域。
+ * `session`：冷却同一 B1 API Key + 原始 device_id + 会话；同设备新开会话不命中。
+ * `device`：冷却同一 B1 API Key + 原始 device_id；同设备新开会话仍命中。
+ */
+export type RateLimit429AccountLimitScope = "session" | "device";
+
+/**
+ * 一次逻辑请求的 429 账号上限（N），以及达到 N 后可选写入的跨请求冷却。
+ * 两者同属一个设置组：同一个 GET/PUT 路径、同一个请求体，读回即所见。
+ */
 export interface RateLimit429AccountLimit {
+  /** 每次逻辑请求因 429 停止换号的不同上游账号数（1–100）。 */
   max_accounts: number;
+  /** 是否启用跨请求冷却；首次默认关闭。 */
+  enabled: boolean;
+  /** 冷却粒度；首次默认会话级。 */
+  scope: RateLimit429AccountLimitScope;
+  /** 冷却秒数（1–7200）；首次默认 60。 */
+  cooldown_seconds: number;
+}
+
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_MIN = 1;
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_MAX = 100;
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_DEFAULT = 2;
+
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MIN = 1;
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MAX = 7200;
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_DEFAULT = 60;
+
+export const RATE_LIMIT_429_ACCOUNT_LIMIT_SCOPE_DEFAULT: RateLimit429AccountLimitScope = "session";
+
+const RATE_LIMIT_429_ACCOUNT_LIMIT_SCOPES: readonly string[] = ["session", "device"];
+
+/**
+ * 把存储值收敛成契约内的设置组。
+ *
+ * 逐字段缺省回落（而非抛错）与后端一致：后端在键缺失或存量值不可解析时同样按字段返回默认值
+ * （`setting_rate_limit_429_account_limit.go`、
+ * `setting_rate_limit_429_account_limit_cooldown.go`）。缺失或越界的字段按「关闭 / 会话级 /
+ * 60 秒 / N=2」显示，避免把非法值渲染成契约外的控件，也避免把非法值原样 PUT 回后端。
+ */
+export function normalizeRateLimit429AccountLimit(
+  payload: Partial<RateLimit429AccountLimit> | null | undefined,
+): RateLimit429AccountLimit {
+  const source = payload ?? {};
+  return {
+    max_accounts: inRange(
+      source.max_accounts,
+      RATE_LIMIT_429_ACCOUNT_LIMIT_MIN,
+      RATE_LIMIT_429_ACCOUNT_LIMIT_MAX,
+      RATE_LIMIT_429_ACCOUNT_LIMIT_DEFAULT,
+    ),
+    enabled: typeof source.enabled === "boolean" ? source.enabled : false,
+    scope: RATE_LIMIT_429_ACCOUNT_LIMIT_SCOPES.includes(source.scope as string)
+      ? (source.scope as RateLimit429AccountLimitScope)
+      : RATE_LIMIT_429_ACCOUNT_LIMIT_SCOPE_DEFAULT,
+    cooldown_seconds: inRange(
+      source.cooldown_seconds,
+      RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MIN,
+      RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MAX,
+      RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_DEFAULT,
+    ),
+  };
+}
+
+/** 只接受区间内的真实整数；其余（缺失、字符串、NaN、越界）一律取默认值。 */
+function inRange(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max
+    ? value
+    : fallback;
 }
 
 export async function getRateLimit429AccountLimit(): Promise<RateLimit429AccountLimit> {
   const { data } = await apiClient.get<RateLimit429AccountLimit>(
     "/admin/settings/rate-limit-429-account-limit",
   );
-  return data;
+  return normalizeRateLimit429AccountLimit(data);
 }
 
 export async function updateRateLimit429AccountLimit(
@@ -1366,7 +1435,7 @@ export async function updateRateLimit429AccountLimit(
     "/admin/settings/rate-limit-429-account-limit",
     settings,
   );
-  return data;
+  return normalizeRateLimit429AccountLimit(data);
 }
 
 // ==================== Outward Key Billing Snapshot ====================

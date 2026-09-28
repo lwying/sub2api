@@ -438,6 +438,70 @@
                   max="100"
                   class="input w-32"
                 />
+
+                <div class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.rateLimit429AccountLimit.crossRequestEnabled") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.rateLimit429AccountLimit.crossRequestEnabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="rateLimit429AccountLimitForm.enabled"
+                    data-testid="rate-limit-429-account-limit-enabled"
+                  />
+                </div>
+
+                <div class="grid gap-5 border-t border-gray-100 pt-4 dark:border-dark-700 md:grid-cols-2">
+                  <div>
+                    <label
+                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      for="rate-limit-429-account-limit-scope"
+                    >
+                      {{ t("admin.settings.rateLimit429AccountLimit.crossRequestScope") }}
+                    </label>
+                    <select
+                      id="rate-limit-429-account-limit-scope"
+                      v-model="rateLimit429AccountLimitForm.scope"
+                      class="input w-full"
+                      data-testid="rate-limit-429-account-limit-scope"
+                    >
+                      <option value="session">
+                        {{ t("admin.settings.rateLimit429AccountLimit.crossRequestScopeSession") }}
+                      </option>
+                      <option value="device">
+                        {{ t("admin.settings.rateLimit429AccountLimit.crossRequestScopeDevice") }}
+                      </option>
+                    </select>
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.rateLimit429AccountLimit.crossRequestScopeHint") }}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      for="rate-limit-429-account-limit-cooldown-seconds"
+                    >
+                      {{ t("admin.settings.rateLimit429AccountLimit.crossRequestCooldownSeconds") }}
+                    </label>
+                    <input
+                      id="rate-limit-429-account-limit-cooldown-seconds"
+                      v-model.number="rateLimit429AccountLimitForm.cooldown_seconds"
+                      data-testid="rate-limit-429-account-limit-cooldown-seconds"
+                      type="number"
+                      :min="RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MIN"
+                      :max="RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MAX"
+                      class="input w-32"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.rateLimit429AccountLimit.crossRequestCooldownSecondsHint") }}
+                    </p>
+                  </div>
+                </div>
+
                 <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
                   <button
                     type="button"
@@ -9471,6 +9535,11 @@ import {
   deriveWeChatConnectStoredMode,
   normalizeDefaultSubscriptionSettings,
   resolveWeChatConnectModeCapabilities,
+  RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_DEFAULT,
+  RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MAX,
+  RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_MIN,
+  RATE_LIMIT_429_ACCOUNT_LIMIT_DEFAULT,
+  RATE_LIMIT_429_ACCOUNT_LIMIT_SCOPE_DEFAULT,
   REQUEST_AUDIT_VALUE_DETAIL_ACK_LANGUAGES,
   requestAuditValueDetailErrorKey,
   requestAuditValueDetailPhraseMatches,
@@ -9485,6 +9554,7 @@ import type {
   DefaultSubscriptionSetting,
   DefaultPlatformQuotasMap,
   OpenAIFastPolicyRule,
+  RateLimit429AccountLimit,
   RequestAuditValueDetailAckLanguage,
   RequestAuditValueDetailOperatorStatus,
   WeChatConnectMode,
@@ -9706,7 +9776,13 @@ const rateLimit429CooldownForm = reactive({
 
 const rateLimit429AccountLimitLoading = ref(true);
 const rateLimit429AccountLimitSaving = ref(false);
-const rateLimit429AccountLimitForm = reactive({ max_accounts: 2 });
+// 初始值与后端首次默认一致：关闭、会话级、60 秒；N 仍为 2。
+const rateLimit429AccountLimitForm = reactive<RateLimit429AccountLimit>({
+  max_accounts: RATE_LIMIT_429_ACCOUNT_LIMIT_DEFAULT,
+  enabled: false,
+  scope: RATE_LIMIT_429_ACCOUNT_LIMIT_SCOPE_DEFAULT,
+  cooldown_seconds: RATE_LIMIT_429_ACCOUNT_LIMIT_COOLDOWN_SECONDS_DEFAULT,
+});
 
 const keyBillingSnapshotLoading = ref(true);
 const keyBillingSnapshotSaving = ref(false);
@@ -12812,8 +12888,12 @@ async function loadRateLimit429AccountLimit() {
 async function saveRateLimit429AccountLimit() {
   rateLimit429AccountLimitSaving.value = true;
   try {
+    // 同一卡片保存 N 与跨请求冷却字段；后端也兼容仅提交 N 的旧客户端。
     const updated = await adminAPI.settings.updateRateLimit429AccountLimit({
       max_accounts: rateLimit429AccountLimitForm.max_accounts,
+      enabled: rateLimit429AccountLimitForm.enabled,
+      scope: rateLimit429AccountLimitForm.scope,
+      cooldown_seconds: rateLimit429AccountLimitForm.cooldown_seconds,
     });
     Object.assign(rateLimit429AccountLimitForm, updated);
     appStore.showSuccess(t("admin.settings.rateLimit429AccountLimit.saved"));
