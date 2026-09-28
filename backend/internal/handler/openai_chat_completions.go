@@ -131,7 +131,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
-		claude429Cooldown.logHit(c, seconds)
+		claude429Cooldown.prepareLocalResponse(c, seconds)
 		h.errorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
 		return
 	}

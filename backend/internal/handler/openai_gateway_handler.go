@@ -596,7 +596,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
-		claude429Cooldown.logHit(c, seconds)
+		claude429Cooldown.prepareLocalResponse(c, seconds)
 		h.errorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
 		return
 	}
@@ -1331,7 +1331,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
-		claude429Cooldown.logHit(c, seconds)
+		claude429Cooldown.prepareLocalResponse(c, seconds)
 		h.anthropicErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
 		return
 	}

@@ -259,7 +259,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
-		claude429Cooldown.logHit(c, seconds)
+		claude429Cooldown.prepareLocalResponse(c, seconds)
 		h.errorResponseWithCode(c, http.StatusTooManyRequests, "rate_limit_error", claude429CooldownCode, claude429CooldownMessage)
 		return
 	}

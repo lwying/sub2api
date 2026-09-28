@@ -147,7 +147,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
-		claude429Cooldown.logHit(c, seconds)
+		claude429Cooldown.prepareLocalResponse(c, seconds)
 		h.responsesErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
 		return
 	}

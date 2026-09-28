@@ -367,7 +367,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
-		claude429Cooldown.logHit(c, seconds)
+		claude429Cooldown.prepareLocalResponse(c, seconds)
 		googleError(c, http.StatusTooManyRequests, claude429CooldownMessage)
 		return
 	}
@@ -678,18 +678,15 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				// 已提交的流不能换号或回写冷却：它并未到达本次 N 的触顶接缝。
-				// 与 Messages/Responses 的既有防止流拼接 guard 对齐。
-				if c.Writer.Size() != writerSizeBeforeForward {
-					h.handleGeminiFailoverExhausted(c, failoverErr)
-					return
-				}
+				// 保持 Gemini 既有 failover 行为；只禁止转发期间已有输出时
+				// 把本次 429 触顶升级成跨请求冷却。
+				outputWritten := c.Writer.Size() != writerSizeBeforeForward
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
-					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached() && !outputWritten)
 					h.handleGeminiFailoverExhausted(c, fs.LastFailoverErr)
 					return
 				case FailoverCanceled:

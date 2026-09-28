@@ -190,8 +190,27 @@ func TestGatewayClaude429CooldownNegativesNoWriteWhenSwitchCapExhaustsBeforeN(t 
 	require.Zero(t, store.writes, "总换号上限先触发时不得写入冷却")
 }
 
-// TestGatewayClaude429CooldownNegativesNoWriteWhenStreamAlreadyWritten 覆盖「流已写出」：
-// 响应内容已经发给客户端后无法再改成本地 429，此时既不得写入冷却，也不得继续换号。
+// TestGatewayClaude429CooldownHeartbeatOnlyStillMarksCap 区分槽位等待心跳
+// 与真正的模型内容：只有心跳先写出时，N 触顶仍应写入冷却。
+func TestGatewayClaude429CooldownHeartbeatOnlyStillMarksCap(t *testing.T) {
+	group := claude429NegGroup(9407)
+	upstream := &claude429NegUpstream{}
+	h, store := newClaude429NegHandler(t, group, gateway429TestAccounts(group.ID, 3), upstream, 2)
+	body := claude429NegMessagesBody(claude429DeviceA, claude429SessionA)
+	c, _, cancel := claude429NegContext(t, group, 9008, "/v1/messages", body, claude429SessionA, "turn-1")
+	defer cancel()
+	// A slot-wait heartbeat commits HTTP 200 before the upstream attempts,
+	// but is not model output and must not suppress a genuine N-cap write.
+	written, err := c.Writer.Write([]byte("data: {\"type\": \"ping\"}\n\n"))
+	require.NoError(t, err)
+	recordGatewayStreamHeartbeat(c, written)
+	h.Messages(c)
+	require.Equal(t, []int64{1, 2}, upstream.hits)
+	require.Equal(t, 1, store.writes, "heartbeat-only response may reach N and mark the same inbound scope")
+}
+
+// TestGatewayClaude429CooldownNegativesNoWriteWhenStreamAlreadyWritten 覆盖
+// 转发期间有真实语义输出：此时不能换号或写跨请求冷却。
 func TestGatewayClaude429CooldownNegativesNoWriteWhenStreamAlreadyWritten(t *testing.T) {
 	group := claude429NegGroup(9404)
 	upstream := &claude429NegUpstream{}

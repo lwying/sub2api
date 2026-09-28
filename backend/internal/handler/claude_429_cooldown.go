@@ -35,16 +35,25 @@ func captureClaude429Cooldown(c *gin.Context, apiKeyID int64, body []byte, gate 
 	}
 	raw := gjson.GetBytes(body, "metadata.user_id")
 	if raw.Type != gjson.String {
+		requestLogger(c, "handler.claude_429_cooldown").Debug("gateway.claude_429_cooldown_identity_skipped", zap.String("reason", "missing_metadata"))
 		return claude429CooldownRequest{}
 	}
 	parsed := service.ParseMetadataUserID(raw.String())
+	if parsed == nil {
+		requestLogger(c, "handler.claude_429_cooldown").Debug("gateway.claude_429_cooldown_identity_skipped", zap.String("reason", "invalid_metadata"))
+		return claude429CooldownRequest{}
+	}
 	// The sanitized accessor is already used elsewhere to select the Claude
 	// session header. Require exactly one raw header and compare it too: whitespace
 	// or conflicting duplicate values must not alias another client's scope.
 	headerValues := c.Request.Header.Values("X-Claude-Code-Session-Id")
 	headerSession := service.ClaudeCodeSessionIDFromHeader(c)
-	if parsed == nil || parsed.DeviceID == "" || parsed.SessionID == "" || len(headerValues) != 1 || headerSession == "" || headerValues[0] != headerSession || headerSession != parsed.SessionID {
-		requestLogger(c, "handler.claude_429_cooldown").Debug("gateway.claude_429_cooldown_identity_unavailable")
+	if len(headerValues) == 0 {
+		requestLogger(c, "handler.claude_429_cooldown").Debug("gateway.claude_429_cooldown_identity_skipped", zap.String("reason", "missing_header"))
+		return claude429CooldownRequest{}
+	}
+	if len(headerValues) != 1 || headerSession == "" || headerValues[0] != headerSession || headerSession != parsed.SessionID {
+		requestLogger(c, "handler.claude_429_cooldown").Debug("gateway.claude_429_cooldown_identity_skipped", zap.String("reason", "invalid_or_mismatched_header"))
 		return claude429CooldownRequest{}
 	}
 	return claude429CooldownRequest{gate: gate, runtime: runtime, apiKeyID: apiKeyID, deviceID: parsed.DeviceID, sessionID: parsed.SessionID}
@@ -58,7 +67,10 @@ func (r claude429CooldownRequest) retryAfter(ctx context.Context) (int, bool) {
 }
 
 func (r claude429CooldownRequest) markIfCapReached(c *gin.Context, reached bool) {
-	if !reached || c == nil || c.Request == nil || c.Writer.Written() || r.gate == nil || c.Request.Context().Err() != nil {
+	// Slot-wait SSE pings can commit HTTP 200 without model output. Callers
+	// already guard forward-produced bytes; allow heartbeat-only responses to
+	// record a genuine N cap, but never write after semantic output or cancel.
+	if !reached || c == nil || c.Request == nil || r.gate == nil || c.Request.Context().Err() != nil || (c.Writer.Written() && !gatewayStreamHasOnlyHeartbeats(c)) {
 		return
 	}
 	if r.gate.Mark(c.Request.Context(), r.apiKeyID, r.runtime, r.deviceID, r.sessionID) {
@@ -67,7 +79,7 @@ func (r claude429CooldownRequest) markIfCapReached(c *gin.Context, reached bool)
 	}
 }
 
-func (r claude429CooldownRequest) logHit(c *gin.Context, seconds int) {
+func (r claude429CooldownRequest) prepareLocalResponse(c *gin.Context, seconds int) {
 	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
 	c.Header("Retry-After", strconv.Itoa(seconds))
 	requestLogger(c, "handler.claude_429_cooldown").Info("gateway.claude_429_cooldown_hit",
