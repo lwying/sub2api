@@ -71,6 +71,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 
 	// Extract model and stream
 	modelResult := gjson.GetBytes(body, "model")
@@ -132,6 +133,12 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.logHit(c, seconds)
+		h.chatCompletionsErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		return
+	}
 
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
@@ -350,6 +357,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:
