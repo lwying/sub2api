@@ -338,6 +338,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "Request body is empty")
 		return
 	}
+	claude429Cooldown := claude429CooldownRequest{}
+	if action == "generateContent" || action == "streamGenerateContent" {
+		claude429Cooldown = captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
+	}
 
 	setOpsRequestContext(c, modelName, stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(stream, false)))
@@ -361,6 +365,12 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.logHit(c, seconds)
+		googleError(c, http.StatusTooManyRequests, claude429CooldownMessage)
+		return
+	}
 
 	// 1) user concurrency slot
 	streamStarted := false
@@ -646,6 +656,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
 		}
 		sessionGroupID := derefGroupID(apiKey.GroupID)
+		writerSizeBeforeForward := c.Writer.Size()
 		if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 			result, err = h.antigravityGatewayService.ForwardGemini(
 				requestCtx,
@@ -667,11 +678,18 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				// 已提交的流不能换号或回写冷却：它并未到达本次 N 的触顶接缝。
+				// 与 Messages/Responses 的既有防止流拼接 guard 对齐。
+				if c.Writer.Size() != writerSizeBeforeForward {
+					h.handleGeminiFailoverExhausted(c, failoverErr)
+					return
+				}
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 					h.handleGeminiFailoverExhausted(c, fs.LastFailoverErr)
 					return
 				case FailoverCanceled:
