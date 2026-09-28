@@ -71,6 +71,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := claude429CooldownRequest{}
+	if !service.IsOpenAIResponsesInputTokensRequestPath(c) {
+		claude429Cooldown = captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
+	}
 
 	// Extract model and stream using gjson (like OpenAI handler)
 	modelResult := gjson.GetBytes(body, "model")
@@ -141,6 +145,12 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		h.responsesErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		return
+	}
 
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
@@ -339,6 +349,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:

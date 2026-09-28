@@ -349,6 +349,46 @@ func (c *gatewayCache) FindCyberSessionBlocked(ctx context.Context, keys []strin
 	return "", nil
 }
 
+const claude429CooldownPrefix = "claude_429_cooldown:"
+
+// Compile-time assertion: gatewayCache 是「跨请求冷却」的可选存储实现。
+// 共享 GatewayCache 接口刻意不新增这两个方法，调用方按可选接口断言接入。
+var _ service.Claude429CooldownStore = (*gatewayCache)(nil)
+
+// SetClaude429Cooldown 写入冷却键。写值与 TTL 由单条 SET 携带，天然原子；
+// key 只应是域分隔摘要，不含原始 API 密钥、设备或会话标识。
+func (c *gatewayCache) SetClaude429Cooldown(ctx context.Context, key string, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || ttl <= 0 {
+		return errors.New("invalid claude 429 cooldown write")
+	}
+	return c.rdb.Set(ctx, claude429CooldownPrefix+key, "1", ttl).Err()
+}
+
+// Claude429CooldownTTL 返回剩余 TTL。键不存在（PTTL 为 -2）与键无过期时间
+// （PTTL 为 -1）都返回 (0, nil)：两种情况都表示没有可用的剩余冷却，
+// 使调用方无需区分"未冷却"与"存储里没有这个键"。
+func (c *gatewayCache) Claude429CooldownTTL(ctx context.Context, key string) (time.Duration, error) {
+	if c == nil || c.rdb == nil {
+		return 0, errors.New("gateway cache unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return 0, errors.New("invalid claude 429 cooldown read")
+	}
+	ttl, err := c.rdb.PTTL(ctx, claude429CooldownPrefix+key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if ttl <= 0 {
+		return 0, nil
+	}
+	return ttl, nil
+}
+
 var claimLiveControllerScript = redis.NewScript(`
 	local key = KEYS[1]
 	local target = ARGV[1]

@@ -47,6 +47,7 @@ type OpenAIGatewayHandler struct {
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
+	claude429Cooldown          *service.Claude429CooldownGate
 	cfg                        *config.Config
 }
 
@@ -431,6 +432,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := claude429CooldownRequest{}
+	if !service.IsOpenAIResponsesInputTokensRequestPath(c) {
+		claude429Cooldown = captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
+	}
 
 	setOpsRequestContext(c, "", false)
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteResponses, false) {
@@ -587,6 +592,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// 提前校验 function_call_output 是否具备可关联上下文，避免上游 400。
 	if !h.validateFunctionCallOutputRequest(c, body, reqLog) {
+		return
+	}
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		h.errorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
 		return
 	}
 
@@ -983,6 +994,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+						claude429Cooldown.markIfCapReached(c, true)
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1256,6 +1268,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 
 	mode := service.ThinkingDisabledFormModeNormalize
 	if apiKey.Group != nil && apiKey.Group.ThinkingDisabledStrict {
@@ -1316,6 +1329,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		h.anthropicErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		return
+	}
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -1616,6 +1635,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if h.stopAfter429Accounts(c, failed429Accounts, account.ID, failoverErr) {
+						claude429Cooldown.markIfCapReached(c, true)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
