@@ -264,35 +264,24 @@ func resolveClaudeFingerprintIDs(account *Account, clientSessionID string, mode 
 
 // --- user_id 解析与改写 ---
 
-// parseClaudeUserIDJSON 解析 metadata.user_id 的 JSON 字符串。
-// 真实格式：{"device_id":"<64hex>","account_uuid":"<uuid|>"","session_id":"<uuid>"}
-func parseClaudeUserIDJSON(raw string) map[string]any {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
+// claudeFingerprintUserIDComponents 读出可收敛的客户端身份组件。
+//
+// 只接受**新（JSON）格式且完整**的身份，判据用仓库既有的 ParseMetadataUserID
+// （它同时认旧拼接格式，且 JSON 格式要求 device_id / session_id 都非空）。
+//
+// 为什么旧格式与「缺字段」一律不收敛：
+//   - 旧拼接格式（CLI < 2.1.78）若走重建路径，device 模式会丢掉 account_uuid 与
+//     session_id，产出一个连 ParseMetadataUserID 都认不出的身份；session 模式则取不到
+//     客户端会话，所有此类客户端会塌成同一个账号级会话——两者都比「不改」更糟。
+//   - 按旧格式回写又取决于账号指纹的 CLI 版本，那是身份伪装层的决定，不在这里重复。
+//
+// 因此与「没有 metadata.user_id」同等对待：不收敛、原样透传。
+func claudeFingerprintUserIDComponents(raw string) (*ParsedUserID, bool) {
+	parsed := ParseMetadataUserID(raw)
+	if parsed == nil || !parsed.IsNewFormat {
+		return nil, false
 	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil || parsed == nil {
-		return nil
-	}
-	// 至少要有一个已知键才认为是合法对象
-	if _, hasDevice := parsed["device_id"]; !hasDevice {
-		if _, hasSession := parsed["session_id"]; !hasSession {
-			return nil
-		}
-	}
-	return parsed
-}
-
-func extractClaudeClientSessionIDFromJSON(raw string) string {
-	parsed := parseClaudeUserIDJSON(raw)
-	if parsed == nil {
-		return ""
-	}
-	if sid, ok := parsed["session_id"].(string); ok {
-		return strings.TrimSpace(sid)
-	}
-	return ""
+	return parsed, true
 }
 
 // resolveClaudeFingerprintIDsFromRawBody 在原始 JSON 字节上解析收敛 ID。
@@ -312,9 +301,9 @@ func resolveClaudeFingerprintIDsFromRawBody(account *Account, body []byte) *clau
 
 // resolveClaudeFingerprintIDsFromUserID 是解析收敛 ID 的核心。
 //
-// 无 metadata.user_id 时返回 nil：客户端没有携带任何可收敛的标识，
-// 此时既没有可收敛掉的客户端身份，凭空合成一份账号级身份又会让所有此类
-// 客户端退化成同一个会话，与 session/full 模式的语义相反。
+// 客户端身份不可读（缺失、旧拼接格式、或新格式但缺字段）时返回 nil：此时既没有
+// 可收敛掉的客户端身份，凭空合成一份账号级身份又会让所有此类客户端退化成同一个
+// 会话，与 session/full 模式的语义相反（见 claudeFingerprintUserIDComponents）。
 func resolveClaudeFingerprintIDsFromUserID(account *Account, userIDRaw string) *claudeFingerprintIDs {
 	if account == nil {
 		return nil
@@ -323,10 +312,11 @@ func resolveClaudeFingerprintIDsFromUserID(account *Account, userIDRaw string) *
 	if mode == claudeFingerprintOff {
 		return nil
 	}
-	if strings.TrimSpace(userIDRaw) == "" {
+	parsed, ok := claudeFingerprintUserIDComponents(userIDRaw)
+	if !ok {
 		return nil
 	}
-	return resolveClaudeFingerprintIDs(account, extractClaudeClientSessionIDFromJSON(userIDRaw), mode)
+	return resolveClaudeFingerprintIDs(account, parsed.SessionID, mode)
 }
 
 // stageClaudeFingerprintForBody 是请求体侧的唯一收敛入口：解析本 attempt 的
@@ -378,35 +368,40 @@ func applyClaudeFingerprintToUserIDJSON(metadata map[string]any, ids *claudeFing
 	}
 
 	userIDRaw, _ := metadata["user_id"].(string)
-	parsed := parseClaudeUserIDJSON(userIDRaw)
-	if parsed == nil {
-		parsed = make(map[string]any, 3)
+	parsed, ok := claudeFingerprintUserIDComponents(userIDRaw)
+	if !ok {
+		// 不可读的客户端身份（缺失、旧拼接格式、新格式但缺字段）一律原样透传，
+		// 不重建：重建会丢组件或把客户端塌成账号级会话（见
+		// claudeFingerprintUserIDComponents 的说明）。
+		return false
+	}
+
+	// 按 jsonUserID 结构化改写后回写，字段顺序固定为真实 Claude Code 的顺序
+	// （device_id / account_uuid / session_id）；用 map 序列化会按字母序重排。
+	next := jsonUserID{
+		DeviceID:    parsed.DeviceID,
+		AccountUUID: parsed.AccountUUID,
+		SessionID:   parsed.SessionID,
 	}
 
 	modified := false
 
-	if ids.deviceID != "" {
-		if cur, _ := parsed["device_id"].(string); cur != ids.deviceID {
-			parsed["device_id"] = ids.deviceID
-			modified = true
-		}
+	if ids.deviceID != "" && next.DeviceID != ids.deviceID {
+		next.DeviceID = ids.deviceID
+		modified = true
 	}
 
 	switch ids.mode {
 	case claudeFingerprintDevice:
-		// 仅收敛 device_id
+		// 仅收敛 device_id，account_uuid / session_id 保留客户端原值
 	case claudeFingerprintSession, claudeFingerprintFull:
-		if ids.accountUUID != "" {
-			if cur, _ := parsed["account_uuid"].(string); cur != ids.accountUUID {
-				parsed["account_uuid"] = ids.accountUUID
-				modified = true
-			}
+		if ids.accountUUID != "" && next.AccountUUID != ids.accountUUID {
+			next.AccountUUID = ids.accountUUID
+			modified = true
 		}
-		if ids.sessionID != "" {
-			if cur, _ := parsed["session_id"].(string); cur != ids.sessionID {
-				parsed["session_id"] = ids.sessionID
-				modified = true
-			}
+		if ids.sessionID != "" && next.SessionID != ids.sessionID {
+			next.SessionID = ids.sessionID
+			modified = true
 		}
 	}
 
@@ -414,7 +409,7 @@ func applyClaudeFingerprintToUserIDJSON(metadata map[string]any, ids *claudeFing
 		return false
 	}
 
-	encoded, err := json.Marshal(parsed)
+	encoded, err := json.Marshal(next)
 	if err != nil {
 		return false
 	}

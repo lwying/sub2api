@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,19 @@ func claudeFingerprintClientBody(deviceID, accountUUID, sessionID string) []byte
 		panic("test fixture: failed to set metadata.user_id")
 	}
 	return next
+}
+
+// parseClaudeUserIDForTest 用仓库真正的解析器读出三个组件，供断言使用。
+func parseClaudeUserIDForTest(raw string) map[string]any {
+	parsed := ParseMetadataUserID(raw)
+	if parsed == nil {
+		return nil
+	}
+	return map[string]any{
+		"device_id":    parsed.DeviceID,
+		"account_uuid": parsed.AccountUUID,
+		"session_id":   parsed.SessionID,
+	}
 }
 
 func newClaudeFingerprintTestContext(t *testing.T) *gin.Context {
@@ -182,7 +196,7 @@ func TestStageClaudeFingerprintForBody_ConvergesBodyAndStagesSharedIDs(t *testin
 
 	next := stageClaudeFingerprintForBody(c, account, body)
 
-	converged := parseClaudeUserIDJSON(gjson.GetBytes(next, "metadata.user_id").String())
+	converged := parseClaudeUserIDForTest(gjson.GetBytes(next, "metadata.user_id").String())
 	require.NotNil(t, converged)
 	require.Equal(t, "real-account-uuid", converged["account_uuid"], "account_uuid 必须取自账号真实元数据")
 	require.NotEqual(t, claudeFingerprintClientSession, converged["session_id"], "客户端会话必须被收敛")
@@ -198,7 +212,7 @@ func TestStageClaudeFingerprintForBody_ConvergesBodyAndStagesSharedIDs(t *testin
 	// parsedReq.CloneForBody 每次 attempt 都从原始 body 重新克隆），
 	// 已收敛 body 里 session_id 已被改写，再跑一次会得到第二级派生值。
 	replayed := stageClaudeFingerprintForBody(newClaudeFingerprintTestContext(t), account, body)
-	replayedIDs := parseClaudeUserIDJSON(gjson.GetBytes(replayed, "metadata.user_id").String())
+	replayedIDs := parseClaudeUserIDForTest(gjson.GetBytes(replayed, "metadata.user_id").String())
 	require.Equal(t, converged["session_id"], replayedIDs["session_id"])
 }
 
@@ -261,7 +275,7 @@ func TestApplyClaudeFingerprintToUserIDJSON_ModeSemantics(t *testing.T) {
 	require.True(t, applyClaudeFingerprintToUserIDJSON(metadata, ids))
 	convergedRaw, ok := metadata["user_id"].(string)
 	require.True(t, ok)
-	converged := parseClaudeUserIDJSON(convergedRaw)
+	converged := parseClaudeUserIDForTest(convergedRaw)
 	require.Equal(t, ids.deviceID, converged["device_id"], "device_id 收敛为账号级恒定值")
 	require.Equal(t, "real-account-uuid", converged["account_uuid"], "session 模式收敛 account_uuid 为账号真实值")
 	require.Equal(t, ids.sessionID, converged["session_id"])
@@ -277,13 +291,13 @@ func TestApplyClaudeFingerprintToUserIDJSON_ModeSemantics(t *testing.T) {
 	require.True(t, applyClaudeFingerprintToUserIDJSON(deviceMetadata, deviceIDs))
 	deviceRaw, ok := deviceMetadata["user_id"].(string)
 	require.True(t, ok)
-	deviceResult := parseClaudeUserIDJSON(deviceRaw)
+	deviceResult := parseClaudeUserIDForTest(deviceRaw)
 	require.Equal(t, deviceIDs.deviceID, deviceResult["device_id"])
 	require.Equal(t, claudeFingerprintClientAccount, deviceResult["account_uuid"])
 	require.Equal(t, claudeFingerprintClientSession, deviceResult["session_id"])
 }
 
-func TestApplyClaudeFingerprintToUserIDJSON_RebuildsMalformedValue(t *testing.T) {
+func TestApplyClaudeFingerprintToUserIDJSON_LeavesUnreadableValueUntouched(t *testing.T) {
 	account := newTestClaudeOAuthAccount(7005, map[string]any{
 		"claude_fingerprint_mode": "full",
 		"claude_fingerprint_seed": claudeFingerprintTestSeed,
@@ -291,16 +305,71 @@ func TestApplyClaudeFingerprintToUserIDJSON_RebuildsMalformedValue(t *testing.T)
 	ids := resolveClaudeFingerprintIDs(account, "", claudeFingerprintFull)
 	require.NotNil(t, ids)
 
-	for _, raw := range []string{"", "not-json", `["array"]`, `{"unknown":"only"}`} {
+	// 旧拼接格式（CLI < 2.1.78）是**合法**身份，只是本模块不认它的形态。
+	legacy := "user_" + claudeFingerprintClientDeviceID + "_account_" + claudeFingerprintClientAccount +
+		"_session_" + claudeFingerprintClientSession
+	// 新格式但缺 session_id 时 ParseMetadataUserID 同样拒绝：取不到客户端会话，
+	// session 模式会退化成账号级恒定会话。
+	incomplete := `{"device_id":"` + claudeFingerprintClientDeviceID + `"}`
+
+	for _, raw := range []string{"", "not-json", `["array"]`, `{"unknown":"only"}`, legacy, incomplete} {
 		metadata := map[string]any{"user_id": raw}
-		require.True(t, applyClaudeFingerprintToUserIDJSON(metadata, ids), "raw=%q", raw)
-		rebuiltRaw, ok := metadata["user_id"].(string)
-		require.True(t, ok, "raw=%q", raw)
-		rebuilt := parseClaudeUserIDJSON(rebuiltRaw)
-		require.NotNil(t, rebuilt, "raw=%q", raw)
-		require.Equal(t, ids.deviceID, rebuilt["device_id"], "raw=%q", raw)
-		require.Equal(t, ids.sessionID, rebuilt["session_id"], "raw=%q", raw)
+		require.False(t, applyClaudeFingerprintToUserIDJSON(metadata, ids), "raw=%q", raw)
+		require.Equal(t, raw, metadata["user_id"],
+			"不可读的身份必须原样透传：重建会丢组件或把客户端塌成账号级会话（raw=%q）", raw)
 	}
+}
+
+// 旧格式客户端不得被当成「格式非法」而重建：device 模式曾因此删掉 session_id /
+// account_uuid，产出一个连 ParseMetadataUserID 都认不出的身份。
+func TestStageClaudeFingerprintForBody_LeavesLegacyFormatUntouched(t *testing.T) {
+	legacyA := "user_" + claudeFingerprintClientDeviceID + "_account_" + claudeFingerprintClientAccount +
+		"_session_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	legacyB := "user_" + claudeFingerprintClientDeviceID + "_account_" + claudeFingerprintClientAccount +
+		"_session_11111111-2222-4333-8444-555555555555"
+
+	for _, mode := range []string{"device", "session", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			c := newClaudeFingerprintTestContext(t)
+			account := newTestClaudeOAuthAccount(7800, map[string]any{
+				"claude_fingerprint_mode": mode,
+				"claude_fingerprint_seed": claudeFingerprintTestSeed,
+				"account_uuid":            "real-account-uuid",
+			})
+
+			for _, legacy := range []string{legacyA, legacyB} {
+				body, ok := setJSONValueBytes([]byte(`{"model":"claude-sonnet-5"}`), "metadata.user_id", legacy)
+				require.True(t, ok)
+
+				require.Equal(t, string(body), string(stageClaudeFingerprintForBody(c, account, body)),
+					"旧格式身份不得被改写（mode=%s）", mode)
+				require.Nil(t, stagedClaudeFingerprintIDs(c, account),
+					"没有可收敛的身份就不该暂存 ID（mode=%s）", mode)
+			}
+		})
+	}
+}
+
+// 回写必须是真实 Claude Code 的字段顺序，而不是 map 序列化的字母序。
+func TestApplyClaudeFingerprintToUserIDJSON_CanonicalFieldOrder(t *testing.T) {
+	account := newTestClaudeOAuthAccount(7006, map[string]any{
+		"claude_fingerprint_mode": "full",
+		"claude_fingerprint_seed": claudeFingerprintTestSeed,
+		"account_uuid":            "real-account-uuid",
+	})
+	ids := resolveClaudeFingerprintIDs(account, "", claudeFingerprintFull)
+	require.NotNil(t, ids)
+
+	metadata := map[string]any{"user_id": `{"device_id":"` + claudeFingerprintClientDeviceID +
+		`","account_uuid":"` + claudeFingerprintClientAccount +
+		`","session_id":"` + claudeFingerprintClientSession + `"}`}
+	require.True(t, applyClaudeFingerprintToUserIDJSON(metadata, ids))
+
+	raw, ok := metadata["user_id"].(string)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(raw, `{"device_id":`), "device_id 必须是第一个字段，实际: %s", raw)
+	require.Less(t, strings.Index(raw, `"device_id"`), strings.Index(raw, `"account_uuid"`))
+	require.Less(t, strings.Index(raw, `"account_uuid"`), strings.Index(raw, `"session_id"`))
 }
 
 // --- raw 字节改写：热路径不得对整 body 全量 Unmarshal ---
@@ -318,7 +387,7 @@ func TestApplyClaudeFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T)
 	next, changed, err := applyClaudeFingerprintClientMetadataRaw(body, ids)
 	require.NoError(t, err)
 	require.True(t, changed)
-	rewritten := parseClaudeUserIDJSON(gjson.GetBytes(next, "metadata.user_id").String())
+	rewritten := parseClaudeUserIDForTest(gjson.GetBytes(next, "metadata.user_id").String())
 	require.Equal(t, ids.deviceID, rewritten["device_id"])
 	require.Equal(t, ids.sessionID, rewritten["session_id"])
 	require.Equal(t, "claude-sonnet-5", gjson.GetBytes(next, "model").String(), "无关字段必须原样保留")
@@ -401,7 +470,7 @@ func TestBuildUpstreamRequest_AppliesStagedClaudeFingerprintHeaders(t *testing.T
 	require.Equal(t, ids.sessionID, getHeaderRaw(req.Header, "X-Claude-Code-Session-Id"),
 		"出站会话头必须与请求体共享同一份收敛 ID")
 	require.Equal(t, ids.sessionID, getHeaderRaw(req.Header, "x-session-id"))
-	require.Equal(t, ids.sessionID, parseClaudeUserIDJSON(gjson.GetBytes(wireBody, "metadata.user_id").String())["session_id"],
+	require.Equal(t, ids.sessionID, parseClaudeUserIDForTest(gjson.GetBytes(wireBody, "metadata.user_id").String())["session_id"],
 		"请求体与出站头必须一致")
 }
 
@@ -428,7 +497,7 @@ func TestBuildUpstreamRequest_ConvergedIdentitySurvivesIdentityRewrite(t *testin
 	require.NoError(t, err)
 
 	require.Equal(t, ids.sessionID, getHeaderRaw(req.Header, "X-Claude-Code-Session-Id"))
-	wire := parseClaudeUserIDJSON(gjson.GetBytes(wireBody, "metadata.user_id").String())
+	wire := parseClaudeUserIDForTest(gjson.GetBytes(wireBody, "metadata.user_id").String())
 	require.NotNil(t, wire)
 	require.Equal(t, ids.sessionID, wire["session_id"],
 		"下游身份重写不得让 wire body 与出站头指向不同的会话")
@@ -456,7 +525,7 @@ func TestBuildCountTokensRequest_ConvergedIdentitySurvivesIdentityRewrite(t *tes
 	require.NoError(t, err)
 
 	require.Equal(t, ids.sessionID, getHeaderRaw(req.Header, "X-Claude-Code-Session-Id"))
-	wire := parseClaudeUserIDJSON(gjson.GetBytes(wireBody, "metadata.user_id").String())
+	wire := parseClaudeUserIDForTest(gjson.GetBytes(wireBody, "metadata.user_id").String())
 	require.NotNil(t, wire)
 	require.Equal(t, ids.sessionID, wire["session_id"])
 	require.Equal(t, ids.deviceID, wire["device_id"])
