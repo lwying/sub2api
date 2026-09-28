@@ -428,6 +428,12 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 		body = applyToolsLastCacheBreakpoint(body)
 	}
 
+	// Phase G: 指纹收敛收尾。放在这里而不是各 bridge 里，是因为两个 bridge
+	// （ForwardAsChatCompletions / ForwardAsResponses）共用本函数，
+	// 收敛语义只能有一处实现，否则两条路径会漂移。
+	// 原生 /v1/messages 路径不走本函数，在 Forward 里单独接入。
+	body = stageClaudeFingerprintForBody(c, account, body)
+
 	return body
 }
 

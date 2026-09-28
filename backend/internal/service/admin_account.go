@@ -162,7 +162,10 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"drive_storage_usage":                    {},
 	"drive_tier_updated_at":                  {},
 	// Codex fingerprint convergence uses a per-account random seed, never copied from another account.
-	codexFingerprintSeedExtraKey:           {},
+	codexFingerprintSeedExtraKey: {},
+	// Claude fingerprint convergence 同上：复制账号不得继承源账号的 seed，
+	// 否则两份凭据在上游会共用同一套设备身份。
+	claudeFingerprintSeedExtraKey:          {},
 	"codex_primary_used_percent":           {},
 	"codex_primary_reset_after_seconds":    {},
 	"codex_primary_window_minutes":         {},
@@ -448,7 +451,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
 	delete(accountExtra, OpenCodeGoUsageAutoRefreshExtraKey)
 	delete(accountExtra, OpenCodeGoUsageSnapshotExtraKey)
-	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
+	accountExtra = prepareFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
 	account := &Account{
 		Name:        input.Name,
 		Notes:       normalizeAccountNotes(input.Notes),
@@ -730,8 +733,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			}
 		}
 		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
-		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
-		account.Extra = normalizedExtra
+		account.Extra = prepareFingerprintExtraForUpdate(account, normalizedExtra)
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
 			delete(account.Extra, "antigravity_credits_overages") // 清理旧版 overages 运行态
 			// 清除 AICredits 限流 key
@@ -751,7 +753,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		NormalizeFixedQuotaWindows(account.Extra)
 	}
 	if input.Extra == nil {
-		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
+		account.Extra = prepareFingerprintExtraForUpdate(account, account.Extra)
 	}
 	if requestedRateSyncEnabledUpdate != nil && *requestedRateSyncEnabledUpdate {
 		if requestedProbeEnabledUpdate != nil && !*requestedProbeEnabledUpdate {
@@ -951,6 +953,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = MergeOpenAICodexTicketExtra(updates, nil)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
+	updates = sanitizedClaudeFingerprintExtraUpdates(updates)
 	updates = stripOpenAIAutoResetCreditManagedExtra(updates, true)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
@@ -981,6 +984,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = MergeOpenAICodexTicketExtra(input.Extra, nil)
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
+	input.Extra = sanitizedClaudeFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
@@ -1138,10 +1142,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// Prepare bulk updates for columns and JSONB fields.
 	repoUpdates := AccountBulkUpdate{
-		Credentials:                input.Credentials,
-		Extra:                      input.Extra,
-		ProbeEnabled:               input.ProbeEnabled,
-		EnsureCodexFingerprintSeed: ShouldEnsureCodexFingerprintSeedForExtraUpdates(input.Extra),
+		Credentials:                 input.Credentials,
+		Extra:                       input.Extra,
+		ProbeEnabled:                input.ProbeEnabled,
+		EnsureCodexFingerprintSeed:  ShouldEnsureCodexFingerprintSeedForExtraUpdates(input.Extra),
+		EnsureClaudeFingerprintSeed: ShouldEnsureClaudeFingerprintSeedForExtraUpdates(input.Extra),
 	}
 	if input.ProbeEnabled != nil {
 		if repoUpdates.Extra == nil {

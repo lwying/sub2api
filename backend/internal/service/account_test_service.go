@@ -549,6 +549,11 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
+	// 指纹收敛：探测流量必须与真实转发呈现同一身份。探测体自带随机 device_id /
+	// session_id，收敛账号若原样发出，上游在这一账号上会额外看到一台设备；
+	// 这里与转发路径共用同一入口（自门控：仅 Anthropic OAuth/SetupToken 且显式 opt-in）。
+	payloadBytes = stageClaudeFingerprintForBody(c, account, payloadBytes)
+
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
@@ -576,6 +581,10 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		// 其余保持 extra/default 行为。
 		setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetBaseURL())
 	}
+
+	// 指纹收敛：与请求体共享同一份收敛 ID（真实 Claude Code 的
+	// metadata.user_id.session_id 与 x-claude-code-session-id 头始终一致）
+	applyStagedClaudeFingerprintHeaders(c, account, req.Header)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Header)

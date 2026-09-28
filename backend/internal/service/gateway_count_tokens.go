@@ -97,6 +97,14 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		}
 	}
 
+	// 指纹收敛：与 /v1/messages 同门控（仅 Anthropic OAuth/SetupToken 且显式 opt-in），
+	// 在 body 落定后统一改写并暂存 IDs，供 buildCountTokensRequest 改写同一份出站头。
+	// count_tokens 与会话正文共用同一个 session_id，漏改一处就等于把真实会话
+	// 直接暴露给上游（头改了、体没改，上游读到两个不同的会话标识反而更可疑）。
+	if err := replaceBody(stageClaudeFingerprintForBody(c, account, body)); err != nil {
+		return err
+	}
+
 	// Antigravity 账户不支持 count_tokens，返回 404 让客户端 fallback 到本地估算。
 	// 返回 nil 避免 handler 层记录为错误，也不设置 ops 上游错误上下文。
 	if account.Platform == PlatformAntigravity {
@@ -504,6 +512,10 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 		}
 	}
 
+	// 指纹收敛必须是 metadata.user_id 的最后写者：上面的身份重写（RewriteUserIDWithMasking）
+	// 会盖掉收敛结果，导致出站头与会话正文指向不同的会话。与 buildUpstreamRequest 同处理。
+	body = applyStagedClaudeFingerprintClientMetadataRaw(c, account, body)
+
 	// Disabled fingerprint unification does not disable forced mimicry headers.
 	var billingFingerprint *Fingerprint
 	if ctEnableFP {
@@ -595,6 +607,9 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 			}
 		}
 	}
+
+	// 指纹收敛：与 /v1/messages 同源，出站头必须与请求体共享同一份收敛 ID
+	applyStagedClaudeFingerprintHeaders(c, account, req.Header)
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)

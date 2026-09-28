@@ -892,6 +892,13 @@ export default {
         noResponseBody: '服务器未返回响应体'
       },
       anthropic: {
+        claudeFingerprintMode: 'Claude 客户端身份收敛',
+        claudeFingerprintModeDesc:
+          '多人共享同一 Claude OAuth 账号时，将各用户的设备/会话标识收敛为账号级恒定值，减少上游可见的设备数和会话数。默认关闭（原样透传客户端标识），需要时再显式开启。上游的配额判定策略不可观测：同类收敛在 Codex 侧有开启后额度缩水的实测报告，Claude 侧尚无结论，建议谨慎开启并按自己的实测结果选择合适的档位。',
+        claudeFingerprintOff: '关闭（透传，默认）',
+        claudeFingerprintDevice: '仅设备',
+        claudeFingerprintSession: '设备+会话',
+        claudeFingerprintFull: '完全收敛',
         apiKeyPassthrough: '自动透传（仅替换认证）',
         apiKeyPassthroughDesc:
           '仅对 Anthropic API Key 生效。开启后，messages/count_tokens 请求将透传上游并仅替换认证，保留计费/并发/审计及必要安全过滤；关闭即可回滚到现有兼容链路。',

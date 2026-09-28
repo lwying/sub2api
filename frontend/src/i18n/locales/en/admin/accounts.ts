@@ -784,6 +784,13 @@ export default {
         noResponseBody: 'No response body from server'
       },
       anthropic: {
+        claudeFingerprintMode: 'Claude client identity convergence',
+        claudeFingerprintModeDesc:
+          'When multiple users share the same Claude OAuth account, converge device/session identifiers to account-level stable values to reduce the upstream-visible device and session count. Off by default (client identifiers pass through as-is); opt in explicitly when needed. Upstream quota decisions are not observable: comparable convergence on the Codex side has been reported to shrink quota after being enabled, while there is no such evidence for Claude yet — enable with care and check your own measurements.',
+        claudeFingerprintOff: 'Off (passthrough, default)',
+        claudeFingerprintDevice: 'Device only',
+        claudeFingerprintSession: 'Device + Session',
+        claudeFingerprintFull: 'Full convergence',
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
           'Only applies to Anthropic API Key accounts. When enabled, messages/count_tokens are forwarded in passthrough mode with auth replacement only, while billing/concurrency/audit and safety filtering are preserved. Disable to roll back immediately.',

@@ -992,6 +992,25 @@
         </div>
       </div>
 
+      <!-- Claude 指纹收敛模式（仅 Anthropic OAuth/SetupToken） -->
+      <div v-if="allAnthropicOAuthOrSetupToken" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label class="input-label mb-0">{{ t('admin.accounts.anthropic.claudeFingerprintMode') }}</label>
+          <input
+            id="bulk-edit-anthropic-claude-fingerprint-mode-enabled"
+            v-model="enableClaudeFingerprintMode"
+            type="checkbox"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div :class="!enableClaudeFingerprintMode && 'pointer-events-none opacity-50'">
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.anthropic.claudeFingerprintModeDesc') }}
+          </p>
+          <Select v-model="claudeFingerprintMode" data-testid="bulk-claude-fingerprint-mode-select" :options="claudeFingerprintModeOptions" />
+        </div>
+      </div>
+
       <!-- Upstream billing auto probe (any API-key platform) -->
       <div v-if="allBillingProbeCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -1715,6 +1734,15 @@ const codexFingerprintModeOptions = computed(() => [
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
 ])
+type ClaudeFingerprintMode = 'off' | 'device' | 'session' | 'full'
+const enableClaudeFingerprintMode = ref(false)
+const claudeFingerprintMode = ref<ClaudeFingerprintMode>('off')
+const claudeFingerprintModeOptions = computed(() => [
+  { value: 'off' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintOff') },
+  { value: 'device' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintDevice') },
+  { value: 'session' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintSession') },
+  { value: 'full' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintFull') },
+])
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const rpmLimitEnabled = ref(false)
@@ -2110,6 +2138,19 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   }
 
+  if (enableClaudeFingerprintMode.value) {
+    const extra = ensureExtra()
+    // 与 codex_fingerprint_mode 同源：批量更新走 JSONB 顶层合并，off 必须显式落键才能清掉
+    // 账号上已有的 device/session/full，删键只表示"本次不更新该键"；且只删不写会让 payload
+    // 退化成 {extra:{}}，被后端 len(req.Extra) > 0 判为空更新直接 400 "No updates provided"（#6327）。
+    //
+    // 显式 off 与不设置在读取侧完全等价：claudeFingerprintModeFromExtra 对空值/非法值走
+    // default 回落 off，对 "off" 命中同一分支，所以 #5610 定下的"不显式 opt-in 就保持旧客户端
+    // 身份"不受影响；ShouldEnsureClaudeFingerprintSeedForExtraUpdates 同样只在 device/session/
+    // full 时要种子，off 不会触发。claude_fingerprint_seed 由后端托管，前端永不写入。
+    extra.claude_fingerprint_mode = claudeFingerprintMode.value
+  }
+
   if (enableOpenAICompactMode.value) {
     const extra = ensureExtra()
     extra.openai_compact_mode = openAICompactMode.value
@@ -2224,6 +2265,7 @@ const handleSubmit = async () => {
     enableCodexCLIOnly.value ||
     enableCodexCLIOnlyAppServer.value ||
     enableCodexFingerprintMode.value ||
+    enableClaudeFingerprintMode.value ||
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
@@ -2376,6 +2418,8 @@ watch(
       enableCodexCLIOnlyAppServer.value = false
       enableCodexFingerprintMode.value = false
       codexFingerprintMode.value = 'off'
+      enableClaudeFingerprintMode.value = false
+      claudeFingerprintMode.value = 'off'
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false
       enableRpmLimit.value = false
