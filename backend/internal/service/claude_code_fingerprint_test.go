@@ -366,7 +366,9 @@ func TestApplyClaudeFingerprintToUserIDJSON_ConvergesLegacyFormatInPlace(t *test
 	require.NotNil(t, deviceIDs)
 	deviceMetadata := map[string]any{"user_id": legacy}
 	require.True(t, applyClaudeFingerprintToUserIDJSON(deviceMetadata, deviceIDs))
-	deviceResult := ParseMetadataUserID(deviceMetadata["user_id"].(string))
+	deviceRaw, ok := deviceMetadata["user_id"].(string)
+	require.True(t, ok)
+	deviceResult := ParseMetadataUserID(deviceRaw)
 	require.NotNil(t, deviceResult)
 	require.Equal(t, deviceIDs.deviceID, deviceResult.DeviceID)
 	require.Equal(t, claudeFingerprintClientAccount, deviceResult.AccountUUID)
