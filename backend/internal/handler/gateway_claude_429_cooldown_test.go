@@ -103,7 +103,8 @@ func TestGatewayClaude429CooldownMessagesSameSessionNewRequestID(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, rec2.Code)
 	require.Equal(t, []int64{1, 2}, upstream.hits, "a new request ID must not cause more upstream attempts in the cooled session")
 	require.Equal(t, "60", rec2.Header().Get("Retry-After"))
-	require.Contains(t, rec2.Body.String(), claude429CooldownCode)
+	require.Contains(t, rec2.Body.String(), `"type":"rate_limit_error"`)
+	require.Contains(t, rec2.Body.String(), `"code":"claude_429_account_limit_cooldown"`)
 	require.NotContains(t, rec2.Body.String(), claude429DeviceA)
 	require.NotContains(t, rec2.Body.String(), claude429SessionA)
 

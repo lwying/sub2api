@@ -22,21 +22,23 @@ func TestOpenAIMessagesClaude429CooldownSameSessionAndSharedKey(t *testing.T) {
 	group := openAI429MatrixGroup(4293)
 	group.AllowMessagesDispatch = true
 	key := openAI429MatrixAPIKey(group)
-	call := func(device, session, header string) (int, string) {
+	call := func(device, session, header string) (int, string, string) {
 		body := []byte(`{"model":"gpt-5.1","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"metadata":{"user_id":"user_` + device + `_account__session_` + session + `"}}`)
 		c, rec := openAI429MatrixContext(t, key, "/v1/messages", body, nil)
 		c.Request.Header.Set("X-Claude-Code-Session-Id", header)
 		env.handler.Messages(c)
-		return rec.Code, rec.Header().Get("Retry-After")
+		return rec.Code, rec.Header().Get("Retry-After"), rec.Body.String()
 	}
-	code, _ := call(claude429DeviceA, claude429SessionA, claude429SessionA)
+	code, _, _ := call(claude429DeviceA, claude429SessionA, claude429SessionA)
 	require.Equal(t, http.StatusTooManyRequests, code)
 	require.Equal(t, []int64{1, 2}, upstream.calls())
-	code, retry := call(claude429DeviceA, claude429SessionA, claude429SessionA)
+	code, retry, responseBody := call(claude429DeviceA, claude429SessionA, claude429SessionA)
 	require.Equal(t, http.StatusTooManyRequests, code)
 	require.Equal(t, "60", retry)
+	require.Contains(t, responseBody, `"type":"rate_limit_error"`)
+	require.Contains(t, responseBody, `"code":"claude_429_account_limit_cooldown"`)
 	require.Equal(t, []int64{1, 2}, upstream.calls(), "a second request in the same session must make zero upstream attempts")
-	code, retry = call(claude429DeviceB, claude429SessionB, claude429SessionB)
+	code, retry, _ = call(claude429DeviceB, claude429SessionB, claude429SessionB)
 	require.Equal(t, http.StatusTooManyRequests, code)
 	require.Empty(t, retry)
 	require.Equal(t, []int64{1, 2, 1, 2}, upstream.calls(), "a different device on the same key must not be locally cooled")

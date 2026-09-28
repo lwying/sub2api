@@ -61,7 +61,7 @@ func claude429BridgeEntries() []claude429BridgeEntry {
 		{
 			name:      "chat",
 			path:      "/v1/chat/completions",
-			errorCode: `"type":"claude_429_account_limit_cooldown"`,
+			errorCode: `"type":"rate_limit_error"`,
 			call:      func(h *GatewayHandler, c *gin.Context) { h.ChatCompletions(c) },
 			body:      claude429ChatCompletionsBridgeBody,
 		},
@@ -167,7 +167,7 @@ func TestGatewayClaude429CooldownBridgesShareScopeAndRespectFormat(t *testing.T)
 		wantCode string
 	}{
 		{"responses", "/v1/responses", `{"model":"claude-sonnet-4-5","input":"hello","stream":false,"metadata":{"user_id":"user_` + claude429DeviceA + `_account__session_` + claude429SessionA + `"}}`, `"code":"claude_429_account_limit_cooldown"`},
-		{"chat", "/v1/chat/completions", `{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}],"stream":false,"metadata":{"user_id":"user_` + claude429DeviceA + `_account__session_` + claude429SessionA + `"}}`, `"type":"claude_429_account_limit_cooldown"`},
+		{"chat", "/v1/chat/completions", `{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}],"stream":false,"metadata":{"user_id":"user_` + claude429DeviceA + `_account__session_` + claude429SessionA + `"}}`, `"type":"rate_limit_error"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			group := &service.Group{ID: 9301, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive}
@@ -192,6 +192,7 @@ func TestGatewayClaude429CooldownBridgesShareScopeAndRespectFormat(t *testing.T)
 			require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
 			require.Equal(t, "60", rec.Header().Get("Retry-After"))
 			require.Contains(t, rec.Body.String(), tc.wantCode)
+			require.Contains(t, rec.Body.String(), `"code":"claude_429_account_limit_cooldown"`)
 			require.Equal(t, []int64{1, 2}, upstream.hits, "bridge must reject before any upstream attempt")
 		})
 	}
@@ -221,6 +222,7 @@ func TestGatewayClaude429CooldownBridgesCapThenBlockSameIdentity(t *testing.T) {
 			require.Equal(t, "60", rec2.Header().Get("Retry-After"))
 			require.Contains(t, rec2.Body.String(), claude429CooldownMessage, "必须是 B2 本地冷却，而不是上游耗尽的错误")
 			require.Contains(t, rec2.Body.String(), entry.errorCode, "错误响应必须保持本入口的协议格式")
+			require.Contains(t, rec2.Body.String(), `"code":"claude_429_account_limit_cooldown"`)
 			require.Equal(t, []int64{1, 2}, upstream.hits, "命中本地冷却后不得再产生任何上游尝试")
 			require.NotContains(t, rec2.Body.String(), claude429DeviceA)
 			require.NotContains(t, rec2.Body.String(), claude429SessionA)

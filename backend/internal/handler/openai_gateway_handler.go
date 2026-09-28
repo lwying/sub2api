@@ -1332,7 +1332,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
 		claude429Cooldown.prepareLocalResponse(c, seconds)
-		h.anthropicErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"type":  "error",
+			"error": gin.H{"type": "rate_limit_error", "code": claude429CooldownCode, "message": claude429CooldownMessage},
+		})
 		return
 	}
 

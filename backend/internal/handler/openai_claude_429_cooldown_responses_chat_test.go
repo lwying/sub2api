@@ -175,6 +175,7 @@ func TestOpenAIClaude429CooldownResponsesAndChatCompletionsSameIdentity(t *testi
 			require.Equal(t, http.StatusTooManyRequests, recA2.Code, recA2.Body.String())
 			require.Equal(t, "60", recA2.Header().Get("Retry-After"))
 			require.Contains(t, recA2.Body.String(), claude429CooldownMessage, "必须是本地冷却，而不是上游耗尽的错误")
+			require.Contains(t, recA2.Body.String(), `"type":"claude_429_account_limit_cooldown"`)
 			require.Equal(t, []int64{1, 2}, upstream.calls(), "同一身份换 request ID 后必须零上游尝试")
 			require.NotContains(t, recA2.Body.String(), claude429DeviceA)
 			require.NotContains(t, recA2.Body.String(), claude429SessionA)
