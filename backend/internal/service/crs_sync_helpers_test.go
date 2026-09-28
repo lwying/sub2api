@@ -6,6 +6,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// CRS 同步整份保留同步源的 extra，但系统管理的指纹 seed 必须留在本地账号手里：
+// 继承同步源的 seed 会让本地账号与同步源在上游呈现同一台设备（同一套会话）。
+func TestCRSSyncExtraWithoutManagedSeeds(t *testing.T) {
+	got := crsSyncExtraWithoutManagedSeeds(map[string]any{
+		"claude_fingerprint_mode": "session",
+		"claude_fingerprint_seed": claudeFingerprintTestSeed,
+		"codex_fingerprint_mode":  "full",
+		"codex_fingerprint_seed":  "22222222-2222-4222-8222-222222222222",
+		"account_uuid":            "keep-me",
+	})
+
+	require.Equal(t, "session", got["claude_fingerprint_mode"], "模式是管理员配置，随同步保留")
+	require.Equal(t, "full", got["codex_fingerprint_mode"])
+	require.Equal(t, "keep-me", got["account_uuid"])
+	require.NotContains(t, got, "claude_fingerprint_seed")
+	require.NotContains(t, got, "codex_fingerprint_seed")
+
+	// 原 map 不得被就地改写（同步流程后续还要用它算 diff）。
+	source := map[string]any{"claude_fingerprint_seed": claudeFingerprintTestSeed}
+	_ = crsSyncExtraWithoutManagedSeeds(source)
+	require.Contains(t, source, "claude_fingerprint_seed")
+
+	require.Nil(t, crsSyncExtraWithoutManagedSeeds(nil))
+}
+
 func TestBuildSelectedSet(t *testing.T) {
 	tests := []struct {
 		name     string

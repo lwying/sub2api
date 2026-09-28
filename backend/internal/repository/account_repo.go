@@ -94,18 +94,45 @@ func ensureCodexFingerprintSeedSQL(extraExpr string) string {
 }
 
 func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]any {
+	return stripSystemManagedExtraKey(extra, "codex_fingerprint_seed")
+}
+
+func claudeFingerprintSeedValidSQL(extraExpr string) string {
+	value := "(" + extraExpr + " ->> 'claude_fingerprint_seed')"
+	return "(" + value + " ~ '" + codexFingerprintSeedCanonicalPattern + "' AND " + value + " <> '" + codexFingerprintNilSeed + "')"
+}
+
+// ensureClaudeFingerprintSeedSQL 与 ensureCodexFingerprintSeedSQL 同构，
+// 差异只在平台/类型门控：Anthropic 侧 OAuth 与 SetupToken 都可开收敛。
+// 合法性一律以**已存行的 extra** 为准，因此调用方在 update payload 里塞进来的
+// seed 永远不可能被采信——它要么被剥离，要么被这里覆盖。
+func ensureClaudeFingerprintSeedSQL(extraExpr string) string {
+	return "CASE WHEN platform = 'anthropic' AND type IN ('oauth', 'setup-token') THEN " +
+		"jsonb_set(" + extraExpr + ", '{claude_fingerprint_seed}', " +
+		"CASE WHEN " + claudeFingerprintSeedValidSQL("extra") +
+		" THEN to_jsonb(extra ->> 'claude_fingerprint_seed') ELSE to_jsonb(gen_random_uuid()::text) END, true) " +
+		"ELSE " + extraExpr + " END"
+}
+
+func stripClaudeFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]any {
+	return stripSystemManagedExtraKey(extra, "claude_fingerprint_seed")
+}
+
+// stripSystemManagedExtraKey 从 JSONB 合并载荷中移除系统管理的 extra 键：
+// 这些键的值由服务端铸造并保活，客户端传入的副本一律不可采信。
+func stripSystemManagedExtraKey(extra map[string]any, key string) map[string]any {
 	if extra == nil {
 		return nil
 	}
-	if _, exists := extra["codex_fingerprint_seed"]; !exists {
+	if _, exists := extra[key]; !exists {
 		return extra
 	}
 	stripped := make(map[string]any, len(extra)-1)
-	for key, value := range extra {
-		if key == "codex_fingerprint_seed" {
+	for k, value := range extra {
+		if k == key {
 			continue
 		}
-		stripped[key] = value
+		stripped[k] = value
 	}
 	return stripped
 }
@@ -2812,6 +2839,7 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
+	updates = stripClaudeFingerprintSeedFromExtraUpdate(updates)
 	if len(updates) == 0 {
 		return nil
 	}
@@ -2846,6 +2874,9 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	}
 	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+	}
+	if service.ShouldEnsureClaudeFingerprintSeedForExtraUpdates(updates) {
+		extraExpression = ensureClaudeFingerprintSeedSQL(extraExpression)
 	}
 	result, err := client.ExecContext(
 		ctx,
@@ -3089,6 +3120,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		return 0, nil
 	}
 	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
+	updates.Extra = stripClaudeFingerprintSeedFromExtraUpdate(updates.Extra)
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
@@ -3208,7 +3240,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND COALESCE(btrim("+credentialPlaceholder+"::jsonb ->> 'account_mode') <> 'zen', true) IS NOT TRUE")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
+	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed || updates.EnsureClaudeFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -3290,6 +3322,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+		}
+		if updates.EnsureClaudeFingerprintSeed {
+			extraExpression = ensureClaudeFingerprintSeedSQL(extraExpression)
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}

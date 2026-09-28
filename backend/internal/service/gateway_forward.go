@@ -390,6 +390,16 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 	}
 
+	// 指纹收敛：在 body 全部改写落定之后、构建上游请求之前统一入口。
+	// 位置必须在 mimicry 分支之外——真实 Claude Code 客户端（shouldMimicClaudeCode
+	// 为 false）恰恰是共享账号下最需要收敛的一类流量，它们的 metadata.user_id
+	// 带着各自的 device_id/session_id 原样穿透，上游据此数出设备数与会话数。
+	// 一次解析出的收敛 IDs 同时供请求体（此处）与出站头（buildUpstreamRequest 读取
+	// gin context 中的暂存值）使用，保证 session_id 在头与体之间逐字节一致。
+	if err := replaceBody(stageClaudeFingerprintForBody(c, account, body)); err != nil {
+		return nil, err
+	}
+
 	// 重试循环
 	var resp *http.Response
 	lastWireBody := body

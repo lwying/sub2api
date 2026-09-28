@@ -3316,6 +3316,24 @@
         </div>
       </div>
 
+      <!-- Claude 指纹收敛模式（仅 Anthropic OAuth/SetupToken） -->
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'oauth-based'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.claudeFingerprintMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.claudeFingerprintModeDesc') }}
+            </p>
+          </div>
+          <div class="w-52 flex-shrink-0">
+            <Select v-model="claudeFingerprintMode" data-testid="create-claude-fingerprint-mode-select" :options="claudeFingerprintModeOptions" />
+          </div>
+        </div>
+      </div>
+
       <!-- OpenAI Compact 能力配置 -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -4446,6 +4464,14 @@ const codexFingerprintModeOptions = computed(() => [
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
 ])
+type ClaudeFingerprintMode = 'off' | 'device' | 'session' | 'full'
+const claudeFingerprintMode = ref<ClaudeFingerprintMode>('off')
+const claudeFingerprintModeOptions = computed(() => [
+  { value: 'off' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintOff') },
+  { value: 'device' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintDevice') },
+  { value: 'session' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintSession') },
+  { value: 'full' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintFull') },
+])
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
@@ -5361,6 +5387,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
+  claudeFingerprintMode.value = 'off'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5466,6 +5493,13 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
+  }
+  // Claude 收敛同样是显式 opt-in：off 即默认值，不落键；device/session/full 必须显式写入，
+  // 否则管理员的选择会被当成默认而丢失（#5610）。claude_fingerprint_seed 由后端托管，永不写入。
+  if (claudeFingerprintMode.value !== 'off') {
+    extra.claude_fingerprint_mode = claudeFingerprintMode.value
+  } else {
+    delete extra.claude_fingerprint_mode
   }
   if (openAICompactMode.value !== 'auto') {
     extra.openai_compact_mode = openAICompactMode.value
@@ -6957,6 +6991,15 @@ const handleAnthropicExchange = async (authCode: string) => {
       extra.custom_base_url = customBaseUrl.value.trim()
     }
 
+    // Claude 指纹收敛模式：默认 off（不写入）；device/session/full 是显式 opt-in，
+    // 必须落键，否则管理员的选择会被后端当作"未设置"而回落到 off（#5610）。
+    // OAuth/SetupToken 授权流不走 buildOpenAIExtra，需在此单独落键。
+    if (claudeFingerprintMode.value !== 'off') {
+      extra.claude_fingerprint_mode = claudeFingerprintMode.value
+    } else {
+      delete extra.claude_fingerprint_mode
+    }
+
     const credentials: Record<string, unknown> = { ...tokenInfo }
     applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
     await createAccountAndFinish(form.platform, addMethod.value as AccountType, credentials, extra)
@@ -7080,6 +7123,15 @@ const handleCookieAuth = async (sessionKey: string) => {
         if (customBaseUrlEnabled.value && customBaseUrl.value.trim()) {
           extra.custom_base_url_enabled = true
           extra.custom_base_url = customBaseUrl.value.trim()
+        }
+
+        // Claude 指纹收敛模式：默认 off（不写入）；device/session/full 是显式 opt-in，
+        // 必须落键，否则管理员的选择会被后端当作"未设置"而回落到 off（#5610）。
+        // OAuth/SetupToken 授权流不走 buildOpenAIExtra，需在此单独落键。
+        if (claudeFingerprintMode.value !== 'off') {
+          extra.claude_fingerprint_mode = claudeFingerprintMode.value
+        } else {
+          delete extra.claude_fingerprint_mode
         }
 
         const accountName = keys.length > 1 ? `${form.name} #${i + 1}` : form.name

@@ -329,6 +329,27 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
+func TestBuildSchedulerMetadataAccount_KeepsClaudeFingerprintKeys(t *testing.T) {
+	// 转发阶段读的是调度投影而不是库里的行：这两个键被裁剪掉，
+	// 管理员开了 Claude 收敛也不会生效（与 codex_fingerprint_* 同一处陷阱）。
+	account := service.Account{
+		ID:       4242,
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeOAuth,
+		Extra: map[string]any{
+			"claude_fingerprint_mode": "session",
+			"claude_fingerprint_seed": "11111111-1111-4111-8111-111111111111",
+			"unused_large_field":      "drop-me",
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+
+	require.Equal(t, "session", got.Extra["claude_fingerprint_mode"])
+	require.Equal(t, "11111111-1111-4111-8111-111111111111", got.Extra["claude_fingerprint_seed"])
+	require.Nil(t, got.Extra["unused_large_field"])
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsGrokMediaEligibility(t *testing.T) {
 	t.Run("explicit override", func(t *testing.T) {
 		account := service.Account{

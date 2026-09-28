@@ -1023,6 +1023,10 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
+		// Anthropic 侧同构：转发阶段读的是本投影而不是库里的行，
+		// 少一个键就等于管理员开了收敛却不生效。
+		"claude_fingerprint_mode",
+		"claude_fingerprint_seed",
 		"codex_5h_used_percent",
 		"codex_7d_used_percent",
 		"codex_5h_reset_at",

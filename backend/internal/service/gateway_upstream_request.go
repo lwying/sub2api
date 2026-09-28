@@ -84,6 +84,12 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		}
 	}
 
+	// 指纹收敛必须是 metadata.user_id 的最后写者：上面的身份重写把 device_id 换成
+	// fp.ClientID、session_id 重新哈希，会正好盖掉 Forward() 里刚做好的收敛。
+	// 用暂存的同一份 IDs 再收敛一次，出站头（下方 applyStagedClaudeFingerprintHeaders）
+	// 与 wire body 才指向同一个设备与会话。未开收敛的账号在此为 no-op。
+	body = applyStagedClaudeFingerprintClientMetadataRaw(c, account, body)
+
 	// 一致性铁律：同一次请求内只取一次 mimic UA，出站 User-Agent 头与
 	// 请求体 x-anthropic-billing-header 的 cc_version 都源自这一个字符串，
 	// 避免运行期版本缓存翻转瞬间头/体版本自相矛盾（会被判非正版客户端）。
@@ -196,6 +202,10 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 			}
 		}
 	}
+
+	// 指纹收敛：使用 Forward() 中预计算的收敛 ID 改写出站头，与请求体共享同一份 IDs
+	// （session 模式下头值必须与 body metadata.user_id.session_id 完全一致）。
+	applyStagedClaudeFingerprintHeaders(c, account, req.Header)
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）。
 	// 放在所有 header 逻辑之后，确保配置值对同名头拥有最终决定权。

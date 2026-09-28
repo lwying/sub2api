@@ -1003,4 +1003,76 @@ describe('BulkEditAccountModal', () => {
       }
     })
   })
+
+  // ==== Anthropic Claude 指纹收敛（Codex 同款语义，issue #6327 的 Anthropic 对应实现） ====
+
+  it('Anthropic OAuth 批量编辑选择「关闭」时应显式提交 claude_fingerprint_mode=off', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['anthropic'],
+      selectedTypes: ['oauth']
+    })
+
+    // 下拉框默认就是 off，用户只勾选「编辑该项」即提交——与 Codex 一致的显式哨兵语义：
+    // 批量接口只做增量键合并，省略 off 清不掉账号上已有的 device/session/full。
+    await wrapper.get('#bulk-edit-anthropic-claude-fingerprint-mode-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        claude_fingerprint_mode: 'off'
+      }
+    })
+
+    const payload = vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls[0][1] as {
+      extra: Record<string, unknown>
+    }
+    expect(Object.keys(payload.extra).length).toBeGreaterThan(0)
+  })
+
+  it('Anthropic OAuth 批量编辑显式 opt-in 模式仍原样提交', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['anthropic'],
+      selectedTypes: ['oauth']
+    })
+
+    await wrapper.get('#bulk-edit-anthropic-claude-fingerprint-mode-enabled').setValue(true)
+    await wrapper
+      .get('[data-testid="bulk-claude-fingerprint-mode-select"]')
+      .setValue('session')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        claude_fingerprint_mode: 'session'
+      }
+    })
+  })
+
+  // 该区块对 Anthropic OAuth 与 SetupToken 同时可见（accountCategory === 'oauth-based' 覆盖两者）。
+  it('Anthropic SetupToken 批量编辑同样显示 Claude 指纹收敛区块', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['anthropic'],
+      selectedTypes: ['setup-token']
+    })
+
+    expect(wrapper.find('#bulk-edit-anthropic-claude-fingerprint-mode-enabled').exists()).toBe(true)
+  })
+
+  // 未勾选「编辑该项」时不得写入该键，否则批量编辑别的字段会顺手清掉账号的收敛设置。
+  it('未勾选编辑该项时不写入 claude_fingerprint_mode', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['anthropic'],
+      selectedTypes: ['oauth']
+    })
+
+    await wrapper.get('#bulk-edit-concurrency-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls[0][1] as Record<string, unknown>
+    expect(payload.extra ?? {}).not.toHaveProperty('claude_fingerprint_mode')
+  })
 })

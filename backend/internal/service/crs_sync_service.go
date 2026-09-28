@@ -345,6 +345,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 				extra[k] = v
 			}
 		}
+		// 系统管理的指纹 seed 按本地账号铸造，一律不从外部同步继承：
+		// 带进来会让本地账号与同步源在上游共用同一套设备身份。
+		extra = crsSyncExtraWithoutManagedSeeds(extra)
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
@@ -628,6 +631,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 				extra[k] = v
 			}
 		}
+		// 系统管理的指纹 seed 按本地账号铸造，一律不从外部同步继承：
+		// 带进来会让本地账号与同步源在上游共用同一套设备身份。
+		extra = crsSyncExtraWithoutManagedSeeds(extra)
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
@@ -783,6 +789,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		for key, value := range src.Extra {
 			extra[key] = value
 		}
+		// 系统管理的指纹 seed 按本地账号铸造，一律不从外部同步继承：
+		// 带进来会让本地账号与同步源在上游共用同一套设备身份。
+		extra = crsSyncExtraWithoutManagedSeeds(extra)
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
@@ -924,6 +933,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 				extra[k] = v
 			}
 		}
+		// 系统管理的指纹 seed 按本地账号铸造，一律不从外部同步继承：
+		// 带进来会让本地账号与同步源在上游共用同一套设备身份。
+		extra = crsSyncExtraWithoutManagedSeeds(extra)
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
@@ -1054,6 +1066,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 				extra[k] = v
 			}
 		}
+		// 系统管理的指纹 seed 按本地账号铸造，一律不从外部同步继承：
+		// 带进来会让本地账号与同步源在上游共用同一套设备身份。
+		extra = crsSyncExtraWithoutManagedSeeds(extra)
 		extra["crs_account_id"] = src.ID
 		extra["crs_kind"] = src.Kind
 		extra["crs_synced_at"] = now
@@ -1141,6 +1156,14 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 	}
 
 	return result, nil
+}
+
+// crsSyncExtraWithoutManagedSeeds 剥掉系统管理的指纹 seed 键。
+// 它们由本地账号持有并由服务端铸造（见 prepareFingerprintExtraForUpdate 与仓库层
+// 的原子保活），从 CRS 同步载荷继承会让两个账号在上游呈现同一台设备/同一个会话。
+// 需要 seed 的账号由本地在管理员保存或迁移回填时铸造，不从外部继承。
+func crsSyncExtraWithoutManagedSeeds(extra map[string]any) map[string]any {
+	return sanitizedClaudeFingerprintExtraUpdates(sanitizedCodexFingerprintExtraUpdates(extra))
 }
 
 func mergeMap(existing map[string]any, updates map[string]any) map[string]any {
