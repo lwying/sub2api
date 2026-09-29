@@ -28,7 +28,8 @@ type AdminHandlers struct {
 	System                 *admin.SystemHandler
 	Subscription           *admin.SubscriptionHandler
 	Usage                  *admin.UsageHandler
-	RequestErrorDiagnostic *admin.RequestErrorDiagnosticHandler
+	RequestTrace           *admin.RequestTraceHandler
+	RequestTraceExport     *admin.RequestTraceExportHandler
 	UserAttribute          *admin.UserAttributeHandler
 	ErrorPassthrough       *admin.ErrorPassthroughHandler
 	TLSFingerprintProfile  *admin.TLSFingerprintProfileHandler

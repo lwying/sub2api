@@ -324,6 +324,17 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	responsesBody = updatedBody
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
+
+	// Final wire body freeze for the Anthropic -> Responses conversion. The
+	// Responses request type has no metadata field, so an inbound identity is
+	// reported as not_sent here: without this, a reader would have to guess
+	// whether the conversion forwarded it. The Grok strip-and-retry below rebuilds
+	// the same frozen body and only removes reasoning.encrypted_content, so it
+	// carries the same identity verdict and is not re-reported.
+	ReportRequestTraceIdentityBodyVerdict(ctx, body, responsesBody,
+		RequestTraceDecisionSourceProtocolConvert, RequestAuditProtocolAnthropic, RequestAuditProtocolOpenAIResp,
+		"anthropic_to_responses_wire_freeze")
+
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
 		grokIntentBody := responsesBody
@@ -422,12 +433,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolOpenAIResp,
 		)
-		// 真实发送接缝：/v1/messages 入站的 Responses 转换分支按 Messages 协议采集诊断
-		// （协议元数据按入站路由推导，不跟随上游 wire 协议），但真实上游形态是 OpenAI
-		// Responses，**不是** Claude Messages，因此头值这一层出界、按未采集记录
-		// （见 bindOpenAICompatWireErrorDiagnosticObserver）。原始 Chat Completions
-		// 兜底路径走共享发送器，那里同样按 OpenAI 形态声明出界。
-		upstreamReq = s.bindOpenAICompatWireErrorDiagnosticObserver(upstreamReq, c, ErrorDiagnosticProtocolMessages)
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

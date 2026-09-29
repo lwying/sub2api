@@ -387,6 +387,12 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 		return body
 	}
 
+	// Identity as this seam received it. The OAuth mimicry path is where the
+	// gateway actually decides metadata.user_id (injection above all via
+	// normalizeClaudeOAuthRequestBody), so the rewrite verdict is reported here
+	// against the body that is returned, never against the inbound body alone.
+	identityInboundBody := body
+
 	systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
 	if systemPromptInjectionEnabled {
 		systemPromptBlocks = claudeOAuthSystemPromptBlocksForModel(model, systemPromptBlocks)
@@ -433,6 +439,13 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 	// 收敛语义只能有一处实现，否则两条路径会漂移。
 	// 原生 /v1/messages 路径不走本函数，在 Forward 里单独接入。
 	body = stageClaudeFingerprintForBody(c, account, body)
+
+	// 身份层收敛/注入到此为止，之后本 body 直接进入各 bridge 的协议转换。
+	// 这里报告的是"网关决定写下的身份"，与入站快照分别呈现；转换后是否真的
+	// 出站由各协议冻结点各自报告，不能由此推断。
+	ReportRequestTraceIdentityBodyVerdict(ctx, identityInboundBody, body,
+		RequestTraceDecisionSourceIdentity, RequestAuditProtocolAnthropic, RequestAuditProtocolAnthropic,
+		"claude_oauth_identity_freeze")
 
 	return body
 }

@@ -52,8 +52,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	settingRepository := repository.NewSettingRepository(client)
 	groupRepository := repository.NewGroupRepository(client, db)
 	proxyRepository := repository.NewProxyRepository(client, db)
-	plaintextCaptureSupportProbe := repository.NewPlaintextCaptureSupportProbe(db)
-	settingService := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, plaintextCaptureSupportProbe, configConfig)
+	requestTraceSupportProbe := repository.NewRequestTraceSupportProbe(db)
+	settingService := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, requestTraceSupportProbe, configConfig)
 	emailCache := repository.NewEmailCache(redisClient)
 	emailService := service.NewEmailService(settingRepository, emailCache)
 	turnstileVerifier := repository.NewTurnstileVerifier()
@@ -256,14 +256,13 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	adminSubscriptionHandler := admin.NewSubscriptionHandler(subscriptionService)
 	usageCleanupRepository := repository.NewUsageCleanupRepository(client, db)
 	usageCleanupService := service.ProvideUsageCleanupService(usageCleanupRepository, timingWheelService, dashboardAggregationService, configConfig)
-	requestAuditValueDetailCipher := repository.ProvideRequestAuditValueDetailCipher(configConfig)
-	requestAuditValueDetailRepository := repository.NewRequestAuditValueDetailRepository(db, requestAuditValueDetailCipher)
-	requestAuditValueDetailService := service.ProvideRequestAuditValueDetailService(requestAuditValueDetailRepository, settingService)
-	adminUsageHandler := handler.ProvideAdminUsageHandler(usageService, apiKeyService, adminService, usageCleanupService, requestAuditRepository, requestAuditValueDetailService)
-	errorDiagnosticBodyCipher := repository.ProvideErrorDiagnosticBodyCipher(configConfig)
-	errorDiagnosticRepository := repository.NewErrorDiagnosticRepository(db, errorDiagnosticBodyCipher)
-	errorDiagnosticService := service.ProvideErrorDiagnosticService(errorDiagnosticRepository, settingService, errorDiagnosticBodyCipher)
-	requestErrorDiagnosticHandler := handler.ProvideRequestErrorDiagnosticHandler(errorDiagnosticService)
+	adminUsageHandler := handler.ProvideAdminUsageHandler(usageService, apiKeyService, adminService, usageCleanupService, requestAuditRepository)
+	requestTraceRepository := repository.NewRequestTraceRepository(db)
+	requestTraceHandler := handler.ProvideRequestTraceHandler(requestTraceRepository)
+	requestTraceExportStore := repository.NewRequestTraceExportRepository(db)
+	requestTraceExportSource := repository.NewRequestTraceExportSource(db)
+	requestTraceExportService := service.ProvideRequestTraceExportService(requestTraceExportStore, requestTraceExportSource, configConfig)
+	requestTraceExportHandler := handler.ProvideRequestTraceExportHandler(requestTraceExportService)
 	userAttributeHandler := admin.NewUserAttributeHandler(userAttributeService)
 	errorPassthroughRepository := repository.NewErrorPassthroughRepository(client)
 	errorPassthroughCache := repository.NewErrorPassthroughCache(redisClient)
@@ -300,7 +299,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	auditLogHandler := admin.NewAuditLogHandler(auditLogService, totpService)
 	upstreamBillingProbeService := service.ProvideUpstreamBillingProbeService(accountRepository, accountTestService, settingService, leaderLockCache, db)
 	openCodeGoUsageService := service.ProvideOpenCodeGoUsageService(accountRepository, httpUpstream, settingService, leaderLockCache, db)
-	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, cnProviderHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, requestErrorDiagnosticHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, pluginHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, promptAdminHandler, paymentHandler, affiliateHandler, complianceHandler, auditLogHandler, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, visibleAccountService, settingService)
+	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, cnProviderHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, requestTraceHandler, requestTraceExportHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, pluginHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, promptAdminHandler, paymentHandler, affiliateHandler, complianceHandler, auditLogHandler, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, visibleAccountService, settingService)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
@@ -312,13 +311,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	requestAuditValueDetailCapture := service.ProvideRequestAuditValueDetailCapture(requestAuditValueDetailRepository, settingService)
-	errorDiagnosticUsageAttacher, err := repository.ProvideErrorDiagnosticUsageAttacher(errorDiagnosticRepository)
-	if err != nil {
-		return nil, err
-	}
-	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator, keyBillingSnapshotService, errorDiagnosticService, requestAuditFingerprinter, requestAuditValueDetailCapture, errorDiagnosticUsageAttacher)
-	openAIGatewayHandler := handler.ProvideOpenAIGatewayHandler(openAIGatewayService, pluginManager, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, grokQuotaService, configConfig, coordinator, errorDiagnosticService, requestAuditRepository, requestAuditFingerprinter, requestAuditValueDetailCapture, errorDiagnosticUsageAttacher)
+	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator, keyBillingSnapshotService, requestAuditFingerprinter)
+	openAIGatewayHandler := handler.ProvideOpenAIGatewayHandler(openAIGatewayService, pluginManager, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, grokQuotaService, configConfig, coordinator, requestAuditRepository, requestAuditFingerprinter)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	totpHandler := handler.NewTotpHandler(totpService)
 	passkeyRepository := repository.NewPasskeyRepository(db)
@@ -354,15 +348,22 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
 	auditLogMiddleware := middleware.NewAuditLogMiddleware(auditLogService)
 	stepUpAuthMiddleware := middleware.NewStepUpAuthMiddleware(totpService, userService, settingService)
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, optionalJWTAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, auditLogMiddleware, stepUpAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, compositeRouteResolver, redisClient)
+	requestTraceUsageLinker := repository.NewRequestTraceUsageLinker(db)
+	requestTraceCaptureQueue := service.ProvideRequestTraceCaptureQueue(requestTraceRepository, requestTraceUsageLinker)
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, optionalJWTAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, auditLogMiddleware, stepUpAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, compositeRouteResolver, redisClient, requestTraceRepository, requestTraceCaptureQueue)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	requestAuditReservationRepository, err := repository.ProvideRequestAuditReservationRepository(requestAuditRepository)
 	if err != nil {
 		return nil, err
 	}
 	requestAuditReservationCleanupService := service.NewRequestAuditReservationCleanupService(requestAuditReservationRepository)
-	errorDiagnosticCleanupService := service.ProvideErrorDiagnosticCleanupService(errorDiagnosticRepository, errorDiagnosticService)
+	errorDiagnosticRepository := repository.NewErrorDiagnosticRepository(db)
+	errorDiagnosticCleanupService := service.ProvideErrorDiagnosticCleanupService(errorDiagnosticRepository)
+	requestAuditValueDetailRepository := repository.NewRequestAuditValueDetailRepository(db)
 	requestAuditValueDetailCleanupService := service.NewRequestAuditValueDetailCleanupService(requestAuditValueDetailRepository)
+	requestTraceCleanupService := service.ProvideRequestTraceCleanupService(requestTraceRepository, requestTraceUsageLinker)
+	requestTraceExportWorker := service.ProvideRequestTraceExportWorker(requestTraceExportService)
+	requestTraceGatewayLinker := service.ProvideRequestTraceGatewayLinker(gatewayService, openAIGatewayService, requestTraceUsageLinker)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
 	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, redisClient, configConfig, proxyRepository)
@@ -382,7 +383,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService, channelMonitorQuotaFetcher)
 	channelMonitorV2Aggregator := service.ProvideChannelMonitorV2Aggregator(channelMonitorV2Repository, db, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, requestAuditReservationCleanupService, errorDiagnosticCleanupService, requestAuditValueDetailCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, requestAuditReservationCleanupService, errorDiagnosticCleanupService, requestAuditValueDetailCleanupService, requestTraceCleanupService, requestTraceCaptureQueue, requestTraceExportWorker, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
 	application := &Application{
 		Server:                         httpServer,
 		PromptAudit:                    promptService,
@@ -390,6 +391,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		RequestAuditReservationCleanup: requestAuditReservationCleanupService,
 		ErrorDiagnosticCleanup:         errorDiagnosticCleanupService,
 		RequestAuditValueDetailCleanup: requestAuditValueDetailCleanupService,
+		RequestTraceCleanup:            requestTraceCleanupService,
+		RequestTraceCaptureQueue:       requestTraceCaptureQueue,
+		RequestTraceExportWorker:       requestTraceExportWorker,
+		RequestTraceGatewayLinker:      requestTraceGatewayLinker,
 		Cleanup:                        v,
 	}
 	return application, nil
@@ -404,6 +409,10 @@ type Application struct {
 	RequestAuditReservationCleanup *service.RequestAuditReservationCleanupService
 	ErrorDiagnosticCleanup         *service.ErrorDiagnosticCleanupService
 	RequestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService
+	RequestTraceCleanup            *service.RequestTraceCleanupService
+	RequestTraceCaptureQueue       *service.RequestTraceCaptureQueue
+	RequestTraceExportWorker       *service.RequestTraceExportWorker
+	RequestTraceGatewayLinker      *service.RequestTraceGatewayLinker
 	Cleanup                        func()
 }
 
@@ -452,6 +461,9 @@ func provideCleanup(
 	requestAuditReservationCleanup *service.RequestAuditReservationCleanupService,
 	errorDiagnosticCleanup *service.ErrorDiagnosticCleanupService,
 	requestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService,
+	requestTraceCleanup *service.RequestTraceCleanupService,
+	requestTraceCaptureQueue *service.RequestTraceCaptureQueue,
+	requestTraceExportWorker *service.RequestTraceExportWorker,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -606,6 +618,24 @@ func provideCleanup(
 			{"RequestAuditValueDetailCleanupService", func() error {
 				if requestAuditValueDetailCleanup != nil {
 					requestAuditValueDetailCleanup.Stop()
+				}
+				return nil
+			}},
+			{"RequestTraceCleanupService", func() error {
+				if requestTraceCleanup != nil {
+					requestTraceCleanup.Stop()
+				}
+				return nil
+			}},
+			{"RequestTraceCaptureQueue", func() error {
+				if requestTraceCaptureQueue != nil {
+					requestTraceCaptureQueue.Stop()
+				}
+				return nil
+			}},
+			{"RequestTraceExportWorker", func() error {
+				if requestTraceExportWorker != nil {
+					requestTraceExportWorker.Stop()
 				}
 				return nil
 			}},

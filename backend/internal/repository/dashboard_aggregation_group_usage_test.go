@@ -254,6 +254,8 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionedSortsAndInvali
 		mock.ExpectExec(`LOCK TABLE request_audit_value_details`).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		expectPlaintextOwnershipVerified(mock)
+		mock.ExpectQuery(`SELECT to_regclass\('request_traces'\) IS NOT NULL`).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 		mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
 			WithArgs(partition.name).
 			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
@@ -338,6 +340,8 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionFailureRollsBack
 	mock.ExpectExec(`LOCK TABLE request_audit_value_details`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	expectPlaintextOwnershipVerified(mock)
+	mock.ExpectQuery(`SELECT to_regclass\('request_traces'\) IS NOT NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
 		WithArgs("usage_logs_202604").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
@@ -378,6 +382,8 @@ func TestDashboardAggregationPartitionDropRefusesLinkedDiagnosticPlaintext(t *te
 	mock.ExpectExec(`LOCK TABLE request_audit_value_details`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	expectPlaintextOwnershipVerified(mock)
+	mock.ExpectQuery(`SELECT to_regclass\('request_traces'\) IS NOT NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
 		WithArgs("usage_logs_202604").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))

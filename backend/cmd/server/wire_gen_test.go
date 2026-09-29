@@ -80,6 +80,9 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		service.NewRequestAuditReservationCleanupService(nil),
 		service.NewErrorDiagnosticCleanupService(nil, nil),
 		service.NewRequestAuditValueDetailCleanupService(nil),
+		nil, // requestTraceCleanup
+		nil, // requestTraceCaptureQueue
+		nil, // requestTraceExportWorker
 		&service.BatchImageCleanupService{},
 		nil, // batchImageWorker
 		pricingSvc,

@@ -38,15 +38,13 @@ import (
 //
 // 该发送点被两条入站路由共用：/v1/responses 入站，以及 /v1/chat/completions
 // 收到 Responses 形状 body 后的跨协议组合（openai_gateway_chat_completions.go 的
-// OpenCode Go 分流）。因此诊断协议不能写死，必须由调用方按自己的入站路由给出：
-// 诊断按**客户端入口协议**归属，path／ctx 推断会把两条路由写成同一个协议。
+// OpenCode Go 分流）。票据 10 已退役上游错误诊断采集，因此不再需要调用方传入入口协议。
 func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
 	body []byte,
 	defaultMappedModel string,
-	diagnosticProtocol string,
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
@@ -135,8 +133,6 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	upstreamReq = bindRequestAuditHTTPAttempt(
 		upstreamReq, c, account.ID, upstreamModel, RequestAuditProtocolAnthropic,
 	)
-	// 请求级绑定：本次发送是否纳入上游错误诊断、按哪个客户端协议归属，由调用方决定。
-	upstreamReq = s.bindErrorDiagnosticObserver(upstreamReq, c, diagnosticProtocol)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)

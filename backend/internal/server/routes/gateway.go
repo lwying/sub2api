@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -28,10 +29,22 @@ func RegisterGatewayRoutes(
 	settingService *service.SettingService,
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
+	requestTraceWiring ...any,
 ) {
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
 	clientRequestID := middleware.ClientRequestID()
+	var requestTraceRepo service.RequestTraceRepository
+	var requestTraceQueue *service.RequestTraceCaptureQueue
+	if len(requestTraceWiring) > 0 {
+		requestTraceRepo, _ = requestTraceWiring[0].(service.RequestTraceRepository)
+	}
+	if len(requestTraceWiring) > 1 {
+		requestTraceQueue, _ = requestTraceWiring[1].(*service.RequestTraceCaptureQueue)
+	}
+	requestTraceCapture := handler.RequestTraceCaptureMiddleware(func(ctx context.Context) bool {
+		return settingService != nil && settingService.RequestTraceGate(ctx).CaptureAllowed
+	}, requestTraceRepo, requestTraceQueue)
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
 	endpointNorm := handler.InboundEndpointMiddleware()
 	compositeTarget := compositeTargetPlatformMiddleware(compositeResolver)
@@ -186,10 +199,12 @@ func RegisterGatewayRoutes(
 	gateway := r.Group("/v1")
 	gateway.Use(bodyLimit)
 	gateway.Use(clientRequestID)
+	gateway.Use(requestTraceCapture)
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
 	gateway.Use(gin.HandlerFunc(apiKeyAuth))
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
+	gateway.Use(handler.BindRequestTraceAfterAuth())
 	gateway.Use(groupModelAllowlist)
 	gateway.Use(compositeTarget)
 	gateway.Use(requireGroupAnthropic)
@@ -365,8 +380,8 @@ func RegisterGatewayRoutes(
 	}
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
-	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
+	rootRoute := func(method, path string, limit gin.HandlerFunc, nextHandler gin.HandlerFunc) {
+		r.Handle(method, path, limit, clientRequestID, requestTraceCapture, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), handler.BindRequestTraceAfterAuth(), groupModelAllowlist, compositeTarget, requireGroupAnthropic, nextHandler)
 	}
 	for _, prefix := range []string{"/api/v3", "/v3", "/v1", ""} {
 		rootRoute(http.MethodPost, prefix+"/contents/generations/tasks", bodyLimit, h.OpenAIGateway.SeedanceTasks)
@@ -383,7 +398,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), groupModelAllowlist, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(bodyLimit, clientRequestID, requestTraceCapture, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), handler.BindRequestTraceAfterAuth(), groupModelAllowlist, compositeTarget, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)

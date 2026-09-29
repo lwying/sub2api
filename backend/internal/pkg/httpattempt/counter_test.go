@@ -556,65 +556,52 @@ func TestResponseBodyReadToEOFMarksReadComplete(t *testing.T) {
 	require.True(t, *counter.Metadata()[0].ResponseReadComplete)
 }
 
-// 值快照的省略摘要必须由传输层在**采集那一刻**记在尝试元数据上：服务层看到的
-// 已经是净化器筛过的取值，未知头名与没通过校验的取值在那里根本不存在，
-// 因此「有条目没被收下」这个事实只能在入口处记下来才能传到载荷里的 truncated。
-func TestClaudeValueSnapshotOmissionIsCarriedByAttemptMetadata(t *testing.T) {
+// 票据 10：旧值明细／错误诊断的正文与头值采集已退役，传输层不得再默认复制任何明文。
+//
+// 这里同时钉住三件事，缺一不可：
+//   - 长期请求审计仍在记录它的定位事实（账号、协议、状态、净化后的头摘要），
+//     因为强制审计的发送前门禁依赖这些事实存在；
+//   - 尝试元数据里**没有字段**能承载明文头值：整份序列化后哨兵字符串不出现，
+//     也不存在「重新打开」的隐藏开关——传证明文头值的入口已被删除；
+//   - 真实 wire 协议族（ValueProtocol）只作为事实留给 Trace，不驱动任何取值复制，
+//     审计家族与真实上游不同的形态（Bedrock 走 AWS invoke）同样不例外。
+func TestDefaultPathKeepsNoHeaderValues(t *testing.T) {
 	counter := NewCounter()
-	ctx := WithClaudeHeaderValueCapture(WithCounter(context.Background(), counter), true)
-	ctx = WithMetadata(ctx, Metadata{Protocol: "anthropic.messages"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	ctx := WithMetadata(WithCounter(context.Background(), counter), Metadata{
+		AccountID: 11, Model: "model-a", Protocol: "anthropic.messages", ValueProtocol: "bedrock",
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://upstream.local/v1/messages", nil)
 	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer sentinel-secret")
 	req.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
-	req.Header.Set("X-Unknown-Private", "private-unknown-value")
-	req.Header.Set("Authorization", "Bearer top-secret")
+	req.Header.Set("X-Unknown-Private", "sentinel-secret")
+
 	attempt := StartRequestAttempt(req)
 	require.NotNil(t, attempt)
-	attempt.SetResponse(429, http.Header{
+	attempt.SetResponse(http.StatusTooManyRequests, http.Header{
+		"Content-Type":       {"application/json"},
 		"Retry-After":        {"42"},
-		"X-Upstream-Private": {"private-response-value"},
-		"WWW-Authenticate":   {"Bearer realm=secret"},
+		"X-Upstream-Private": {"sentinel-secret"},
 	}, false)
 
-	metadata := counter.Metadata()
-	require.Len(t, metadata, 1)
-	require.Equal(t, 1, metadata[0].RequestHeaderValueOmission.OmittedNames, "闭集外的入站头名算省略")
-	require.Equal(t, 1, metadata[0].ResponseHeaderValueOmission.OmittedNames, "闭集外的响应头名算省略")
-	require.True(t, metadata[0].RequestHeaderValueOmission.Any())
-	require.True(t, metadata[0].ResponseHeaderValueOmission.Any())
-	require.Equal(t, map[string]any{"present": true}, metadata[0].RequestHeaderValues["Authorization"])
-	require.Equal(t, map[string]any{"present": true}, metadata[0].ResponseHeaderValues["Www-Authenticate"])
+	got := counter.Metadata()
+	require.Len(t, got, 1)
+	// 长期审计事实与真实 wire 事实照旧存在。
+	require.Equal(t, int64(11), got[0].AccountID)
+	require.Equal(t, "anthropic.messages", got[0].Protocol)
+	require.Equal(t, "bedrock", got[0].ValueProtocol,
+		"真实 wire 协议族是事实：不落长期审计，但 Trace 要据此区分 AWS 上游")
+	require.NotNil(t, got[0].StatusCode)
+	require.Equal(t, http.StatusTooManyRequests, *got[0].StatusCode)
+	require.Equal(t, map[string]any{"present": true}, got[0].RequestHeaders["Authorization"])
+	require.Equal(t, "application/json", got[0].ResponseHeaders["Content-Type"])
+	// 未知头名与取值都收敛成不含名字与取值的聚合标记。
+	require.Equal(t, map[string]any{"present": true}, got[0].RequestHeaders[otherHeaderPresentMarker])
+	require.Equal(t, map[string]any{"present": true}, got[0].ResponseHeaders[otherHeaderPresentMarker])
 
-	// 摘要跨上下文派生与元数据快照原样保留。
-	roundTrip, ok := MetadataFromContext(WithMetadata(context.Background(), metadata[0]))
-	require.True(t, ok)
-	require.Equal(t, metadata[0].RequestHeaderValueOmission, roundTrip.RequestHeaderValueOmission)
-	require.Equal(t, metadata[0].ResponseHeaderValueOmission, roundTrip.ResponseHeaderValueOmission)
-
-	// 名字与取值都不进元数据：摘要只有计数。
-	encoded, err := json.Marshal(metadata[0].RequestHeaderValueOmission)
+	// 头值一个字都不复制：序列化整份尝试元数据，明文哨兵不得出现。
+	encoded, err := json.Marshal(got[0])
 	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "private")
-	require.NotContains(t, string(encoded), "Unknown")
-}
-
-// 未打开值快照标记时一切保持零值：关闭的部署在热路径上既不复制取值，
-// 也不会声称「有条目没被收下」。
-func TestClaudeValueSnapshotOmissionStaysZeroWhenCaptureIsOff(t *testing.T) {
-	counter := NewCounter()
-	ctx := WithCounter(context.Background(), counter)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
-	require.NoError(t, err)
-	req.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
-	req.Header.Set("X-Unknown-Private", "private-unknown-value")
-	attempt := StartRequestAttempt(req)
-	require.NotNil(t, attempt)
-	attempt.SetResponse(200, http.Header{"X-Upstream-Private": {"private-response-value"}}, false)
-
-	metadata := counter.Metadata()
-	require.Len(t, metadata, 1)
-	require.False(t, metadata[0].RequestHeaderValueOmission.Any())
-	require.False(t, metadata[0].ResponseHeaderValueOmission.Any())
-	require.Empty(t, metadata[0].RequestHeaderValues)
-	require.Empty(t, metadata[0].ResponseHeaderValues)
+	require.NotContains(t, string(encoded), "sentinel-secret")
+	require.NotContains(t, string(encoded), "claude-cli/2.1.258")
 }

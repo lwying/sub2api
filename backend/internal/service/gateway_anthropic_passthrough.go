@@ -112,9 +112,6 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, strings.TrimSpace(input.RequestModel), RequestAuditProtocolAnthropic,
 		)
-		upstreamReq = bindClaudeRequestAuditValueDetail(upstreamReq, wireBody, opsUpstreamProxyID(account))
-		// 真实发送接缝：按门控显式绑定错误诊断观察者（正文只在门控与票 02 opt-in 同时允许时才采）。
-		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -308,6 +305,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, []byte, error) {
+	// The identity this attempt received; the passthrough path rewrites no
+	// metadata, so the verdict below can only be sent (or a visible gap).
+	identityInboundBody := body
 	body = stripDeferredToolCacheControl(body)
 	targetURL := claudeAPIURL
 	baseURL := account.GetBaseURL()
@@ -337,6 +337,14 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	// Ollama Cloud DeepSeek 出站 max_tokens clamp：判定与上方 targetURL 的
 	// base 取值同源（GetBaseURL），详见 helper 注释。
 	body = clampOllamaCloudAnthropicMessagesMaxTokens(account, account.GetBaseURL(), body)
+
+	// Final wire body freeze for the passthrough path: the only body edits above
+	// are capability sanitize and a max_tokens clamp, so an observed identity is
+	// reported as sent unchanged. One report per real attempt, like the retry loop
+	// calls this builder once per attempt.
+	ReportRequestTraceIdentityBodyVerdict(ctx, identityInboundBody, body,
+		RequestTraceDecisionSourceInbound, RequestAuditProtocolAnthropic, RequestAuditProtocolAnthropic,
+		"anthropic_passthrough_wire_freeze")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {

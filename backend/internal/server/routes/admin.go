@@ -93,9 +93,7 @@ func RegisterAdminRoutes(
 
 		// 使用记录管理
 		registerUsageRoutes(admin, h, stepUpAuth)
-
-		// 上游错误诊断（管理员只读，正文需显式揭示）
-		registerErrorDiagnosticRoutes(admin, h, stepUpAuth)
+		registerRequestTraceRoutes(admin, h)
 
 		// 用户属性管理
 		registerUserAttributeRoutes(admin, h)
@@ -614,9 +612,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
-		// 错误诊断运维开关（ADR 0005）：默认关闭，开启需逐字风险确认
-		adminSettings.GET("/error-diagnostic", h.Admin.Setting.GetErrorDiagnosticOperatorSettings)
-		adminSettings.PUT("/error-diagnostic", h.Admin.Setting.UpdateErrorDiagnosticOperatorSettings)
+		// 新 Trace 总开关与独立风险确认；默认关闭，独立于强制审计门禁。
+		adminSettings.GET("/request-trace", h.Admin.Setting.GetRequestTraceOperatorSettings)
+		adminSettings.PUT("/request-trace", h.Admin.Setting.UpdateRequestTraceOperatorSettings)
 	}
 }
 
@@ -722,31 +720,16 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
 		usage.GET("/:id/request-audit", h.Admin.Usage.GetRequestAudit)
-		// 已审计 Messages／Chat Completions／Responses HTTP 尝试的值明细旁路（默认关闭，ADR 0007）：
-		// GET 只返回信封（状态、原因、标量、计数和适用的到期时刻），真实值必须由管理员
-		// 显式 POST 揭示——默认视图不含值，是类型保证而非调用约定。
-		usage.GET("/:id/request-audit/value-detail", h.Admin.Usage.GetRequestAuditValueDetail)
-		usage.POST("/:id/request-audit/value-detail", gin.HandlerFunc(stepUpAuth), h.Admin.Usage.RevealRequestAuditValueDetail)
-		// 运维门控与书面风险确认。放在 usage 组内而不是 /settings：本能力唯一的
-		// 管理入口就是使用记录详情，门控与它同生共死，也避免新增顶层设置路由。
-		usage.GET("/request-audit-value-detail-settings", h.Admin.Usage.GetRequestAuditValueDetailSettings)
-		usage.PUT("/request-audit-value-detail-settings", h.Admin.Usage.UpdateRequestAuditValueDetailSettings)
 	}
 }
 
-// registerErrorDiagnosticRoutes 注册上游错误诊断的管理员只读入口。
-//
-// 挂在既有 admin 组上，因此由 adminAuth 中间件保证仅管理员可访问（非管理员 403）：
-// 列表与详情只返回净化元数据，正文必须由管理员显式 POST 揭示，响应禁止中间缓存。
-func registerErrorDiagnosticRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
-	diagnostics := admin.Group("/error-diagnostics")
-	{
-		diagnostics.GET("", h.Admin.RequestErrorDiagnostic.List)
-		diagnostics.GET("/:id", h.Admin.RequestErrorDiagnostic.Get)
-		diagnostics.POST("/:id/body", h.Admin.RequestErrorDiagnostic.RevealBody)
-		// 429 头值与正文是两个独立的揭示动作：只揭示未过期的 Claude Messages 429 头值。
-		diagnostics.POST("/:id/headers", gin.HandlerFunc(stepUpAuth), h.Admin.RequestErrorDiagnostic.RevealHeaderValues)
-	}
+func registerRequestTraceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	traces := admin.Group("/request-traces")
+	traces.GET("", h.Admin.RequestTrace.List)
+	traces.POST("/exports", h.Admin.RequestTraceExport.Create)
+	traces.GET("/exports/:id", h.Admin.RequestTraceExport.Get)
+	traces.GET("/exports/:id/download", h.Admin.RequestTraceExport.Download)
+	traces.GET("/:trace_id", h.Admin.RequestTrace.Get)
 }
 
 func registerUserAttributeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

@@ -58,9 +58,8 @@ type RecordUsageInput struct {
 	RequestAuditAttempts    []RequestAuditAttempt // 上游尝试时间线；不含模型正文
 	RequestAuditFingerprint *RequestAuditFingerprintInput
 	RequestAuditMetadata    RequestAuditMetadata
-	RequestAuditValueDetail RequestAuditValueDetailInput // 默认关闭的 Claude 值快照，只在审计行落库后加密存储
-	NotCapturedReason       string                       // 未采集原因；空值表示本路径已纳入采集
-	AuditLogicalKey         string                       // forced reservation logical key；空值表示普通审计
+	NotCapturedReason       string // 未采集原因；空值表示本路径已纳入采集
+	AuditLogicalKey         string // forced reservation logical key；空值表示普通审计
 
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
 }
@@ -77,6 +76,16 @@ type apiKeyAuthCacheInvalidator interface {
 
 type usageLogBestEffortWriter interface {
 	CreateBestEffort(ctx context.Context, log *UsageLog) error
+}
+
+type usageLogBestEffortTraceWriter interface {
+	CreateBestEffortWithInserted(ctx context.Context, log *UsageLog) (bool, error)
+}
+
+func (s *GatewayService) SetRequestTraceUsageLinker(linker RequestTraceUsageLinker) {
+	if s != nil {
+		s.requestTraceUsageLinker = linker
+	}
 }
 
 // postUsageBillingParams 统一扣费所需的参数
@@ -616,19 +625,6 @@ func attachRequestAuditBestEffort(ctx context.Context, repo RequestAuditReposito
 	_ = AttachRequestAuditAfterUsageLog(auditCtx, repo, usageLog, input)
 }
 
-// attachErrorDiagnosticsAfterUsageBestEffort restores the request-scoped audit
-// fingerprint on worker contexts before linking real failed attempts to usage.
-// A missing fingerprint or store leaves diagnostics on their 30-day unlinked path.
-func attachErrorDiagnosticsAfterUsageBestEffort(ctx context.Context, store ErrorDiagnosticUsageAttacher, usageLogID int64, fp *RequestAuditFingerprintInput) {
-	if store == nil || usageLogID <= 0 || fp == nil {
-		return
-	}
-	linkCtx, cancel := detachedBillingContext(ctx)
-	defer cancel()
-	linkCtx = WithRequestAuditFingerprint(linkCtx, fp)
-	_, _ = AttachErrorDiagnosticsAfterUsage(linkCtx, store, usageLogID, time.Now().UTC())
-}
-
 func finalizeRequestAuditBestEffort(
 	ctx context.Context,
 	auditRepo RequestAuditRepository,
@@ -705,35 +701,65 @@ func requestAuditSSEEventsFromOpenAIResult(result *OpenAIForwardResult) []Reques
 }
 
 func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string) {
+	_ = writeUsageLogBestEffortWithTraceLink(ctx, repo, usageLog, logKey, nil)
+}
+
+func writeUsageLogBestEffortWithTraceLink(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string, linker RequestTraceUsageLinker) bool {
 	if repo == nil || usageLog == nil {
-		return
+		return false
 	}
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
-
-	if writer, ok := repo.(usageLogBestEffortWriter); ok {
-		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
-			logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
-			// 计费已在此前完成，日志必须落库：dropped（批处理队列超时）同样走同步兜底，
-			// 否则会出现“已扣费但无 usage_log”的对账缺口（issue #3656）。
-			// 重复写入由 usage_logs 的 ON CONFLICT (request_id, api_key_id) DO NOTHING 防护。
+	traceID := RequestTraceIDFromContext(ctx)
+	proveTrace := traceID != "" && linker != nil
+	var inserted bool
+	var err error
+	if proveTrace {
+		if writer, ok := repo.(usageLogBestEffortTraceWriter); ok {
+			inserted, err = writer.CreateBestEffortWithInserted(usageCtx, usageLog)
+		} else {
+			// A repository without provenance-capable best-effort writes still
+			// writes usage through its existing Create path; it must return the
+			// real INSERT bit before a Trace can be linked.
+			inserted, err = repo.Create(usageCtx, usageLog)
+		}
+	} else if writer, ok := repo.(usageLogBestEffortWriter); ok {
+		err = writer.CreateBestEffort(usageCtx, usageLog)
+	} else {
+		_, err = repo.Create(usageCtx, usageLog)
+	}
+	if err != nil {
+		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+		// The original best-effort path falls back to a synchronous write after
+		// queue timeout. Preserve that billing/logging recovery path unchanged.
+		if _, ok := repo.(usageLogBestEffortWriter); ok {
 			fallbackCtx := usageCtx
 			if usageCtx.Err() != nil {
-				// usageCtx 已耗尽（best-effort 入队阻塞到期限）：换新的 detached 窗口，避免兜底必然失败。
 				var fallbackCancel context.CancelFunc
 				fallbackCtx, fallbackCancel = detachedBillingContext(context.Background())
 				defer fallbackCancel()
 			}
-			if _, syncErr := repo.Create(fallbackCtx, usageLog); syncErr != nil {
-				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", syncErr)
+			inserted, err = repo.Create(fallbackCtx, usageLog)
+			if err != nil {
+				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", err)
 			}
 		}
-		return
 	}
-
-	if _, err := repo.Create(usageCtx, usageLog); err != nil {
-		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+	if !proveTrace || !inserted || err != nil || usageLog.ID <= 0 {
+		return false
 	}
+	linkCtx, linkCancel := detachedBillingContext(ctx)
+	defer linkCancel()
+	linked, linkErr := linker.LinkRequestTraceUsage(linkCtx, traceID, usageLog.ID)
+	if linkErr != nil {
+		// The usage write is authoritative; ownership verification is fail-open
+		// for billing and fail-closed for this new plaintext Trace's lifetime.
+		logger.LegacyPrintf(logKey, "Request trace usage linkage failed: code=trace_link_failed")
+		return false
+	}
+	// A false result may mean the durable claim exists but the HTTP Trace
+	// envelope has not yet been stored. Reconciliation after Create handles it.
+	return linked
 }
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
@@ -758,7 +784,6 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		RequestAuditAttempts:    input.RequestAuditAttempts,
 		RequestAuditFingerprint: input.RequestAuditFingerprint,
 		RequestAuditMetadata:    input.RequestAuditMetadata,
-		RequestAuditValueDetail: input.RequestAuditValueDetail,
 		NotCapturedReason:       input.NotCapturedReason,
 		AuditLogicalKey:         input.AuditLogicalKey,
 		ChannelUsageFields:      input.ChannelUsageFields,
@@ -786,7 +811,6 @@ type recordUsageCoreInput struct {
 	RequestAuditAttempts    []RequestAuditAttempt
 	RequestAuditFingerprint *RequestAuditFingerprintInput
 	RequestAuditMetadata    RequestAuditMetadata
-	RequestAuditValueDetail RequestAuditValueDetailInput
 	NotCapturedReason       string
 	AuditLogicalKey         string
 	ChannelUsageFields
@@ -991,7 +1015,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		writeUsageLogBestEffortWithTraceLink(ctx, s.usageLogRepo, usageLog, "service.gateway", s.requestTraceUsageLinker)
 		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
 			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromResult(result),
 			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
@@ -1000,10 +1024,6 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			Fingerprint:      input.RequestAuditFingerprint,
 			Metadata:         input.RequestAuditMetadata,
 		})
-		if input.RequestAuditValueDetail.Route != "" {
-			s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
-		}
-		attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -1036,7 +1056,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	if billingErr != nil {
 		usageLog.ActualCost = 0
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		writeUsageLogBestEffortWithTraceLink(ctx, s.usageLogRepo, usageLog, "service.gateway", s.requestTraceUsageLinker)
 		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
 			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromResult(result),
 			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
@@ -1045,13 +1065,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			Fingerprint:      input.RequestAuditFingerprint,
 			Metadata:         input.RequestAuditMetadata,
 		})
-		if input.RequestAuditValueDetail.Route != "" {
-			s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
-		}
-		attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 		return billingErr
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	writeUsageLogBestEffortWithTraceLink(ctx, s.usageLogRepo, usageLog, "service.gateway", s.requestTraceUsageLinker)
 	finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
 		Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromResult(result),
 		Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
@@ -1060,11 +1076,6 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		Fingerprint:      input.RequestAuditFingerprint,
 		Metadata:         input.RequestAuditMetadata,
 	})
-	if input.RequestAuditValueDetail.Route != "" {
-		s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
-	}
-	attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
-
 	return nil
 }
 

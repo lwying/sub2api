@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/google/uuid"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -792,19 +793,59 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 	return aggregator
 }
 
-// ProvideSettingService wires SettingService with group reader, proxy repo and the
-// plaintext-capture deployment probe.
+func ProvideRequestTraceCleanupService(repo RequestTraceRepository, linker RequestTraceUsageLinker) *RequestTraceCleanupService {
+	return NewRequestTraceCleanupService(repo, linker)
+}
+
+// ProvideErrorDiagnosticCleanupService 提供按保留期清理在线主库诊断数据的后台服务。
 //
-// plaintextProbe 是**必填参数**而不是可选 setter：三类新明文采集（值明细、独立诊断正文、
-// 独立诊断 429 头值）只有在「明文能随 usage 消失」得到证明时才允许开启，而唯一能给出这个
-// 证明的就是探针。做成必填参数后，漏注入会在编译期暴露，不会退化成「线上永远开启不了」，
-// 也不会退化成某个忘记注入的调用点悄悄把明文打开。离线的单元测试可以显式传 nil
-// （等价于「探针不可用」，三类新明文采集一律关闭）。
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, plaintextProbe PlaintextCaptureSupportProbe, cfg *config.Config) *SettingService {
+// 票据 10 退役了错误诊断的采集、开关与揭示入口，只保留这条历史清理路径；
+// 因此它不再需要诊断服务来共享进程级计数，单独构造即可。
+func ProvideErrorDiagnosticCleanupService(repo ErrorDiagnosticRepository) *ErrorDiagnosticCleanupService {
+	return NewErrorDiagnosticCleanupService(repo)
+}
+
+func ProvideRequestTraceGatewayLinker(gateway *GatewayService, openai *OpenAIGatewayService, linker RequestTraceUsageLinker) *RequestTraceGatewayLinker {
+	gateway.SetRequestTraceUsageLinker(linker)
+	openai.SetRequestTraceUsageLinker(linker)
+	return &RequestTraceGatewayLinker{}
+}
+
+type RequestTraceGatewayLinker struct{}
+
+func ProvideRequestTraceCaptureQueue(repo RequestTraceRepository, linker RequestTraceUsageLinker) *RequestTraceCaptureQueue {
+	return NewRequestTraceCaptureQueue(repo, linker)
+}
+
+func ProvideRequestTraceExportService(store RequestTraceExportStore, source RequestTraceExportSource, cfg *config.Config) *RequestTraceExportService {
+	options := RequestTraceExportOptions{}
+	if cfg != nil {
+		options.Enabled = cfg.RequestTraceExport.Enabled
+		options.SingleInstanceDeclared = cfg.RequestTraceExport.SingleInstanceDeclared
+		options.TempDir = cfg.RequestTraceExport.TempDir
+	}
+	// This identifier is node/process-local. A different instance or a restart
+	// cannot claim a previous temp file as its own; lost downloads stay explicit.
+	options.InstanceID = uuid.NewString()
+	return NewRequestTraceExportService(store, source, options)
+}
+
+func ProvideRequestTraceExportWorker(svc *RequestTraceExportService) *RequestTraceExportWorker {
+	return NewRequestTraceExportWorker(svc, RequestTraceExportWorkerOptions{})
+}
+
+// ProvideSettingService wires SettingService with group reader, proxy repo and the
+// request-trace deployment probe.
+//
+// traceProbe 是**必填参数**而不是可选 setter：Trace 只有在「明文能随 usage 消失」得到证明时
+// 才允许开启，而唯一能给出这个证明的就是探针。做成必填参数后，漏注入会在编译期暴露，
+// 不会退化成「线上永远开启不了」，也不会退化成某个忘记注入的调用点悄悄把明文打开。
+// 离线的单元测试可以显式传 nil（等价于「探针不可用」，Trace 采集一律关闭）。
+func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, traceProbe RequestTraceSupportProbe, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
-	svc.SetPlaintextCaptureSupportProbe(plaintextProbe)
+	svc.SetRequestTraceSupportProbe(traceProbe)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
 	}
@@ -885,6 +926,10 @@ var ProviderSet = wire.NewSet(
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,
+	ProvideRequestTraceCaptureQueue,
+	ProvideRequestTraceExportService,
+	ProvideRequestTraceExportWorker,
+	ProvideRequestTraceGatewayLinker,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
 	ProvideBatchImageModelPricingResolver,
@@ -924,11 +969,9 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenCodeGoUsageService,
 	ProvideSettingService,
 	ProvideKeyBillingSnapshotService,
-	ProvideErrorDiagnosticService,            // 错误诊断记录（票 01／02）
-	ProvideErrorDiagnosticCleanupService,     // 按 7／30 天清理在线主库诊断数据
-	ProvideRequestAuditValueDetailService,    // Claude /v1/messages 值明细读取与运维接缝
-	ProvideRequestAuditValueDetailCapture,    // 值明细采集接缝（审计行落库后调用）
-	NewRequestAuditValueDetailCleanupService, // 按 7 天清理在线主库上的值密文
+	ProvideErrorDiagnosticCleanupService,     // 按 7／30 天清理在线主库诊断数据（票据 10：只保留历史清理）
+	NewRequestAuditValueDetailCleanupService, // 按 7 天清理在线主库上的值密文（票据 10：只保留历史清理）
+	ProvideRequestTraceCleanupService,        // 未关联 Trace 进入 30 天计划清理
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,

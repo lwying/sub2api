@@ -7,7 +7,7 @@ import settings from './settings'
 import audit from './audit'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
-import { errorDiagnosticsZh } from '@/features/error-diagnostics/locale'
+import { requestTraceZh } from '@/features/request-trace/locale'
 
 export default {
   ...overview,
@@ -19,5 +19,5 @@ export default {
   ...audit,
   ...promptAudit,
   ...plugins,
-  ...errorDiagnosticsZh,
+  ...requestTraceZh,
 }

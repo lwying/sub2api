@@ -784,67 +784,46 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 
 // GatewayService handles API gateway operations
 type GatewayService struct {
-	accountRepo                    AccountRepository
-	groupRepo                      GroupRepository
-	usageLogRepo                   UsageLogRepository
-	requestAuditRepo               RequestAuditRepository
-	errorDiagnosticUsageAttacher   ErrorDiagnosticUsageAttacher
-	requestAuditValueDetailCapture *RequestAuditValueDetailCapture
-	requestAuditFingerprinter      RequestAuditFingerprinter
-	usageBillingRepo               UsageBillingRepository
-	userRepo                       UserRepository
-	userSubRepo                    UserSubscriptionRepository
-	userGroupRateRepo              UserGroupRateRepository
-	cache                          GatewayCache
-	digestStore                    *DigestSessionStore
-	cfg                            *config.Config
-	schedulerSnapshot              *SchedulerSnapshotService
-	billingService                 *BillingService
-	rateLimitService               *RateLimitService
-	billingCacheService            *BillingCacheService
-	identityService                *IdentityService
-	httpUpstream                   HTTPUpstream
-	deferredService                *DeferredService
-	concurrencyService             *ConcurrencyService
-	claudeTokenProvider            *ClaudeTokenProvider
-	sessionLimitCache              SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
-	rpmCache                       RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
-	userGroupRateResolver          *userGroupRateResolver
-	userGroupRateCache             *gocache.Cache
-	userGroupRateSF                singleflight.Group
-	modelsListCache                *gocache.Cache
-	modelsListCacheTTL             time.Duration
-	settingService                 *SettingService
-	responseHeaderFilter           *responseheaders.CompiledHeaderFilter
-	debugModelRouting              atomic.Bool
-	debugClaudeMimic               atomic.Bool
-	channelService                 *ChannelService
-	resolver                       *ModelPricingResolver
-	compositeResolver              *CompositeRouteResolver
-	debugGatewayBodyFile           atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
-	tlsFPProfileService            *TLSFingerprintProfileService
-	balanceNotifyService           *BalanceNotifyService
-	userPlatformQuotaRepo          UserPlatformQuotaRepository
-	// errorDiagnostics 是上游错误诊断接缝（见 error_diagnostic_observer.go），
-	// 供各协议分支在真实发送接缝显式绑定。
-	// nil 表示未注入，一律不采集。
-	errorDiagnostics *errorDiagnosticObserver
-}
-
-func (s *GatewayService) SetRequestAuditValueDetailCapture(capture *RequestAuditValueDetailCapture) {
-	if s != nil {
-		s.requestAuditValueDetailCapture = capture
-	}
-}
-
-func (s *GatewayService) SetErrorDiagnosticUsageAttacher(attacher ErrorDiagnosticUsageAttacher) {
-	if s != nil {
-		s.errorDiagnosticUsageAttacher = attacher
-	}
-}
-
-func (s *GatewayService) ClaudeRequestAuditValueCaptureEnabled(ctx context.Context) bool {
-	return s != nil && s.requestAuditValueDetailCapture.Enabled(ctx)
+	accountRepo               AccountRepository
+	groupRepo                 GroupRepository
+	usageLogRepo              UsageLogRepository
+	requestAuditRepo          RequestAuditRepository
+	requestTraceUsageLinker   RequestTraceUsageLinker
+	requestAuditFingerprinter RequestAuditFingerprinter
+	usageBillingRepo          UsageBillingRepository
+	userRepo                  UserRepository
+	userSubRepo               UserSubscriptionRepository
+	userGroupRateRepo         UserGroupRateRepository
+	cache                     GatewayCache
+	digestStore               *DigestSessionStore
+	cfg                       *config.Config
+	schedulerSnapshot         *SchedulerSnapshotService
+	billingService            *BillingService
+	rateLimitService          *RateLimitService
+	billingCacheService       *BillingCacheService
+	identityService           *IdentityService
+	httpUpstream              HTTPUpstream
+	deferredService           *DeferredService
+	concurrencyService        *ConcurrencyService
+	claudeTokenProvider       *ClaudeTokenProvider
+	sessionLimitCache         SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
+	rpmCache                  RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
+	userGroupRateResolver     *userGroupRateResolver
+	userGroupRateCache        *gocache.Cache
+	userGroupRateSF           singleflight.Group
+	modelsListCache           *gocache.Cache
+	modelsListCacheTTL        time.Duration
+	settingService            *SettingService
+	responseHeaderFilter      *responseheaders.CompiledHeaderFilter
+	debugModelRouting         atomic.Bool
+	debugClaudeMimic          atomic.Bool
+	channelService            *ChannelService
+	resolver                  *ModelPricingResolver
+	compositeResolver         *CompositeRouteResolver
+	debugGatewayBodyFile      atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
+	tlsFPProfileService       *TLSFingerprintProfileService
+	balanceNotifyService      *BalanceNotifyService
+	userPlatformQuotaRepo     UserPlatformQuotaRepository
 }
 
 func (s *GatewayService) SetRequestAuditFingerprinter(f RequestAuditFingerprinter) {

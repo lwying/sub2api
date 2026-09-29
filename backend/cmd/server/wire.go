@@ -31,6 +31,10 @@ type Application struct {
 	RequestAuditReservationCleanup *service.RequestAuditReservationCleanupService
 	ErrorDiagnosticCleanup         *service.ErrorDiagnosticCleanupService
 	RequestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService
+	RequestTraceCleanup            *service.RequestTraceCleanupService
+	RequestTraceCaptureQueue       *service.RequestTraceCaptureQueue
+	RequestTraceExportWorker       *service.RequestTraceExportWorker
+	RequestTraceGatewayLinker      *service.RequestTraceGatewayLinker
 	Cleanup                        func()
 }
 
@@ -61,7 +65,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "RequestAuditReservationCleanup", "ErrorDiagnosticCleanup", "RequestAuditValueDetailCleanup", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "RequestAuditReservationCleanup", "ErrorDiagnosticCleanup", "RequestAuditValueDetailCleanup", "RequestTraceCleanup", "RequestTraceCaptureQueue", "RequestTraceExportWorker", "RequestTraceGatewayLinker", "Cleanup"),
 	)
 	return nil, nil
 }
@@ -111,6 +115,9 @@ func provideCleanup(
 	requestAuditReservationCleanup *service.RequestAuditReservationCleanupService,
 	errorDiagnosticCleanup *service.ErrorDiagnosticCleanupService,
 	requestAuditValueDetailCleanup *service.RequestAuditValueDetailCleanupService,
+	requestTraceCleanup *service.RequestTraceCleanupService,
+	requestTraceCaptureQueue *service.RequestTraceCaptureQueue,
+	requestTraceExportWorker *service.RequestTraceExportWorker,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -266,6 +273,24 @@ func provideCleanup(
 			{"RequestAuditValueDetailCleanupService", func() error {
 				if requestAuditValueDetailCleanup != nil {
 					requestAuditValueDetailCleanup.Stop()
+				}
+				return nil
+			}},
+			{"RequestTraceCleanupService", func() error {
+				if requestTraceCleanup != nil {
+					requestTraceCleanup.Stop()
+				}
+				return nil
+			}},
+			{"RequestTraceCaptureQueue", func() error {
+				if requestTraceCaptureQueue != nil {
+					requestTraceCaptureQueue.Stop()
+				}
+				return nil
+			}},
+			{"RequestTraceExportWorker", func() error {
+				if requestTraceExportWorker != nil {
+					requestTraceExportWorker.Stop()
 				}
 				return nil
 			}},

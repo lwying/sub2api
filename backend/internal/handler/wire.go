@@ -32,7 +32,8 @@ func ProvideAdminHandlers(
 	systemHandler *admin.SystemHandler,
 	subscriptionHandler *admin.SubscriptionHandler,
 	usageHandler *admin.UsageHandler,
-	requestErrorDiagnosticHandler *admin.RequestErrorDiagnosticHandler,
+	requestTraceHandler *admin.RequestTraceHandler,
+	requestTraceExportHandler *admin.RequestTraceExportHandler,
 	userAttributeHandler *admin.UserAttributeHandler,
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
@@ -82,7 +83,8 @@ func ProvideAdminHandlers(
 		System:                 systemHandler,
 		Subscription:           subscriptionHandler,
 		Usage:                  usageHandler,
-		RequestErrorDiagnostic: requestErrorDiagnosticHandler,
+		RequestTrace:           requestTraceHandler,
+		RequestTraceExport:     requestTraceExportHandler,
 		UserAttribute:          userAttributeHandler,
 		ErrorPassthrough:       errorPassthroughHandler,
 		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
@@ -119,22 +121,16 @@ func ProvideGatewayHandler(
 	settingService *service.SettingService,
 	coordinator *securityaudit.Coordinator,
 	keyBillingSnapshot *service.KeyBillingSnapshotService,
-	errorDiagnosticService *service.ErrorDiagnosticService,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
-	requestAuditValueDetailCapture *service.RequestAuditValueDetailCapture,
-	errorDiagnosticAttacher service.ErrorDiagnosticUsageAttacher,
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
 	h.securityAuditCoordinator = coordinator
 	h.SetKeyBillingSnapshotService(keyBillingSnapshot)
-	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
-	gatewayService.SetErrorDiagnosticUsageAttacher(errorDiagnosticAttacher)
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	// 值明细采集接缝（默认关闭）：绑定阶段用它决定是否复制值快照，
 	// 审计行落库后由它写入。未注入时一个字节的值都不会被采集。
-	gatewayService.SetRequestAuditValueDetailCapture(requestAuditValueDetailCapture)
 	return h
 }
 
@@ -151,16 +147,10 @@ func ProvideOpenAIGatewayHandler(
 	grokQuotaService *service.GrokQuotaService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
-	errorDiagnosticService *service.ErrorDiagnosticService,
 	requestAuditRepo service.RequestAuditRepository,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
-	valueDetailCapture *service.RequestAuditValueDetailCapture,
-	errorDiagnosticAttacher service.ErrorDiagnosticUsageAttacher,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
-	gatewayService.SetRequestAuditValueDetailCapture(valueDetailCapture)
-	gatewayService.SetErrorDiagnosticRecorder(errorDiagnosticService)
-	gatewayService.SetErrorDiagnosticUsageAttacher(errorDiagnosticAttacher)
 	gatewayService.SetRequestAuditRepository(requestAuditRepo)
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
@@ -256,25 +246,25 @@ func ProvideHandlers(
 	}
 }
 
-func ProvideRequestErrorDiagnosticHandler(diagnostics *service.ErrorDiagnosticService) *admin.RequestErrorDiagnosticHandler {
-	return admin.NewRequestErrorDiagnosticHandler(diagnostics)
+func ProvideRequestTraceHandler(repo service.RequestTraceRepository) *admin.RequestTraceHandler {
+	return admin.NewRequestTraceHandler(repo)
 }
 
-// ProvideAdminUsageHandler 构造使用记录处理器，并用显式 setter 注入值明细接缝。
+func ProvideRequestTraceExportHandler(svc *service.RequestTraceExportService) *admin.RequestTraceExportHandler {
+	return admin.NewRequestTraceExportHandler(svc)
+}
+
+// ProvideAdminUsageHandler 构造使用记录处理器。
 //
-// 走 setter 而不是给 admin.NewUsageHandler 加参数：既有装配调用点保持不变，
-// 依赖仍然显式（nil 时入口按不可用处理，不会 panic）。
+// 票据 10 已退役值明细的读取／揭示接缝，因此这里不再注入任何值明细依赖。
 func ProvideAdminUsageHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	adminService service.AdminService,
 	cleanupService *service.UsageCleanupService,
 	requestAuditRepo service.RequestAuditRepository,
-	requestAuditValueDetail *service.RequestAuditValueDetailService,
 ) *admin.UsageHandler {
-	h := admin.NewUsageHandler(usageService, apiKeyService, adminService, cleanupService, requestAuditRepo)
-	h.SetRequestAuditValueDetailService(requestAuditValueDetail)
-	return h
+	return admin.NewUsageHandler(usageService, apiKeyService, adminService, cleanupService, requestAuditRepo)
 }
 
 // ProviderSet is the Wire provider set for all handlers
@@ -323,8 +313,9 @@ var ProviderSet = wire.NewSet(
 	admin.NewOpsHandler,
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,
-	ProvideAdminUsageHandler, // 使用记录处理器 + 值明细接缝（setter 注入）
-	ProvideRequestErrorDiagnosticHandler,
+	ProvideAdminUsageHandler, // 使用记录处理器
+	ProvideRequestTraceHandler,
+	ProvideRequestTraceExportHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

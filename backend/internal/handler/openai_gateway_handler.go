@@ -18,7 +18,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
@@ -259,6 +258,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	if traceID := service.RequestTraceIDFromContext(parent); traceID != "" {
+		base = service.WithRequestTraceID(base, traceID)
+	}
 	return base
 }
 
@@ -436,10 +438,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteResponses, false) {
 		return
 	}
-	valueCapture := h.gatewayService.RequestAuditValueCaptureEnabled(c.Request.Context())
-	if valueCapture {
-		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
-	}
 	sessionHashBody := body
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
@@ -576,6 +574,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	recordRequestTraceChannelModelMapping(c, reqModel, channelMapping)
 	forwardBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 	seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
@@ -864,8 +863,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			if notCapturedReason == "" {
 				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
 			}
-			valueDetail := requestAuditValueInputFromTransport(c, valueCapture && notCapturedReason == "" && !res.OpenAIWSMode,
-				inboundEndpoint, service.RequestAuditProtocolOpenAIResp, reqModel, pricingAt, requestAuditMetadata)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:                  res,
@@ -889,7 +886,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					RequestAuditAttempts:    requestAuditAttemptsForRecord,
 					RequestAuditFingerprint: requestAuditFingerprint,
 					RequestAuditMetadata:    requestAuditMetadata,
-					RequestAuditValueDetail: valueDetail,
 					NotCapturedReason:       notCapturedReason,
 					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
@@ -1011,6 +1007,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					} else if account.ProxyID != nil {
 						failoverSwitchFields = append(failoverSwitchFields, zap.Int64p("proxy_id", account.ProxyID))
 					}
+					recordRequestTraceAccountSwitch(c, account.ID)
 					reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 					continue
 				}
@@ -1303,10 +1300,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteMessages, true) {
 		return
 	}
-	valueCapture := h.gatewayService.RequestAuditValueCaptureEnabled(c.Request.Context())
-	if valueCapture {
-		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
-	}
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
 	if requestAuditFingerprint != nil {
 		requestAuditFingerprint.DigestRequest(body)
@@ -1315,6 +1308,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	recordRequestTraceChannelModelMapping(c, reqModel, channelMappingMsg)
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
@@ -1523,8 +1517,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			if notCapturedReason == "" {
 				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
 			}
-			valueDetail := requestAuditValueInputFromTransport(c, valueCapture && notCapturedReason == "" && !res.OpenAIWSMode,
-				inboundEndpoint, service.RequestAuditProtocolAnthropic, reqModel, pricingAt, requestAuditMetadata, body)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:                  res,
@@ -1547,7 +1539,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					RequestAuditAttempts:    requestAuditAttempts,
 					RequestAuditFingerprint: requestAuditFingerprint,
 					RequestAuditMetadata:    requestAuditMetadata,
-					RequestAuditValueDetail: valueDetail,
 					NotCapturedReason:       notCapturedReason,
 					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
@@ -1628,6 +1619,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
+					recordRequestTraceAccountSwitch(c, account.ID)
 					reqLog.Warn("openai_messages.upstream_failover_switching",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),

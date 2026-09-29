@@ -545,15 +545,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/error-diagnostics',
-    name: 'AdminErrorDiagnostics',
-    component: () => import('@/features/error-diagnostics/ErrorDiagnosticsView.vue'),
+    path: '/admin/request-traces',
+    name: 'AdminRequestTraces',
+    component: () => import('@/features/request-trace/RequestTraceView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Error diagnostics',
-      titleKey: 'admin.errorDiagnostics.title',
-      descriptionKey: 'admin.errorDiagnostics.description'
+      title: 'Request Traces',
+      titleKey: 'admin.requestTrace.title',
+      descriptionKey: 'admin.requestTrace.description'
     }
   },
   {

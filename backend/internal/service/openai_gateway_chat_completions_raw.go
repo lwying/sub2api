@@ -196,7 +196,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, upstreamModel)
 	// 本分支的入站是 Chat Completions：即使上游协议是原生 CC 直转，
 	// 诊断协议也按客户端入口记为 chat_completions。
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity, ErrorDiagnosticProtocolChatCompletions)
+	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
 	if err != nil {
 		return nil, err
 	}

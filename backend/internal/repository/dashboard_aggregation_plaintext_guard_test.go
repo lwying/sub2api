@@ -79,11 +79,17 @@ func TestDashboardAggregationUnconfirmableAdapterKeepsUndeployedPlaintextCleanup
 func expectPlaintextOwnershipProbe(
 	mock sqlmock.Sqlmock,
 	valueDetailsExists, valueDetailsOwned, diagnosticsExists, diagnosticsOwned bool,
+	traceState ...bool,
 ) {
+	traceExists, traceOwned := false, true
+	if len(traceState) == 2 {
+		traceExists, traceOwned = traceState[0], traceState[1]
+	}
 	mock.ExpectQuery(`to_regclass\('request_audit_value_details'\)`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"value_details_exists", "value_details_owned", "diagnostics_exists", "diagnostics_owned",
-		}).AddRow(valueDetailsExists, valueDetailsOwned, diagnosticsExists, diagnosticsOwned))
+			"traces_exists", "traces_owned",
+		}).AddRow(valueDetailsExists, valueDetailsOwned, diagnosticsExists, diagnosticsOwned, traceExists, traceOwned))
 }
 
 // expectPlaintextOwnershipVerified 满足「两张旁路表都已部署且所有权外键完好」。
@@ -102,6 +108,47 @@ func expectPlaintextOwnershipPinned(mock sqlmock.Sqlmock) {
 	expectPlaintextOwnershipVerified(mock)
 }
 
+func TestDashboardAggregationRefusesTraceWithoutOwnership(t *testing.T) {
+	db, mock := newSQLMock(t)
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	expectPlaintextOwnershipProbe(mock, false, true, false, true, true, false)
+	err = ensureUsageCleanupPreservesPlaintextOwnership(context.Background(), tx, true)
+	require.ErrorIs(t, err, errPlaintextOwnershipUnverified)
+	require.ErrorContains(t, err, "request_traces.usage_log_id")
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardAggregationPartitionDropRefusesUsageOwnedTrace(t *testing.T) {
+	setGroupUsageRollupTestTimezone(t)
+	db, mock := newSQLMock(t)
+	defer func() { _ = db.Close() }()
+	month := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
+		WithArgs(month, "Asia/Shanghai").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`LOCK TABLE error_diagnostic_records`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`LOCK TABLE request_audit_value_details`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectPlaintextOwnershipProbe(mock, true, true, true, true, true, true)
+	mock.ExpectQuery(`SELECT to_regclass\('request_traces'\) IS NOT NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec(`LOCK TABLE request_traces`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectPlaintextOwnershipProbe(mock, true, true, true, true, true, true)
+	mock.ExpectQuery(`SELECT EXISTS.*request_traces`).WithArgs("usage_logs_202604").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectRollback()
+	err := dropUsageLogsPartitionWithRollupInvalidation(context.Background(), db, "usage_logs_202604", month)
+	require.ErrorContains(t, err, "request traces")
+	require.ErrorContains(t, err, "refusing DROP")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDashboardAggregationPartitionDropRefusesUsageOwnedPlaintext(t *testing.T) {
 	setGroupUsageRollupTestTimezone(t)
 	db, mock := newSQLMock(t)
@@ -115,6 +162,8 @@ func TestDashboardAggregationPartitionDropRefusesUsageOwnedPlaintext(t *testing.
 	mock.ExpectExec(`LOCK TABLE error_diagnostic_records`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`LOCK TABLE request_audit_value_details`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectPlaintextOwnershipVerified(mock)
+	mock.ExpectQuery(`SELECT to_regclass\('request_traces'\) IS NOT NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(`SELECT EXISTS.*request_audit_value_details`).
 		WithArgs("usage_logs_202604").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))

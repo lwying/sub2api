@@ -105,6 +105,7 @@ type Config struct {
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
+	RequestTraceExport      RequestTraceExportConfig      `mapstructure:"request_trace_export"`
 
 	// Enforce only API-key spending windows in simple mode.
 	SimpleModeKeyRateLimitEnabled bool `mapstructure:"simple_mode_key_rate_limit_enabled" yaml:"simple_mode_key_rate_limit_enabled"`
@@ -113,6 +114,15 @@ type Config struct {
 // SimpleModeConfig controls startup behavior in simple mode.
 type SimpleModeConfig struct {
 	AutoCreateDefaultGroups bool `mapstructure:"auto_create_default_groups" yaml:"auto_create_default_groups"`
+}
+
+// RequestTraceExportConfig enables node-local plaintext export only after an
+// operator explicitly declares a single-instance deployment. Both flags default
+// to false; a leader lock cannot prove that a downloaded file is on this node.
+type RequestTraceExportConfig struct {
+	Enabled                bool   `mapstructure:"enabled"`
+	SingleInstanceDeclared bool   `mapstructure:"single_instance_declared"`
+	TempDir                string `mapstructure:"temp_dir"`
 }
 
 // PluginConfig 控制管理员手动上传的本地进程插件。
@@ -2213,6 +2223,11 @@ func setDefaults() {
 	viper.SetDefault("redis.pool_size", 1024)
 	viper.SetDefault("redis.min_idle_conns", 128)
 	viper.SetDefault("redis.enable_tls", false)
+
+	// Trace export remains off unless operators explicitly declare single-instance use.
+	viper.SetDefault("request_trace_export.enabled", false)
+	viper.SetDefault("request_trace_export.single_instance_declared", false)
+	viper.SetDefault("request_trace_export.temp_dir", "")
 
 	// Batch Image queue
 	viper.SetDefault("batch_image.enabled", false)

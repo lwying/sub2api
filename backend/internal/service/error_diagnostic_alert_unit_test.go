@@ -7,54 +7,20 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// 诊断故障的告警必须可运维但不含敏感内容：
+// 历史错误诊断的**清理**告警必须可运维但不含敏感内容：
 //   - 稳定事件名 + 原因码 + 计数，便于按事件聚合告警；
-//   - 绝不输出模型正文、凭据、诊断标识或数据库错误值（约束冲突可能回显涉及的行值）；
-//   - 上游错误风暴下日志量有上界，被抑制的次数不丢。
+//   - 绝不输出数据库错误值（约束冲突可能回显涉及的行值）；
+//   - 清理持续失败或积压时日志量有上界，被抑制的次数不丢。
+//
+// 采集与读取入口已在票据 10 退役，因此本文件只覆盖仍然存在的清理路径。
 
-const (
-	alertTestBodySentinel  = "sentinel-outbound-body-do-not-log"
-	alertTestErrorSentinel = "sentinel-raw-db-error-do-not-log"
-)
-
-// errorDiagnosticFailingRepo 让写入恒定失败，且错误文本里带一个 sentinel，
-// 用来证明原始错误值不会进入日志。
-type errorDiagnosticFailingRepo struct {
-	ErrorDiagnosticRepository
-	err error
-}
-
-func (r *errorDiagnosticFailingRepo) CreateErrorDiagnostic(context.Context, ErrorDiagnosticWrite, time.Time) (ErrorDiagnosticRecord, error) {
-	return ErrorDiagnosticRecord{}, r.err
-}
-
-func newErrorDiagnosticAlertTestService(t *testing.T, repo ErrorDiagnosticRepository, nowFn func() time.Time) *ErrorDiagnosticService {
-	t.Helper()
-	svc := NewErrorDiagnosticService(repo, errorDiagnosticSettingsFixed{settings: enabledErrorDiagnostics()}, &errorDiagnosticCipherFake{version: 1})
-	require.NotNil(t, svc)
-	// 用可控时钟替换限速时钟，使速率限制与聚合计数可确定地断言。
-	svc.alerts = newErrorDiagnosticAlerter(ErrorDiagnosticAlertInterval, nowFn)
-	svc.now = nowFn
-	return svc
-}
-
-func alertTestAttempt() ErrorDiagnosticAttempt {
-	return ErrorDiagnosticAttempt{
-		Protocol:           ErrorDiagnosticProtocolMessages,
-		Stage:              ErrorDiagnosticStageWire,
-		UpstreamStatusCode: 500,
-		Body:               []byte(`{"model":"claude","messages":[{"role":"user","content":"` + alertTestBodySentinel + `"}]}`),
-		BodyReadComplete:   true,
-		BodyVerdict:        ErrorDiagnosticBodyVerdictComplete,
-	}
-}
+const alertTestErrorSentinel = "sentinel-raw-db-error-do-not-log"
 
 // errorDiagnosticSinkScan 汇总捕获到的日志事件，用于断言「什么没有出现」。
 func errorDiagnosticSinkScan(sink *inMemoryLogSink) (messages []string, fieldKeys []string, fieldValues []string) {
@@ -74,14 +40,15 @@ func requireNoSensitiveDiagnosticLogContent(t *testing.T, sink *inMemoryLogSink)
 	t.Helper()
 	messages, keys, values := errorDiagnosticSinkScan(sink)
 	for _, message := range messages {
-		require.NotContains(t, message, alertTestBodySentinel, "告警不得包含正文")
 		require.NotContains(t, message, alertTestErrorSentinel, "告警不得包含原始数据库错误值")
 	}
 	for _, value := range values {
-		require.NotContains(t, value, alertTestBodySentinel, "告警字段不得包含正文")
 		require.NotContains(t, value, alertTestErrorSentinel, "告警字段不得包含原始数据库错误值")
 	}
 	// 字段名本身也不得暗示正文／凭据／错误原文。
+	//
+	// 允许出现的是**计数**字段（例如 header_values_overdue、plain_bodies_overdue）：它们只含
+	// 数量，不含任何取值，因此不在禁用名单里——把它当敏感名会误报，并掩盖真正的泄露。
 	for _, key := range keys {
 		lower := strings.ToLower(key)
 		for _, forbidden := range []string{"body", "err", "token", "secret", "credential", "message"} {
@@ -90,77 +57,11 @@ func requireNoSensitiveDiagnosticLogContent(t *testing.T, sink *inMemoryLogSink)
 	}
 }
 
-func TestErrorDiagnosticWriteFailureAlertsAreBodyFreeAndCounted(t *testing.T) {
-	sink, release := captureStructuredLog(t)
-	defer release()
-
-	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
-	repo := &errorDiagnosticFailingRepo{err: fmt.Errorf("insert failed: %w", errors.New(alertTestErrorSentinel))}
-	svc := newErrorDiagnosticAlertTestService(t, repo, func() time.Time { return now })
-
-	_, err := svc.RecordErrorDiagnostic(context.Background(), alertTestAttempt())
-	require.Error(t, err, "写入失败必须对调用方可见")
-	require.EqualValues(t, 1, svc.Counters().WriteFailures)
-	require.EqualValues(t, 0, svc.Counters().StoredRecords, "写入失败不得计入已落库")
-
-	// 一条稳定事件，带原因码与计数；正文与错误原文都不出现。
-	require.True(t, sink.ContainsMessageAtLevel(ErrorDiagnosticAlertWriteFailed, "warn"), "必须输出稳定事件名")
-	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeDBError))
-	require.True(t, sink.ContainsFieldValue("count_since_last_alert", "1"))
-	require.True(t, sink.ContainsFieldValue("total", "1"))
-	requireNoSensitiveDiagnosticLogContent(t, sink)
-
-	// 限速：同一间隔内的后续失败只累加，不再新开日志行。
-	for i := 0; i < 4; i++ {
-		_, err := svc.RecordErrorDiagnostic(context.Background(), alertTestAttempt())
-		require.Error(t, err)
-	}
-	require.EqualValues(t, 5, svc.Counters().WriteFailures)
-	require.Equal(t, 1, len(sink.events), "同一间隔内不得重复输出告警")
-	requireNoSensitiveDiagnosticLogContent(t, sink)
-
-	// 间隔到期后输出一条，并带上被抑制的累计次数（4 次被抑制 + 本次 1 次）。
-	now = now.Add(ErrorDiagnosticAlertInterval + time.Second)
-	_, err = svc.RecordErrorDiagnostic(context.Background(), alertTestAttempt())
-	require.Error(t, err)
-	require.Equal(t, 2, len(sink.events), "间隔到期后必须重新输出")
-	require.True(t, sink.ContainsFieldValue("count_since_last_alert", "5"), "被抑制的次数必须聚合到下一次告警")
-	require.True(t, sink.ContainsFieldValue("total", "6"))
-	requireNoSensitiveDiagnosticLogContent(t, sink)
-}
-
-func TestErrorDiagnosticDropAlertsAreBodyFreeAndRateLimited(t *testing.T) {
-	sink, release := captureStructuredLog(t)
-	defer release()
-
-	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
-	svc := newErrorDiagnosticAlertTestService(t, newErrorDiagnosticRepoFake(), func() time.Time { return now })
-
-	for i := 0; i < 7; i++ {
-		svc.RecordDroppedErrorDiagnostic()
-	}
-	require.EqualValues(t, 7, svc.Counters().Dropped)
-	require.Equal(t, 1, len(sink.events), "丢弃告警必须限速，不得每次丢弃都写日志")
-	require.True(t, sink.ContainsMessageAtLevel(ErrorDiagnosticAlertDropped, "warn"))
-	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeQueueOverflow))
-	requireNoSensitiveDiagnosticLogContent(t, sink)
-
-	now = now.Add(ErrorDiagnosticAlertInterval + time.Second)
-	svc.RecordDroppedErrorDiagnostic()
-	require.Equal(t, 2, len(sink.events))
-	require.True(t, sink.ContainsFieldValue("count_since_last_alert", "7"), "被抑制的丢弃次数必须聚合")
-	require.True(t, sink.ContainsFieldValue("total", "8"))
-	requireNoSensitiveDiagnosticLogContent(t, sink)
-
-	// 丢弃不是写入失败，两个计数不得混用。
-	require.Zero(t, svc.Counters().WriteFailures)
-}
-
 // errorDiagnosticStageRecordingRepo 记录三段清理各自的调用次数，并可按需注入失败，
 // 用来证明失败不会让另一段被跳过。错误文本带 sentinel，证明原始错误不进日志。
 //
-// 它必须显式实现头值清除：内嵌接口在未被赋值时调用会 panic，而 RunOnce 现在一定会走到
-// 头值这一段——那会让「某一段失败」的测试变成崩溃而不是断言。
+// 它必须显式实现全部三段：内嵌接口在未被赋值时调用会 panic，而 RunOnce 一定会走到
+// 这三段——那会让「某一段失败」的测试变成崩溃而不是断言。
 type errorDiagnosticStageRecordingRepo struct {
 	ErrorDiagnosticRepository
 
@@ -189,6 +90,38 @@ func (r *errorDiagnosticStageRecordingRepo) ClearExpiredErrorDiagnosticHeaderVal
 func (r *errorDiagnosticStageRecordingRepo) DeleteExpiredErrorDiagnostics(context.Context, time.Time, int) (int64, error) {
 	r.recordDeleteCalls++
 	return r.recordDeleteResult, r.recordDeleteErr
+}
+
+// errorDiagnosticBacklogRepoFake 是带积压观测的清理替身。
+type errorDiagnosticBacklogRepoFake struct {
+	errorDiagnosticStageRecordingRepo
+
+	backlog    ErrorDiagnosticCleanupBacklog
+	backlogErr error
+
+	clearCalls  int
+	deleteCalls int
+}
+
+func newErrorDiagnosticRepoFake() *errorDiagnosticBacklogRepoFake {
+	return &errorDiagnosticBacklogRepoFake{}
+}
+
+func (r *errorDiagnosticBacklogRepoFake) ClearExpiredErrorDiagnosticBodies(context.Context, time.Time, int) (int64, error) {
+	r.clearCalls++
+	return r.bodyClearResult, r.bodyClearErr
+}
+
+func (r *errorDiagnosticBacklogRepoFake) DeleteExpiredErrorDiagnostics(context.Context, time.Time, int) (int64, error) {
+	r.deleteCalls++
+	return r.recordDeleteResult, r.recordDeleteErr
+}
+
+func (r *errorDiagnosticBacklogRepoFake) ReadErrorDiagnosticCleanupBacklog(context.Context, time.Time) (ErrorDiagnosticCleanupBacklog, error) {
+	if r.backlogErr != nil {
+		return ErrorDiagnosticCleanupBacklog{}, r.backlogErr
+	}
+	return r.backlog, nil
 }
 
 // TestErrorDiagnosticCleanupStagesAreDecoupled 覆盖三段清理互不阻塞：
@@ -236,33 +169,6 @@ func TestErrorDiagnosticCleanupDeleteFailureStillReportsClearedBodies(t *testing
 	require.Zero(t, result.RecordsDeleted)
 	require.EqualValues(t, 1, cleanup.Counters().CleanupFailures)
 	require.True(t, sink.ContainsFieldValue("code", ErrorDiagnosticAlertCodeRecordDeleteFailed))
-	requireNoSensitiveDiagnosticLogContent(t, sink)
-}
-
-// TestErrorDiagnosticCleanupDeleteFailureUsesItsOwnCode 覆盖「删除整行」失败的独立原因码，
-// 使运维能区分正文清除失败与元数据删除失败。
-
-// TestErrorDiagnosticAlerterConcurrentUseIsBounded 覆盖并发丢弃下的上界：
-// 无论多少并发，同一间隔内最多输出一行，且计数不丢。
-func TestErrorDiagnosticAlerterConcurrentUseIsBounded(t *testing.T) {
-	sink, release := captureStructuredLog(t)
-	defer release()
-
-	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
-	svc := newErrorDiagnosticAlertTestService(t, newErrorDiagnosticRepoFake(), func() time.Time { return now })
-
-	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			svc.RecordDroppedErrorDiagnostic()
-		}()
-	}
-	wg.Wait()
-
-	require.EqualValues(t, 32, svc.Counters().Dropped)
-	require.Equal(t, 1, len(sink.events), "并发丢弃在同一间隔内只允许一行告警")
 	requireNoSensitiveDiagnosticLogContent(t, sink)
 }
 

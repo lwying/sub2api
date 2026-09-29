@@ -21,11 +21,17 @@ import (
 func expectUsageCleanupOwnershipProbe(
 	mock sqlmock.Sqlmock,
 	valueDetailsExists, valueDetailsOwned, diagnosticsExists, diagnosticsOwned bool,
+	traceState ...bool,
 ) {
+	traceExists, traceOwned := false, true
+	if len(traceState) == 2 {
+		traceExists, traceOwned = traceState[0], traceState[1]
+	}
 	mock.ExpectQuery(`to_regclass\('request_audit_value_details'\)`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"value_details_exists", "value_details_owned", "diagnostics_exists", "diagnostics_owned",
-		}).AddRow(valueDetailsExists, valueDetailsOwned, diagnosticsExists, diagnosticsOwned))
+			"traces_exists", "traces_owned",
+		}).AddRow(valueDetailsExists, valueDetailsOwned, diagnosticsExists, diagnosticsOwned, traceExists, traceOwned))
 }
 
 // expectUsageCleanupOwnershipPinned 满足逐行 DELETE 分支的加固序列：核对通过后取
@@ -54,6 +60,24 @@ func (e plaintextGuardSQLExecutor) QueryContext(ctx context.Context, query strin
 // TestUsageCleanupRepositoryDeleteUsageLogsBatchRefusesOrphanablePlaintextWithoutOwnershipForeignKey
 // 覆盖管理端清理任务的事务批量删除：值明细表已部署但所有权外键缺失时，必须在同一事务里
 // 拒绝整批并回滚，不能先删 usage 行再留下孤儿。
+func TestUsageCleanupRepositoryDeleteUsageLogsBatchRefusesTraceWithoutOwnership(t *testing.T) {
+	setUsageCleanupRollupTestTimezone(t)
+	db, mock := newSQLMock(t)
+	repo := &usageCleanupRepository{sql: db}
+	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	filters := service.UsageCleanupFilters{StartTime: start, EndTime: start.Add(24 * time.Hour)}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	expectUsageCleanupOwnershipProbe(mock, true, true, true, true, true, false)
+	mock.ExpectRollback()
+
+	_, err := repo.DeleteUsageLogsBatch(context.Background(), filters, 5)
+	require.ErrorIs(t, err, errPlaintextOwnershipUnverified)
+	require.ErrorContains(t, err, "request_traces.usage_log_id")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUsageCleanupRepositoryDeleteUsageLogsBatchRefusesOrphanablePlaintextWithoutOwnershipForeignKey(t *testing.T) {
 	setUsageCleanupRollupTestTimezone(t)
 	db, mock := newSQLMock(t)

@@ -20,7 +20,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -191,6 +190,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	recordRequestTraceChannelModelMapping(c, reqModel, channelMapping)
 
 	// 设置 max_tokens=1 + haiku 探测请求标识到 context 中
 	// 必须在 SetClaudeCodeClientContext 之前设置，因为 ClaudeCodeValidator 需要读取此标识进行绕过判断
@@ -235,11 +235,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditFingerprint, _ := h.gatewayService.NewRequestAuditFingerprint(subject.UserID)
-	claudeValueCapture := requestAuditValueDetailInboundRouteMatches(c) &&
-		h.gatewayService.ClaudeRequestAuditValueCaptureEnabled(c.Request.Context())
-	if claudeValueCapture {
-		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
-	}
 	if requestAuditFingerprint != nil {
 		requestAuditFingerprint.DigestRequest(body)
 		c.Request = c.Request.WithContext(service.WithRequestAuditFingerprint(c.Request.Context(), requestAuditFingerprint))
@@ -1007,36 +1002,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 				requestAuditMetadata := requestAuditSafeMetadata(map[string]string{"inbound": inboundEndpoint, "upstream": upstreamEndpoint}, requestAuditFingerprint, sessionID, "", localRequestID, upstreamRequestID)
 				requestAuditMetadata.ProtocolFields = service.SanitizeRequestAuditProtocolFields(requestAuditProtocolFieldsFromClient)
-				valueDetail := service.RequestAuditValueDetailInput{}
-				if claudeValueCapture && notCapturedReason == "" {
-					attempts := service.RequestAuditValueDetailAttemptsFromHTTPMetadata(service.RequestAuditHTTPAttemptMetadata(c))
-					protocol := requestAuditValueDetailWireProtocol(attempts, account.IsBedrock())
-					// 入站头值按**入站路由**的协议评审；protocol（含 bedrock）只描述出站 wire，
-					// 不用来解释入站 wire。
-					inboundProtocol, inboundSupported := service.RequestAuditValueDetailInboundProtocolForRoute(inboundEndpoint)
-					if !inboundSupported {
-						inboundProtocol = protocol
-					}
-					inboundValues, inboundOmission, _ := service.RequestAuditValueDetailInboundHeadersForProtocol(c.Request.Header, inboundProtocol)
-					valueDetail = service.RequestAuditValueDetailInput{
-						Route:                 inboundEndpoint,
-						Protocol:              protocol,
-						InboundHeaderValues:   inboundValues,
-						InboundHeaderOmission: inboundOmission,
-						MetadataUserID:        parsedReq.MetadataUserID,
-						Model:                 reqModel,
-						StartedAt:             pricingAt,
-						CompletedAt:           time.Now(),
-						Attempts:              attempts,
-					}
-				}
 				// 「返回客户端的响应」阶段事实只在已采集的链路上记录：未采集不得伪装出响应阶段。
 				// 必须在提交异步 usage 任务前读取 Gin（worker 内不得再访问 gin.Context）。
 				if notCapturedReason == "" {
 					requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
-					if status, ok := requestAuditMetadata.Status[service.RequestAuditClientResponseKey]; ok {
-						valueDetail.ClientStatus = status
-					}
 				}
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
@@ -1059,7 +1028,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						RequestAuditAttempts:    requestAuditAttempts,
 						RequestAuditFingerprint: requestAuditFingerprint,
 						RequestAuditMetadata:    requestAuditMetadata,
-						RequestAuditValueDetail: valueDetail,
 						NotCapturedReason:       notCapturedReason,
 						AuditLogicalKey:         auditLogicalKey,
 						ChannelUsageFields:      clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
@@ -1174,9 +1142,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, account.Platform, true)
 						return
 					}
+					previousSwitchCount := fs.SwitchCount
 					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 					switch action {
 					case FailoverContinue:
+						if fs.SwitchCount > previousSwitchCount {
+							recordRequestTraceAccountSwitch(c, account.ID)
+						}
 						// 本次尝试已确定性失败，立即释放该账号的会话注册
 						h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
 						delete(sessionSlotAccounts, account.ID)

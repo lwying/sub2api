@@ -9,86 +9,32 @@ import (
 
 type counterContextKey struct{}
 type metadataContextKey struct{}
-type claudeHeaderValueCaptureContextKey struct{}
-
-// WithClaudeHeaderValueCapture marks a request for protocol-allowlisted value
-// snapshots. The name is retained for existing callers; each attempt freezes its
-// actual wire protocol. Without this marker, no value is read or copied. The
-// service still re-checks the versioned operator acknowledgement before writing.
-func WithClaudeHeaderValueCapture(ctx context.Context, enabled bool) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, claudeHeaderValueCaptureContextKey{}, enabled)
-}
-
-// ClaudeHeaderValueCaptureEnabled 报告本次请求是否允许复制值快照。
-//
-// 没有标记（含 nil 上下文）一律按关闭处理：默认关闭是 fail-closed 的默认值。
-func ClaudeHeaderValueCaptureEnabled(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	enabled, _ := ctx.Value(claudeHeaderValueCaptureContextKey{}).(bool)
-	return enabled
-}
-
-// WithClaudeMetadataUserID 在允许值快照时记录本次尝试实际发往上游的 metadata.user_id。
-//
-// 未打开标记时是**空操作**：调用方即使忘记先判断标记，也不会把明文写进尝试元数据。
-// 记录的是重写之后真正发出去的值，而不是客户端原始值。
-func WithClaudeMetadataUserID(ctx context.Context, userID string) context.Context {
-	if !ClaudeHeaderValueCaptureEnabled(ctx) {
-		return ctx
-	}
-	metadata, _ := MetadataFromContext(ctx)
-	metadata.MetadataUserID = userID
-	return WithMetadata(ctx, metadata)
-}
 
 // Metadata describes one upstream HTTP transport attempt without request or response bodies.
 //
 // RequestHeaders / ResponseHeaders 是**长期审计**用的存在性与闭集摘要，永远只有受限信息。
-// RequestHeaderValues / ResponseHeaderValues / MetadataUserID are default-off
-// value snapshots. Only an enabled request populates them; no values are copied
-// on the hot path while the gate is closed.
-// RequestHeaderValueOmission / ResponseHeaderValueOmission 是与它们**同源同刻**的省略摘要
-// （只含计数），关闭态下同样保持零值。
 // Transport never persists values; persistence is gated and validated downstream.
 type Metadata struct {
-	AccountID            int64
-	Model                string
-	Protocol             string
-	ValueProtocol        string // real wire family for optional value capture; never persisted in long-lived audit
+	AccountID int64
+	Model     string
+	// Protocol 是本次尝试的**长期审计协议家族**（它的持久化形态）。
+	Protocol string
+	// ValueProtocol 是本次尝试**真实发出的 wire 协议族**：它与 Protocol 只在
+	// 「审计家族与真实上游不同」时才有区别（当前只有 Bedrock：审计家族是
+	// messages，真实上游是 AWS 的 invoke 形态）。它不落长期审计库，也不是任何
+	// 采集能力的开关声明——值快照能力已退役，Trace 是它唯一的消费方。
+	ValueProtocol        string
 	RequestHeaders       map[string]any
 	ResponseHeaders      map[string]any
 	StatusCode           *int
 	RequestBytes         *int64
 	ResponseBytes        *int64
 	ResponseReadComplete *bool
-
-	// RequestHeaderValues 是本次尝试最终发出的请求头值快照（净化器输出，默认 nil）。
-	RequestHeaderValues map[string]any
-	// ResponseHeaderValues 是本次尝试收到的响应头值快照（净化器输出，默认 nil）。
-	ResponseHeaderValues map[string]any
-	// RequestHeaderValueOmission / ResponseHeaderValueOmission 是上面两份快照的**省略摘要**：
-	// 净化器在采集那一刻丢掉了多少个被观察到的头名／取值。它**只含计数**，不含名字与取值，
-	// 因此可以在不记录任何未知头名（可能承载认证通道）的前提下，让服务层如实标出
-	// 「客户端只发了这些」与「我们只收了这些」的差别。关闭态下保持零值。
-	RequestHeaderValueOmission  ClaudeHeaderValueOmission
-	ResponseHeaderValueOmission ClaudeHeaderValueOmission
-	// MetadataUserID 是本次尝试实际发往上游的 metadata.user_id 原始字符串（默认空）。
-	MetadataUserID string
 	// LatencyMillis 是本次尝试的 RoundTrip 耗时（毫秒）；未测量时为 nil。
 	LatencyMillis *int64
 	// ProxyID 是本次尝试实际使用的代理内部 ID；未使用代理时为 0。它只在服务层
 	// 的加密值明细里落库，传输层与长期审计都不写它。
 	ProxyID int64
-
-	// captureHeaderValues 是本次尝试的值快照开关：由请求上下文标记在尝试开始时**固化**，
-	// 因此响应阶段（SetResponse 拿不到上下文）也按同一结论处理，不会中途改变判据。
-	captureHeaderValues  bool
-	captureValueProtocol string
 }
 
 // Counter tracks upstream HTTP transport attempts for one logical request.
@@ -151,8 +97,6 @@ func cloneMetadata(metadata Metadata) Metadata {
 	metadata.RequestBytes = cloneInt64(metadata.RequestBytes)
 	metadata.ResponseBytes = cloneInt64(metadata.ResponseBytes)
 	metadata.ResponseReadComplete = cloneBool(metadata.ResponseReadComplete)
-	metadata.RequestHeaderValues = cloneHeaderMap(metadata.RequestHeaderValues)
-	metadata.ResponseHeaderValues = cloneHeaderMap(metadata.ResponseHeaderValues)
 	metadata.LatencyMillis = cloneInt64(metadata.LatencyMillis)
 	return metadata
 }
@@ -237,26 +181,13 @@ func StartAttempt(ctx context.Context) *Attempt {
 
 // StartRequestAttempt snapshots sanitized headers from the final outbound request.
 //
-// 值快照（RequestHeaderValues）只在请求上下文显式打开 WithClaudeHeaderValueCapture 时才构建：
-// 默认关闭的部署在热路径上不会读取或复制任何明文头值。省略摘要（RequestHeaderValueOmission）
-// 必须与快照同源同刻：净化器丢掉的未知头名与没通过校验的取值在这里之后就不复存在。
+// 只记长期审计的闭集摘要：传输层在任何路径上都不读取或复制明文头值。
 func StartRequestAttempt(req *http.Request) *Attempt {
 	if req == nil {
 		return nil
 	}
 	metadata := metadataFromContext(req.Context())
 	metadata.RequestHeaders = SanitizeRequestHeaders(req.Header)
-	if ClaudeHeaderValueCaptureEnabled(req.Context()) {
-		var supported bool
-		protocol := metadata.ValueProtocol
-		if protocol == "" {
-			protocol = metadata.Protocol
-		}
-		metadata.RequestHeaderValues, metadata.RequestHeaderValueOmission, supported = SanitizeProtocolRequestHeaderValues(protocol, req.Header)
-		if !supported {
-			metadata.RequestHeaderValues = nil
-		}
-	}
 	return startAttempt(req.Context(), metadata)
 }
 
@@ -267,14 +198,6 @@ func startAttempt(ctx context.Context, metadata Metadata) *Attempt {
 	}
 	zero := int64(0)
 	metadata.RequestBytes = &zero
-	// 把请求级的开关固化到这次尝试上：响应阶段不再有上下文可查。
-	metadata.captureHeaderValues = ClaudeHeaderValueCaptureEnabled(ctx)
-	if metadata.captureHeaderValues {
-		metadata.captureValueProtocol = metadata.ValueProtocol
-		if metadata.captureValueProtocol == "" {
-			metadata.captureValueProtocol = metadata.Protocol
-		}
-	}
 	index := counter.incrementMetadata(metadata)
 	return &Attempt{counter: counter, index: index}
 }
@@ -322,9 +245,6 @@ func (a *Attempt) AddRequestBytes(n int64) {
 }
 
 // SetResponse records only status and sanitized headers; body bytes are counted as read.
-//
-// 值快照（ResponseHeaderValues）只在本次尝试开始时已打开值快照开关时才构建；
-// 省略摘要与快照同源同刻，理由见 StartRequestAttempt。
 func (a *Attempt) SetResponse(statusCode int, headers http.Header, bodyPresent bool) {
 	if a == nil || a.counter == nil {
 		return
@@ -337,9 +257,6 @@ func (a *Attempt) SetResponse(statusCode int, headers http.Header, bodyPresent b
 		metadata.ResponseHeaders = SanitizeResponseHeaders(headers)
 		metadata.ResponseBytes = &zero
 		metadata.ResponseReadComplete = &complete
-		if metadata.captureHeaderValues {
-			metadata.ResponseHeaderValues, metadata.ResponseHeaderValueOmission, _ = SanitizeProtocolResponseHeaderValues(metadata.captureValueProtocol, headers)
-		}
 	})
 }
 

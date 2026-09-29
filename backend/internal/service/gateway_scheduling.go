@@ -111,8 +111,21 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 }
 
 // SelectAccountWithLoadAwareness selects account with load-awareness and wait plan.
-// metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
-// sub2apiUserID: 系统用户 ID，用于二维亲和调度
+//
+// 亲和只有一维：sessionHash（见 GenerateSessionHash）。metadataUserID 与 sub2apiUserID
+// 不参与任何选号决策——本函数不读取这两个参数。
+//
+// 为什么不做客户端/设备维度的亲和：
+//   - 上游可见的设备数由体侧「客户端身份收敛」控制，不由选号控制。
+//     resolveConvergedClaudeDeviceID 把 metadata.user_id.device_id 改写成账号级恒定值，
+//     因此按 device 选号在上游可见性上增量恰好为零。
+//   - prompt cache 按会话内容判定，能给缓存带来收益的是 session 亲和，已经存在。
+//   - session 键每会话一个且 TTL 1h，设备键会把一台机器的全部并发会话压到同一账号，
+//     并跳过本函数第三层的负载感知选择，把负载推向少数账号。
+//   - 收敛开启时请求体里的 device_id 已被改写成账号级常量，此时按它做亲和等于关掉亲和；
+//     本函数也拿不到收敛前的原始值。
+//
+// 保留这两个参数是为了不动既有调用点；新增调用方不要据此实现亲和。
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))

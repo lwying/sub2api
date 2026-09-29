@@ -188,6 +188,12 @@ func runMainServer() {
 	if app.RequestAuditValueDetailCleanup != nil {
 		app.RequestAuditValueDetailCleanup.Start()
 	}
+	if app.RequestTraceCleanup != nil {
+		app.RequestTraceCleanup.Start()
+	}
+	if app.RequestTraceExportWorker != nil {
+		app.RequestTraceExportWorker.Start()
+	}
 	if app.PluginManager != nil {
 		if err := app.PluginManager.Start(context.Background()); err != nil {
 			log.Printf("Plugin manager started in degraded state: %v", err)

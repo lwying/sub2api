@@ -292,6 +292,12 @@ func newPartitionGuardReplica(
 			plain_owner_created_at TIMESTAMPTZ,
 			metadata_expires_at TIMESTAMPTZ NOT NULL
 		);`
+	traceDDL := `
+		CREATE TABLE request_traces (
+			id BIGINT PRIMARY KEY,
+			usage_log_id BIGINT REFERENCES usage_logs (id) ON DELETE CASCADE,
+			payload BYTEA
+		);`
 
 	if shape != partitionGuardSupported {
 		usageLogsDDL = `
@@ -366,6 +372,12 @@ func newPartitionGuardReplica(
 			plain_owner_created_at TIMESTAMPTZ,
 			metadata_expires_at TIMESTAMPTZ NOT NULL
 		);`
+		traceDDL = `
+		CREATE TABLE request_traces (
+			id BIGINT PRIMARY KEY,
+			usage_log_id BIGINT,
+			payload BYTEA
+		);`
 	}
 
 	tx, err := integrationDB.BeginTx(ctx, nil)
@@ -393,6 +405,10 @@ func newPartitionGuardReplica(
 		);
 	`+valueDetailDDL+diagnosticDDL)
 	require.NoError(t, err)
+	if shape == partitionGuardSupported {
+		_, err = tx.ExecContext(ctx, traceDDL)
+		require.NoError(t, err)
+	}
 	require.NoError(t, tx.Commit())
 
 	wrapped := sql.OpenDB(searchPathConnector{pool: integrationDB, schema: schema})

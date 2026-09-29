@@ -6,7 +6,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 const requestAuditHTTPAttemptCounterKey = "request_audit_http_attempt_counter"
@@ -137,22 +136,30 @@ func bindRequestAuditHTTPAttempt(
 	if req == nil {
 		return nil
 	}
-	metadata := httpattempt.Metadata{AccountID: accountID, Model: model, Protocol: protocol}
-	if httpattempt.ClaudeHeaderValueCaptureEnabled(req.Context()) {
-		metadata.ValueProtocol = RequestAuditValueWireProtocol(req.Context(), protocol)
+	// ValueProtocol 记的是本次尝试**真实发出**的 wire 协议族：绝大多数路径与长期审计的
+	// protocol 家族一致，只有被 WithRequestAuditValueWireProtocolOverride 显式改写的形态
+	// 不同（当前是 Bedrock）。它不再是任何采集能力的开关，只是留给 Trace 的逐次事实。
+	metadata := httpattempt.Metadata{
+		AccountID:     accountID,
+		Model:         model,
+		Protocol:      protocol,
+		ValueProtocol: RequestAuditValueWireProtocol(req.Context(), protocol),
 	}
 	return req.WithContext(httpattempt.WithMetadata(req.Context(), metadata))
 }
 
-// WithRequestAuditValueWireProtocolOverride changes only the value-snapshot
-// protocol, leaving the long-lived audit metadata protocol unchanged. Bedrock
-// uses an AWS-authenticated wire request despite its Messages audit family.
+// WithRequestAuditValueWireProtocolOverride changes only the per-attempt wire protocol
+// fact, leaving the long-lived audit metadata protocol unchanged. Bedrock uses an
+// AWS-authenticated wire request despite its Messages audit family, so without the
+// override the attempt would be recorded as if it had gone out as Anthropic Messages.
 func WithRequestAuditValueWireProtocolOverride(ctx context.Context, protocol string) context.Context {
 	return context.WithValue(ctx, requestAuditValueWireProtocolContextKey{}, protocol)
 }
 
 type requestAuditValueWireProtocolContextKey struct{}
 
+// RequestAuditValueWireProtocolForMetadata 解析一次尝试真实发出的 wire 协议族：
+// 显式改写优先，否则与长期审计的协议家族相同（见 Metadata.ValueProtocol）。
 func RequestAuditValueWireProtocolForMetadata(metadata httpattempt.Metadata) string {
 	if metadata.ValueProtocol != "" {
 		return metadata.ValueProtocol
@@ -167,22 +174,4 @@ func RequestAuditValueWireProtocol(ctx context.Context, auditProtocol string) st
 		}
 	}
 	return auditProtocol
-}
-
-func bindClaudeRequestAuditValueDetail(req *http.Request, wireBody []byte, proxyID *int64) *http.Request {
-	if req == nil || !httpattempt.ClaudeHeaderValueCaptureEnabled(req.Context()) {
-		return req
-	}
-	ctx := req.Context()
-	if metadata, ok := httpattempt.MetadataFromContext(ctx); ok {
-		if proxyID != nil {
-			metadata.ProxyID = *proxyID
-		}
-		ctx = httpattempt.WithMetadata(ctx, metadata)
-	}
-	uid := gjson.GetBytes(wireBody, "metadata.user_id")
-	if uid.Type == gjson.String && len(uid.String()) <= 256 {
-		ctx = httpattempt.WithClaudeMetadataUserID(ctx, uid.String())
-	}
-	return req.WithContext(ctx)
 }

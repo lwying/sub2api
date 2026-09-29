@@ -113,10 +113,11 @@ type usageLogCreateResult struct {
 }
 
 type usageLogBestEffortRequest struct {
-	prepared usageLogInsertPrepared
-	apiKeyID int64
-	log      *service.UsageLog
-	resultCh chan error
+	prepared      usageLogInsertPrepared
+	apiKeyID      int64
+	log           *service.UsageLog
+	resultCh      chan error
+	traceResultCh chan usageLogCreateResult // optional, only Trace-enabled writes require INSERT provenance
 }
 
 type usageLogBestEffortGroup struct {
@@ -175,23 +176,32 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 }
 
 func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.UsageLog) error {
+	_, err := r.createBestEffort(ctx, log, false)
+	return err
+}
+
+// CreateBestEffortWithInserted uses the same batch and fallback path as ordinary
+// usage logging, but reports whether THIS request produced the row. A Trace may
+// be linked only when this returns true, never to a deduplicated existing row.
+func (r *usageLogRepository) CreateBestEffortWithInserted(ctx context.Context, log *service.UsageLog) (bool, error) {
+	return r.createBestEffort(ctx, log, true)
+}
+
+func (r *usageLogRepository) createBestEffort(ctx context.Context, log *service.UsageLog, proveInsert bool) (bool, error) {
 	if log == nil {
-		return nil
+		return false, nil
 	}
 
 	if tx := dbent.TxFromContext(ctx); tx != nil {
-		_, err := r.createSingle(ctx, tx.Client(), log)
-		return err
+		return r.createSingle(ctx, tx.Client(), log)
 	}
 	if r.db == nil {
-		_, err := r.createSingle(ctx, r.sql, log)
-		return err
+		return r.createSingle(ctx, r.sql, log)
 	}
 
 	r.ensureBestEffortBatcher()
 	if r.bestEffortBatchCh == nil {
-		_, err := r.createSingle(ctx, r.sql, log)
-		return err
+		return r.createSingle(ctx, r.sql, log)
 	}
 
 	req := usageLogBestEffortRequest{
@@ -200,26 +210,36 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 		log:      log,
 		resultCh: make(chan error, 1),
 	}
+	if proveInsert {
+		req.traceResultCh = make(chan usageLogCreateResult, 1)
+	}
 	if key, ok := r.bestEffortRecentKey(req.prepared.requestID, req.apiKeyID); ok {
 		if _, exists := r.bestEffortRecent.Get(key); exists {
-			return nil
+			return false, nil
 		}
 	}
 
-	// 队列满时阻塞等待而非立即丢弃：批处理器持续排空队列，短暂等待即可入队。
-	// 立即丢弃会造成“已扣费但无 usage_log”的永久数据缺口（issue #3656）；
-	// 阻塞上限由调用方 ctx 期限约束，超时后由上层同步兜底。
+	// Queue semantics are unchanged. A trace-aware call waits for the same batch
+	// completion but also receives INSERT provenance from that batch.
 	select {
 	case r.bestEffortBatchCh <- req:
 	case <-ctx.Done():
-		return service.MarkUsageLogCreateDropped(ctx.Err())
+		return false, service.MarkUsageLogCreateDropped(ctx.Err())
 	}
 
+	if proveInsert {
+		select {
+		case result := <-req.traceResultCh:
+			return result.inserted, result.err
+		case <-ctx.Done():
+			return false, service.MarkUsageLogCreateDropped(ctx.Err())
+		}
+	}
 	select {
 	case err := <-req.resultCh:
-		return err
+		return false, err
 	case <-ctx.Done():
-		return service.MarkUsageLogCreateDropped(ctx.Err())
+		return false, service.MarkUsageLogCreateDropped(ctx.Err())
 	}
 }
 
@@ -599,7 +619,7 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 
 	if len(preparedList) == 0 {
 		for _, req := range batch {
-			sendUsageLogBestEffortResult(req.resultCh, nil)
+			completeBestEffortUsageLogRequest(req, false, nil)
 		}
 		return
 	}
@@ -608,10 +628,30 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 	defer cancel()
 
 	query, args := buildUsageLogBestEffortInsertQuery(preparedList)
-	if _, err := db.ExecContext(ctx, query, args...); err != nil {
+	traceProofNeeded := false
+	for _, req := range batch {
+		if req.traceResultCh != nil {
+			traceProofNeeded = true
+			break
+		}
+	}
+	insertedKeys := map[string]int64{}
+	var insertErr error
+	if traceProofNeeded {
+		insertedKeys, insertErr = executeBestEffortBatchWithTraceProof(ctx, db, query, args)
+	} else {
+		_, insertErr = db.ExecContext(ctx, query, args...)
+	}
+	if err := insertErr; err != nil {
 		logger.LegacyPrintf("repository.usage_log", "best-effort batch insert failed: %v", err)
 		for _, group := range groupOrder {
-			singleErr := execUsageLogInsertNoResult(ctx, db, group.prepared)
+			var singleErr error
+			var inserted bool
+			if traceProofNeeded {
+				inserted, singleErr = r.createSingle(ctx, db, group.reqs[0].log)
+			} else {
+				singleErr = execUsageLogInsertNoResult(ctx, db, group.prepared)
+			}
 			if singleErr != nil {
 				logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
 			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
@@ -620,8 +660,13 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 			if singleErr == nil {
 				assignBestEffortUsageLogIDs(ctx, db, []*usageLogBestEffortGroup{group})
 			}
-			for _, req := range group.reqs {
-				sendUsageLogBestEffortResult(req.resultCh, singleErr)
+			for idx, req := range group.reqs {
+				if req.log != nil && req.log.ID == 0 && group.reqs[0].log != nil {
+					req.log.ID = group.reqs[0].log.ID
+				}
+				// If the fallback write returned an error, its transaction may not
+				// have committed; this is not a verified Trace owner.
+				completeBestEffortUsageLogRequest(req, inserted && singleErr == nil && idx == 0 && req.log != nil && req.log.ID > 0, singleErr)
 			}
 		}
 		return
@@ -631,10 +676,31 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
 			r.bestEffortRecent.SetDefault(group.key, struct{}{})
 		}
-		for _, req := range group.reqs {
-			sendUsageLogBestEffortResult(req.resultCh, nil)
+		for idx, req := range group.reqs {
+			_, inserted := insertedKeys[group.key]
+			completeBestEffortUsageLogRequest(req, inserted && idx == 0 && req.log != nil && req.log.ID > 0, nil)
 		}
 	}
+}
+
+// executeBestEffortBatchWithTraceProof appends RETURNING only when an opted-in
+// trace asks for insert provenance. Other batches retain the existing Exec path.
+func executeBestEffortBatchWithTraceProof(ctx context.Context, db *sql.DB, query string, args []any) (map[string]int64, error) {
+	rows, err := db.QueryContext(ctx, query+" RETURNING request_id, api_key_id, id", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	inserted := make(map[string]int64)
+	for rows.Next() {
+		var requestID string
+		var apiKeyID, id int64
+		if err := rows.Scan(&requestID, &apiKeyID, &id); err != nil {
+			return nil, err
+		}
+		inserted[usageLogBatchKey(requestID, apiKeyID)] = id
+	}
+	return inserted, rows.Err()
 }
 
 func assignBestEffortUsageLogIDs(ctx context.Context, db *sql.DB, groups []*usageLogBestEffortGroup) {
@@ -703,6 +769,17 @@ func assignBestEffortUsageLogIDs(ctx context.Context, db *sql.DB, groups []*usag
 			}
 		}
 	}
+}
+
+func completeBestEffortUsageLogRequest(req usageLogBestEffortRequest, inserted bool, err error) {
+	if req.traceResultCh != nil {
+		select {
+		case req.traceResultCh <- usageLogCreateResult{inserted: inserted, err: err}:
+		default:
+		}
+		return
+	}
+	sendUsageLogBestEffortResult(req.resultCh, err)
 }
 
 func sendUsageLogBestEffortResult(ch chan error, err error) {

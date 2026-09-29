@@ -88,6 +88,39 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// requestAuditValueWireProtocolVertex 是 Vertex service_account 真实出站的 wire 协议族：
+// 该路径发的是 Google AI Platform 的 rawPredict 请求（见 buildUpstreamRequestAnthropicVertex），
+// 不是 Anthropic Messages wire。它只作为逐次尝试的事实写进 Metadata.ValueProtocol。
+const requestAuditValueWireProtocolVertex = "vertex"
+
+// forwardsAnthropicVertexWire 报告本次 Forward 的上游请求是否由 Vertex service_account
+// 分支构建。判定条件必须与 buildUpstreamRequest 的分派条件逐字一致，否则逐次尝试记下的
+// wire 事实会与实际发出的请求不符（仅凭 IsVertexServiceAccount() 只看 Type，会把其它平台的
+// service_account 账号误标成 vertex）。
+func forwardsAnthropicVertexWire(account *Account) bool {
+	return account != nil && account.Platform == PlatformAnthropic && account.Type == AccountTypeServiceAccount
+}
+
+// bindForwardRequestAuditHTTPAttempt 记录一次真实 Forward 上游尝试的审计事实。
+//
+// 与 bindRequestAuditHTTPAttempt 的唯一区别是：Vertex service_account 的真实 wire 不是
+// Anthropic Messages，因此这里补上 requestAuditValueWireProtocolVertex 覆写，让
+// Metadata.ValueProtocol 如实描述本次尝试。长期审计的协议家族（RequestAuditProtocolAnthropic）
+// 保持不变，强制审计发送前门禁的语义不受影响；绑定不复制任何凭证或正文，只是在该次请求的
+// context 上挂一个常量协议名。
+//
+// Forward 里每一次真实尝试（首发、签名整流重试、工具块降级重试、budget 整流重试）都必须
+// 经过这里重新绑定：这些重试沿用同一账号身份，因此同样按 vertex 记录。
+func bindForwardRequestAuditHTTPAttempt(req *http.Request, c *gin.Context, account *Account, model string) *http.Request {
+	if req == nil {
+		return nil
+	}
+	if forwardsAnthropicVertexWire(account) {
+		req = req.WithContext(WithRequestAuditValueWireProtocolOverride(req.Context(), requestAuditValueWireProtocolVertex))
+	}
+	return bindRequestAuditHTTPAttempt(req, c, account.ID, strings.TrimSpace(model), RequestAuditProtocolAnthropic)
+}
+
 // Forward 转发请求到Claude API
 func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (result *ForwardResult, err error) {
 	startTime := time.Now()
@@ -416,12 +449,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		lastWireBody = wireBody
 
 		// 发送请求
-		upstreamReq = bindRequestAuditHTTPAttempt(
-			upstreamReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
-		)
-		upstreamReq = bindClaudeRequestAuditValueDetail(upstreamReq, wireBody, opsUpstreamProxyID(account))
-		// 真实发送接缝：按门控显式绑定错误诊断观察者（正文只在门控与票 02 opt-in 同时允许时才采）。
-		upstreamReq = s.bindMessagesErrorDiagnosticObserver(upstreamReq, c)
+		upstreamReq = bindForwardRequestAuditHTTPAttempt(upstreamReq, c, account, reqModel)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -485,11 +513,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
 					if buildErr == nil {
-						retryReq = bindRequestAuditHTTPAttempt(
-							retryReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
-						)
-						retryReq = bindClaudeRequestAuditValueDetail(retryReq, retryWireBody, opsUpstreamProxyID(account))
-						retryReq = s.bindMessagesErrorDiagnosticObserver(retryReq, c)
+						retryReq = bindForwardRequestAuditHTTPAttempt(retryReq, c, account, reqModel)
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 						if IsRequestAuditRequiredError(retryErr) {
 							if retryResp != nil && retryResp.Body != nil {
@@ -539,11 +563,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
 									if buildErr2 == nil {
-										retryReq2 = bindRequestAuditHTTPAttempt(
-											retryReq2, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
-										)
-										retryReq2 = bindClaudeRequestAuditValueDetail(retryReq2, retryWireBody2, opsUpstreamProxyID(account))
-										retryReq2 = s.bindMessagesErrorDiagnosticObserver(retryReq2, c)
+										retryReq2 = bindForwardRequestAuditHTTPAttempt(retryReq2, c, account, reqModel)
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
 										if IsRequestAuditRequiredError(retryErr2) {
 											if retryResp2 != nil && retryResp2.Body != nil {
@@ -633,11 +653,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseBudgetRetryCtx()
 						if buildErr == nil {
-							budgetRetryReq = bindRequestAuditHTTPAttempt(
-								budgetRetryReq, c, account.ID, strings.TrimSpace(reqModel), RequestAuditProtocolAnthropic,
-							)
-							budgetRetryReq = bindClaudeRequestAuditValueDetail(budgetRetryReq, budgetWireBody, opsUpstreamProxyID(account))
-							budgetRetryReq = s.bindMessagesErrorDiagnosticObserver(budgetRetryReq, c)
+							budgetRetryReq = bindForwardRequestAuditHTTPAttempt(budgetRetryReq, c, account, reqModel)
 							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if IsRequestAuditRequiredError(retryErr) {
 								if budgetRetryResp != nil && budgetRetryResp.Body != nil {

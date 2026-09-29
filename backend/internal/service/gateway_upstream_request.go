@@ -19,6 +19,9 @@ import (
 )
 
 func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, tokenType, modelID string, reqStream bool, mimicClaudeCode bool) (*http.Request, []byte, error) {
+	// The identity this seam received, kept only until the wire body is frozen
+	// below: the Trace reports the presence/equality verdict, never the value.
+	identityInboundBody := body
 	body = stripDeferredToolCacheControl(body)
 	if account.Platform == PlatformAnthropic && account.Type == AccountTypeServiceAccount {
 		req, err := s.buildUpstreamRequestAnthropicVertex(ctx, c, account, body, token, modelID, reqStream)
@@ -132,6 +135,15 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// base 取值同源（GetBaseURL），仅实际上游为 ollama.com 且映射后出站模型
 	// 为 DeepSeek 系时压到 cap，详见 helper 注释。
 	body = clampOllamaCloudAnthropicMessagesMaxTokens(account, account.GetBaseURL(), body)
+
+	// Final wire body freeze for the Anthropic Messages path: every identity
+	// rewrite (RewriteUserIDWithMasking, fingerprint convergence, metadata
+	// injection upstream of this call) has already happened, so the verdict here
+	// describes exactly the bytes the transport will send. Reporting is opt-in and
+	// never changes the request.
+	ReportRequestTraceIdentityBodyVerdict(ctx, identityInboundBody, body,
+		RequestTraceDecisionSourceIdentity, RequestAuditProtocolAnthropic, RequestAuditProtocolAnthropic,
+		"anthropic_wire_freeze")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {

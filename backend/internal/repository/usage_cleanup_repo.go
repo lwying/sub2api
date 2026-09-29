@@ -302,8 +302,8 @@ func isPlaintextOwnershipPinnableExecutor(q sqlExecutor) bool {
 
 // ensurePlaintextOwnershipForUnmanagedExecutor 必须在「没有自建事务」的删除路径执行任何
 // usage 行 DELETE 之前调用：调用方事务上取 ACCESS SHARE 锁把「所有权外键仍在」钉到该事务
-// 结束，使并发的 DROP CONSTRAINT 不能在核对与 DELETE 之间生效；无法持锁的适配器只在两张
-// 旁路表都未部署（即尚未启用明文能力）时才保持原有行为放行，部署了却钉不住一律拒绝。
+// 结束，使并发的 DROP CONSTRAINT 不能在核对与 DELETE 之间生效；无法持锁的适配器只在
+// 所有明文旁路表都未部署时保持原有行为放行，部署了却钉不住一律拒绝。
 func ensurePlaintextOwnershipForUnmanagedExecutor(ctx context.Context, q sqlExecutor) error {
 	if isPlaintextOwnershipPinnableExecutor(q) {
 		return ensureUsageCleanupPreservesPlaintextOwnership(ctx, q, true)
@@ -315,7 +315,7 @@ func ensurePlaintextOwnershipForUnmanagedExecutor(ctx context.Context, q sqlExec
 	if err := ownership.verificationError(); err != nil {
 		return err
 	}
-	if ownership.valueDetailsExists || ownership.diagnosticsExists {
+	if len(ownership.deployedSidecars()) > 0 {
 		return errPlaintextOwnershipUnpinned
 	}
 	return nil

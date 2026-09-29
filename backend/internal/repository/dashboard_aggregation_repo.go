@@ -274,6 +274,8 @@ type plaintextSidecarOwnership struct {
 	valueDetailsOwned  bool
 	diagnosticsExists  bool
 	diagnosticsOwned   bool
+	tracesExists       bool
+	tracesOwned        bool
 }
 
 // verificationError 在所有权不成立时返回带缺失列名的错误，成立时返回 nil。
@@ -285,13 +287,16 @@ func (o plaintextSidecarOwnership) verificationError() error {
 	if !o.diagnosticsOwned {
 		missing = append(missing, "error_diagnostic_records.plain_owner_usage_log_id")
 	}
+	if !o.tracesOwned {
+		missing = append(missing, "request_traces.usage_log_id")
+	}
 	if len(missing) == 0 {
 		return nil
 	}
 	return fmt.Errorf("%w (%s)", errPlaintextOwnershipUnverified, strings.Join(missing, ", "))
 }
 
-// probePlaintextSidecarOwnership 用一次只读系统目录的查询回答：两张随 usage 明文旁路表
+// probePlaintextSidecarOwnership 用一次只读系统目录的查询回答：随 usage 的明文旁路表
 // 是否存在，以及各自的所有权外键是否仍在。所有权判定要求：外键（contype='f'）、
 // ON DELETE CASCADE（confdeltype='c'）、被引用列是 usage_logs、**与旁路表在同一个
 // schema**（不是只比表名，否则同名表或跨 schema 的同名表会被误判为已保证），且
@@ -300,7 +305,8 @@ func probePlaintextSidecarOwnership(ctx context.Context, q sqlQueryer) (plaintex
 	const query = `
 		WITH sidecars AS (
 			SELECT to_regclass('request_audit_value_details') AS value_details,
-			       to_regclass('error_diagnostic_records') AS diagnostics
+			       to_regclass('error_diagnostic_records') AS diagnostics,
+			       to_regclass('request_traces') AS traces
 		)
 		SELECT
 			sidecars.value_details IS NOT NULL AS value_details_exists,
@@ -330,13 +336,31 @@ func probePlaintextSidecarOwnership(ctx context.Context, q sqlQueryer) (plaintex
 				  AND parent.relname = 'usage_logs'
 				  AND parent.relnamespace = child.relnamespace
 				  AND att.attname = 'plain_owner_usage_log_id'
-			) AS diagnostics_owned
+			) AS diagnostics_owned,
+			sidecars.traces IS NOT NULL AS traces_exists,
+			sidecars.traces IS NULL OR EXISTS (
+				SELECT 1
+				FROM pg_constraint con
+				JOIN pg_class parent ON parent.oid = con.confrelid
+				JOIN pg_class child ON child.oid = con.conrelid
+				JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+				JOIN pg_attribute ref ON ref.attrelid = con.confrelid AND ref.attnum = con.confkey[1]
+				WHERE con.conrelid = sidecars.traces
+				  AND con.contype = 'f'
+				  AND con.confdeltype = 'c'
+				  AND array_length(con.conkey, 1) = 1
+				  AND parent.relname = 'usage_logs'
+				  AND parent.relnamespace = child.relnamespace
+				  AND att.attname = 'usage_log_id'
+				  AND ref.attname = 'id'
+			) AS traces_owned
 		FROM sidecars
 	`
 	var ownership plaintextSidecarOwnership
 	if err := scanSingleRow(ctx, q, query, nil,
 		&ownership.valueDetailsExists, &ownership.valueDetailsOwned,
 		&ownership.diagnosticsExists, &ownership.diagnosticsOwned,
+		&ownership.tracesExists, &ownership.tracesOwned,
 	); err != nil {
 		return plaintextSidecarOwnership{}, err
 	}
@@ -351,12 +375,15 @@ var errPlaintextOwnershipLockUnpinned = errors.New(
 
 // deployedSidecars 返回已部署（存在）的明文旁路表名。
 func (o plaintextSidecarOwnership) deployedSidecars() []string {
-	deployed := make([]string, 0, 2)
+	deployed := make([]string, 0, 3)
 	if o.valueDetailsExists {
 		deployed = append(deployed, "request_audit_value_details")
 	}
 	if o.diagnosticsExists {
 		deployed = append(deployed, "error_diagnostic_records")
+	}
+	if o.tracesExists {
+		deployed = append(deployed, "request_traces")
 	}
 	return deployed
 }
@@ -388,13 +415,7 @@ func ensureUsageCleanupPreservesPlaintextOwnership(
 		return nil
 	}
 	// 只锁已部署的表：未部署的能力没有可孤儿化的行，也不该让 LOCK 因缺表而报错。
-	sidecars := make([]string, 0, 2)
-	if ownership.valueDetailsExists {
-		sidecars = append(sidecars, "request_audit_value_details")
-	}
-	if ownership.diagnosticsExists {
-		sidecars = append(sidecars, "error_diagnostic_records")
-	}
+	sidecars := ownership.deployedSidecars()
 	if len(sidecars) == 0 {
 		return nil
 	}
@@ -429,7 +450,7 @@ func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Con
 		// 该分支没有 *sql.DB 可用，因而拿不到「自己开事务」的保证。只有调用方明确传进来的
 		// 事务（*sql.Tx）才可能把 ACCESS SHARE 锁留到 DELETE；其它执行器（连接池包装、
 		// 自动提交适配器）连「锁还在不在」都证明不了，一律失败关闭：只要旁路表已部署就
-		// 拒绝删除，两张表都未部署（该能力未部署/未迁移）时照常推进保留期。
+		// 拒绝删除，所有明文旁路表都未部署时照常推进保留期。
 		if _, callerTx := r.sql.(*sql.Tx); callerTx {
 			if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, r.sql, true); err != nil {
 				return err
@@ -875,6 +896,32 @@ func dropUsageLogsPartitionWithRollupInvalidation(ctx context.Context, db *sql.D
 	// （强于 ACCESS SHARE），并发的 DROP CONSTRAINT 无法在核对与 DROP 之间生效。
 	if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, tx, false); err != nil {
 		return rollback(fmt.Errorf("usage partition %s: %w", name, err))
+	}
+	// A Trace link UPDATE must not commit between the victim check and DROP.
+	// When that table is deployed, hold a conflicting lock and re-check its FK.
+	var traceDeployed bool
+	if err := tx.QueryRowContext(ctx, `SELECT to_regclass('request_traces') IS NOT NULL`).Scan(&traceDeployed); err != nil {
+		return rollback(err)
+	}
+	if traceDeployed {
+		if _, err := tx.ExecContext(ctx, `LOCK TABLE request_traces IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+			return rollback(err)
+		}
+		if err := ensureUsageCleanupPreservesPlaintextOwnership(ctx, tx, false); err != nil {
+			return rollback(fmt.Errorf("usage partition %s: %w", name, err))
+		}
+		var linkedTraces bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM request_traces t
+				JOIN usage_logs u ON u.id = t.usage_log_id
+				WHERE u.tableoid = $1::regclass
+		)`, name).Scan(&linkedTraces); err != nil {
+			return rollback(err)
+		}
+		if linkedTraces {
+			return rollback(fmt.Errorf("usage partition %s contains usage-owned request traces; refusing DROP", name))
+		}
 	}
 	var linkedValueDetails bool
 	if err := tx.QueryRowContext(ctx, `

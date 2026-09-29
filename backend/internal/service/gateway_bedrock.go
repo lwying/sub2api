@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -201,17 +200,12 @@ func (s *GatewayService) executeBedrockUpstream(
 			return nil, err
 		}
 
-		if httpattempt.ClaudeHeaderValueCaptureEnabled(upstreamReq.Context()) {
-			upstreamReq = upstreamReq.WithContext(WithRequestAuditValueWireProtocolOverride(upstreamReq.Context(), "bedrock"))
-		}
+		// 真实 wire 协议族：Bedrock 走 AWS 的 invoke 形态，不是 Anthropic Messages 的 wire。
+		// 这只改写逐次尝试的 wire 事实（Trace 消费），长期审计的协议家族仍是 messages。
+		upstreamReq = upstreamReq.WithContext(WithRequestAuditValueWireProtocolOverride(upstreamReq.Context(), "bedrock"))
 		upstreamReq = bindRequestAuditHTTPAttempt(
 			upstreamReq, c, account.ID, strings.TrimSpace(modelID), RequestAuditProtocolAnthropic,
 		)
-		// 真实发送接缝：Bedrock 分支在 Forward 里提前返回，早于通用绑定点，
-		// 因此这里按入站 /v1/messages 的 messages 协议逐次绑定（每次重试各绑一次）。
-		// 元数据与正文诊断照旧；429 头值这一层按上游形态出界（真实上游是 AWS），
-		// 否则 AWS 形态的头会被当成 Claude Messages 的限流事实采集。
-		upstreamReq = s.bindBedrockMessagesErrorDiagnosticObserver(upstreamReq, c)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
 		if err != nil {
 			if resp != nil && resp.Body != nil {

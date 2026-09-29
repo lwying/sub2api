@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -20,7 +22,81 @@ const (
 	// maxDecompressedBodySize limits the decompressed request body to 64 MB
 	// to prevent decompression bomb attacks.
 	maxDecompressedBodySize = 64 << 20
+	// InboundBodyObservationLimit bounds each view copied into the opt-in callback.
+	// Counts still describe the whole body read by the normal gateway reader.
+	InboundBodyObservationLimit = 1 << 20
 )
+
+// InboundBodyOutcome reports which of the existing gateway read steps completed.
+type InboundBodyOutcome string
+
+const (
+	InboundBodyComplete     InboundBodyOutcome = "complete"
+	InboundBodyReadFailed   InboundBodyOutcome = "read_failed"
+	InboundBodyDecodeFailed InboundBodyOutcome = "decode_failed"
+)
+
+// InboundBodyObservation contains bounded, isolated copies of bytes already read
+// by the normal gateway reader. These values have NOT been redacted. Callers must
+// redact or explicitly mark any stored raw fragment as unverified. No observer is
+// installed by default, and installing one never reads the request body.
+type InboundBodyObservation struct {
+	ContentEncoding string
+	Outcome         InboundBodyOutcome
+	RawBytes        int64
+	RawPrefix       []byte
+	DecodedBytes    int64
+	DecodedPrefix   []byte
+}
+
+type inboundBodyObserverContextKey struct{}
+
+type inboundBodyObserverState struct {
+	once     sync.Once
+	observer func(InboundBodyObservation)
+}
+
+// WithInboundBodyObserver opts into observing the first normal ingress body read.
+// Bind this only after successful authentication. The first invocation wins even
+// if the body is later replaced by another middleware before the handler runs.
+func WithInboundBodyObserver(ctx context.Context, observer func(InboundBodyObservation)) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if observer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, inboundBodyObserverContextKey{}, &inboundBodyObserverState{observer: observer})
+}
+
+func observeInboundBody(req *http.Request, encoding string, outcome InboundBodyOutcome, raw, decoded []byte, observedRaw int64) {
+	if req == nil {
+		return
+	}
+	state, _ := req.Context().Value(inboundBodyObserverContextKey{}).(*inboundBodyObserverState)
+	if state == nil || state.observer == nil {
+		return
+	}
+	state.once.Do(func() {
+		copyPrefix := func(body []byte) []byte {
+			if len(body) > InboundBodyObservationLimit {
+				body = body[:InboundBodyObservationLimit]
+			}
+			return append([]byte(nil), body...)
+		}
+		// The optional Trace observer is a diagnostic side effect. A broken
+		// observer must not turn an otherwise valid gateway body into a 500.
+		defer func() { _ = recover() }()
+		state.observer(InboundBodyObservation{
+			ContentEncoding: encoding,
+			Outcome:         outcome,
+			RawBytes:        observedRaw,
+			RawPrefix:       copyPrefix(raw),
+			DecodedBytes:    int64(len(decoded)),
+			DecodedPrefix:   copyPrefix(decoded),
+		})
+	})
+}
 
 // PrereadBody 回填已读取完成的请求体：作为 io.ReadCloser 可被再次顺序消费
 // （multipart 流式解析），同时暴露 Bytes() 让 ReadRequestBodyWithPrealloc
@@ -83,26 +159,58 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 		}
 	}
 
-	raw, err := readRequestBodyChunks(req.Body, capHint, req.ContentLength)
+	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
+	reader := io.Reader(req.Body)
+	var counted *inboundBodyCountingReader
+	if state, _ := req.Context().Value(inboundBodyObserverContextKey{}).(*inboundBodyObserverState); state != nil && state.observer != nil {
+		// The normal reader returns nil on error, but the opt-in observer still
+		// needs the bytes actually consumed before that error. Never expose an
+		// incomplete body to the gateway handler as a successful read.
+		counted = &inboundBodyCountingReader{Reader: reader}
+		reader = counted
+	}
+	raw, err := readRequestBodyChunks(reader, capHint, req.ContentLength)
 	if err != nil {
+		if counted != nil {
+			observeInboundBody(req, enc, InboundBodyReadFailed, counted.prefix, nil, counted.count)
+		}
 		return nil, err
 	}
-
-	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
 	if enc == "" || enc == "identity" {
+		observeInboundBody(req, enc, InboundBodyComplete, raw, raw, int64(len(raw)))
 		return raw, nil
 	}
 
 	decoded, err := decompressRequestBody(enc, raw)
 	if err != nil {
+		observeInboundBody(req, enc, InboundBodyDecodeFailed, raw, nil, int64(len(raw)))
 		return nil, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
 	}
+	observeInboundBody(req, enc, InboundBodyComplete, raw, decoded, int64(len(raw)))
 
 	req.Header.Del("Content-Encoding")
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(decoded))
 
 	return decoded, nil
+}
+
+type inboundBodyCountingReader struct {
+	io.Reader
+	count  int64
+	prefix []byte
+}
+
+func (r *inboundBodyCountingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.count += int64(n)
+	if remaining := InboundBodyObservationLimit - len(r.prefix); n > 0 && remaining > 0 {
+		if n < remaining {
+			remaining = n
+		}
+		r.prefix = append(r.prefix, p[:remaining]...)
+	}
+	return n, err
 }
 
 // Read bounded chunks as bytes arrive, then assemble the exact-size result.

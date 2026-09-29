@@ -1,37 +1,8 @@
 package httpattempt
 
-import (
-	"net/http"
-	"testing"
-
-	"github.com/stretchr/testify/require"
-)
-
-func TestOpenAIValueHeadersExcludeCredentialsAndUnknownNames(t *testing.T) {
-	request := http.Header{
-		"Content-Type":      {"application/json"},
-		"Accept":            {"text/event-stream"},
-		"Authorization":     {"Bearer private-canary"},
-		"Cookie":            {"session=private-canary"},
-		"X-Unknown-Private": {"private-canary"},
-	}
-	values, omission, supported := SanitizeProtocolRequestHeaderValues("openai.responses", request)
-	require.True(t, supported)
-	require.Equal(t, "application/json", values["Content-Type"])
-	require.NotContains(t, values, "Cookie")
-	require.NotContains(t, values, "Authorization")
-	require.NotContains(t, values, "X-Unknown-Private")
-	require.True(t, omission.Any())
-
-	response := http.Header{"Content-Type": {"application/json"}, "Retry-After": {"2"}, "Set-Cookie": {"secret"}}
-	result, _, supported := SanitizeProtocolResponseHeaderValues("openai.responses", response)
-	require.True(t, supported)
-	require.Equal(t, "2", result["Retry-After"])
-	require.NotContains(t, result, "Set-Cookie")
-}
-
-func TestValueHeadersRejectUnknownWireProtocol(t *testing.T) {
-	values, _, supported := SanitizeProtocolRequestHeaderValues("bedrock", http.Header{"Content-Type": {"application/json"}})
-	require.False(t, supported)
-	require.Empty(t, values)
-}
+// 本文件原有的按协议值净化测试已随被删的能力一路移除（票据 10）：分派入口
+// SanitizeProtocol*HeaderValues 与 Map 变体没有保留消费方，其「bedrock 不支持」的用例
+// 也不再指向任何现存能力。
+//
+// 真实 wire 协议族现在只作为事实存在（Metadata.ValueProtocol，由服务层在发送前写入，
+// Trace 消费），不参与任何取值净化，因此没有对应的净化用例。

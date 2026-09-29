@@ -58,6 +58,7 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"http_status": {}, "latency_ms": {}, "token_applied": {}, "retryable": {},
 	"event_id": {}, "requested_count": {}, "deleted_events": {}, "deleted_jobs": {},
 	"matched_count": {}, "snapshot_max_id": {}, "filter_hash": {}, "confirm": {},
+	"export_task_id": {}, "rows_exported": {}, "rows_skipped": {}, "bytes_exported": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -109,15 +110,18 @@ func truncateAuditExtraString(value string, limit int) string {
 
 // auditSensitiveReads 需要审计的敏感 GET 读取（method+FullPath → 动作名）。
 var auditSensitiveReads = map[string]string{
-	"GET /api/v1/admin/accounts/data":             "admin.accounts.export",
-	"GET /api/v1/admin/proxies/data":              "admin.proxies.export",
-	"GET /api/v1/admin/redeem-codes/export":       "admin.redeem_codes.export",
-	"GET /api/v1/admin/backups/:id/download-url":  "admin.backups.download",
-	"GET /api/v1/admin/settings/admin-api-key":    "admin.admin_api_key.read",
-	"GET /api/v1/admin/users/:id/api-keys":        "admin.users.api_keys.read",
-	"GET /api/v1/admin/groups/:id/api-keys":       "admin.groups.api_keys.read",
-	"GET /api/v1/admin/backups/s3-config":         "admin.backups.s3_config.read",
-	"GET /api/v1/admin/data-management/s3/config": "admin.data_management.s3_config.read",
+	"GET /api/v1/admin/accounts/data":                       "admin.accounts.export",
+	"GET /api/v1/admin/proxies/data":                        "admin.proxies.export",
+	"GET /api/v1/admin/redeem-codes/export":                 "admin.redeem_codes.export",
+	"GET /api/v1/admin/backups/:id/download-url":            "admin.backups.download",
+	"GET /api/v1/admin/settings/admin-api-key":              "admin.admin_api_key.read",
+	"GET /api/v1/admin/users/:id/api-keys":                  "admin.users.api_keys.read",
+	"GET /api/v1/admin/groups/:id/api-keys":                 "admin.groups.api_keys.read",
+	"GET /api/v1/admin/backups/s3-config":                   "admin.backups.s3_config.read",
+	"GET /api/v1/admin/data-management/s3/config":           "admin.data_management.s3_config.read",
+	"GET /api/v1/admin/request-traces/:trace_id":            "admin.request_traces.read",
+	"GET /api/v1/admin/request-traces/exports/:id":          "admin.request_trace_export.status",
+	"GET /api/v1/admin/request-traces/exports/:id/download": "admin.request_trace_export.download",
 }
 
 // auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
@@ -142,6 +146,7 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":     "admin.prompt_audit.events.batch_delete",
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":   "admin.prompt_audit.events.delete_preview",
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter": "admin.prompt_audit.events.filter_delete",
+	"POST /api/v1/admin/request-traces/exports":               "admin.request_trace_export.create",
 }
 
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
@@ -157,6 +162,14 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":       {},
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":     {},
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":   {},
+}
+
+// Trace export filters travel in the URL, but audit entries must not copy the
+// raw metadata query. Method, action, actor, status and bounded extras remain.
+var auditQueryOmittedRoutes = map[string]struct{}{
+	"POST /api/v1/admin/request-traces/exports":             {},
+	"GET /api/v1/admin/request-traces/exports/:id":          {},
+	"GET /api/v1/admin/request-traces/exports/:id/download": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。
@@ -285,8 +298,10 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 			}
 			extra["params"] = params
 		}
-		if q := service.RedactAuditQuery(c.Request.URL.RawQuery); q != "" {
-			extra["query"] = q
+		if _, omit := auditQueryOmittedRoutes[routeKey]; !omit {
+			if q := service.RedactAuditQuery(c.Request.URL.RawQuery); q != "" {
+				extra["query"] = q
+			}
 		}
 		if len(extra) > 0 {
 			entry.Extra = extra

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
@@ -120,13 +119,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	if !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteChatCompletions, false) {
 		return
 	}
-	valueCapture := h.gatewayService.RequestAuditValueCaptureEnabled(c.Request.Context())
-	if valueCapture {
-		c.Request = c.Request.WithContext(httpattempt.WithClaudeHeaderValueCapture(c.Request.Context(), true))
-	}
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	recordRequestTraceChannelModelMapping(c, reqModel, channelMapping)
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	if h.errorPassthroughService != nil {
@@ -334,8 +330,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			if notCapturedReason == "" {
 				requestAuditMetadata = snapshotClientResponseAudit(requestAuditMetadata, c)
 			}
-			valueDetail := requestAuditValueInputFromTransport(c, valueCapture && notCapturedReason == "", inboundEndpoint,
-				service.RequestAuditProtocolOpenAIChat, reqModel, pricingAt, requestAuditMetadata)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:                  res,
@@ -357,7 +351,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					RequestAuditAttempts:    requestAuditAttemptsForRecord,
 					RequestAuditFingerprint: requestAuditFingerprint,
 					RequestAuditMetadata:    requestAuditMetadata,
-					RequestAuditValueDetail: valueDetail,
 					NotCapturedReason:       notCapturedReason,
 					AuditLogicalKey:         auditLogicalKey,
 				}); err != nil {
@@ -438,6 +431,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
+					recordRequestTraceAccountSwitch(c, account.ID)
 					reqLog.Warn("openai_chat_completions.upstream_failover_switching",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),

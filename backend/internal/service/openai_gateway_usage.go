@@ -18,6 +18,12 @@ import (
 	"go.uber.org/zap"
 )
 
+func (s *OpenAIGatewayService) SetRequestTraceUsageLinker(linker RequestTraceUsageLinker) {
+	if s != nil {
+		s.requestTraceUsageLinker = linker
+	}
+}
+
 // OpenAIRecordUsageInput input for recording usage
 type OpenAIRecordUsageInput struct {
 	Result             *OpenAIForwardResult
@@ -47,7 +53,6 @@ type OpenAIRecordUsageInput struct {
 	RequestAuditAttempts    []RequestAuditAttempt
 	RequestAuditFingerprint *RequestAuditFingerprintInput
 	RequestAuditMetadata    RequestAuditMetadata
-	RequestAuditValueDetail RequestAuditValueDetailInput
 	NotCapturedReason       string
 	// RequestAuditPartialReason 标记本次审计只有局部事实（如 cyber 拒绝路径的传输尝试），
 	// 按 incomplete 落库且永不 complete；空值表示沿用既有完整性判定。
@@ -522,7 +527,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		writeUsageLogBestEffortWithTraceLink(ctx, s.usageLogRepo, usageLog, "service.openai_gateway", s.requestTraceUsageLinker)
 		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
 			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromOpenAIResult(result),
 			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
@@ -532,8 +537,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			Fingerprint:      input.RequestAuditFingerprint,
 			Metadata:         input.RequestAuditMetadata,
 		})
-		s.captureRequestAuditValueDetail(ctx, usageLog, input)
-		attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -562,7 +565,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	if billingErr != nil {
 		usageLog.ActualCost = 0
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		writeUsageLogBestEffortWithTraceLink(ctx, s.usageLogRepo, usageLog, "service.openai_gateway", s.requestTraceUsageLinker)
 		finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
 			Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromOpenAIResult(result),
 			Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
@@ -572,11 +575,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			Fingerprint:      input.RequestAuditFingerprint,
 			Metadata:         input.RequestAuditMetadata,
 		})
-		s.captureRequestAuditValueDetail(ctx, usageLog, input)
-		attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 		return billingErr
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	writeUsageLogBestEffortWithTraceLink(ctx, s.usageLogRepo, usageLog, "service.openai_gateway", s.requestTraceUsageLinker)
 	finalizeRequestAuditBestEffort(ctx, s.requestAuditRepo, s.usageLogRepo, usageLog, input.AuditLogicalKey, RequestAuditInput{
 		Headers: input.RequestAuditHeaders, SSEEvents: requestAuditSSEEventsFromOpenAIResult(result),
 		Attempts: input.RequestAuditAttempts, NotCapturedReason: input.NotCapturedReason,
@@ -586,17 +587,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		Fingerprint:      input.RequestAuditFingerprint,
 		Metadata:         input.RequestAuditMetadata,
 	})
-	s.captureRequestAuditValueDetail(ctx, usageLog, input)
-	attachErrorDiagnosticsAfterUsageBestEffort(ctx, s.errorDiagnosticUsageAttacher, usageLog.ID, input.RequestAuditFingerprint)
 
 	return nil
-}
-
-func (s *OpenAIGatewayService) captureRequestAuditValueDetail(ctx context.Context, usageLog *UsageLog, input *OpenAIRecordUsageInput) {
-	if input == nil || input.NotCapturedReason != "" || input.RequestAuditValueDetail.Route == "" || s == nil || s.requestAuditValueDetailCapture == nil {
-		return
-	}
-	s.requestAuditValueDetailCapture.Capture(ctx, usageLog, input.RequestAuditValueDetail)
 }
 
 // hasIdentifiedOpenAIResponsePricing 判断上游自报的响应模型是否可以作为计费基准，

@@ -446,26 +446,22 @@ func (t *grokAccessDeniedFallbackTransport) roundTripAttempt(req *http.Request) 
 	if err := httpattempt.BeforeRequest(req); err != nil {
 		return nil, nil, err
 	}
+	traceSink := httpattempt.StartTraceAttempt(req)
 	attempt := httpattempt.StartRequestAttempt(req)
-	// Error diagnostics are explicitly opted in per request, bounded, and dropped as
-	// soon as this attempt ends. Nothing here runs before the send.
-	capture := httpattempt.NewDiagnosticBodyCapture(req)
-	defer capture.Release()
 	request := req
-	if (attempt != nil || capture != nil) && req.Body != nil && req.Body != http.NoBody {
+	if (attempt != nil || traceSink != nil) && req.Body != nil && req.Body != http.NoBody {
 		request = req.Clone(req.Context())
 		request.Body = &httpattempt.CountingReadCloser{
-			ReadCloser: req.Body,
+			ReadCloser: httpattempt.TraceRequestBody(req.Body, traceSink),
 			OnRead:     attempt.AddRequestBytes,
-			Capture:    capture,
 		}
 	}
 	roundTripStartedAt := time.Now()
 	resp, err := t.base.RoundTrip(request)
+	httpattempt.NotifyTraceRoundTrip(traceSink, resp, err)
 	if attempt != nil {
-		// 尝试级耗时只记录在内存中的尝试元数据上（默认关闭的值明细旁路才会消费它，
-		// 并且只在加密载荷里落库）。连接失败也照样记录：耗时是测量的结果，
-		// 不是成功／失败的判据。
+		// 尝试级耗时只记录在内存中的尝试元数据上（长期请求审计不消费它）。
+		// 连接失败也照样记录：耗时是测量的结果，不是成功／失败的判据。
 		attempt.SetLatencyMillis(time.Since(roundTripStartedAt).Milliseconds())
 	}
 	if resp != nil {
@@ -473,9 +469,7 @@ func (t *grokAccessDeniedFallbackTransport) roundTripAttempt(req *http.Request) 
 			attempt.SetResponse(resp.StatusCode, resp.Header, resp.Body != nil && resp.Body != http.NoBody)
 		}
 		wrapHTTPAttemptResponse(attempt, resp)
-		// Observed after the real RoundTrip answered, so a connection failure or a
-		// pre-send block can never be reported as an upstream HTTP failure.
-		httpattempt.ObserveUpstreamError(req, attempt, resp, capture)
+		resp.Body = httpattempt.TraceResponseBody(resp.Body, traceSink)
 	}
 	return resp, attempt, err
 }
