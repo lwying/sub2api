@@ -19,7 +19,7 @@ func TestRequestTraceOperatorSettingsRoutesRequireAdmin(t *testing.T) {
 	router := gin.New()
 	settings := service.NewSettingService(errorDiagnosticSettingsRouteStubRepo{}, &config.Config{})
 	handlers := &handler.Handlers{Admin: &handler.AdminHandlers{
-		Setting: adminhandler.NewSettingHandler(settings, nil, nil, nil, nil, nil, nil),
+		Setting:      adminhandler.NewSettingHandler(settings, nil, nil, nil, nil, nil, nil),
 		RequestTrace: adminhandler.NewRequestTraceHandler(nil),
 	}}
 	adminAuth := servermiddleware.AdminAuthMiddleware(func(c *gin.Context) {

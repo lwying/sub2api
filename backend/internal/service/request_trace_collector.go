@@ -190,12 +190,12 @@ func (c *RequestTraceCollector) appendSSELocked(slot *requestTraceBodySlot, chun
 			// An oversized frame must be consumed through its next separator,
 			// including separators split across Read boundaries. Only subsequent
 			// complete events are eligible for retention.
-			boundary := bytes.Index(chunk, []byte("\n\n"))
 			consumed := 0
 			if slot.sseLastNewline && chunk[0] == '\n' {
-				boundary = -2
+				// The separator opened at the end of the previous chunk; this
+				// leading newline closes it, so this chunk needs no scan.
 				consumed = 1
-			} else if boundary >= 0 {
+			} else if boundary := bytes.Index(chunk, []byte("\n\n")); boundary >= 0 {
 				consumed = boundary + 2
 			}
 			if consumed > 0 {

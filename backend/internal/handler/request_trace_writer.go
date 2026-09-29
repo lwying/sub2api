@@ -45,7 +45,7 @@ func (w *requestTraceWriter) WriteString(s string) (int, error) {
 
 func (w *requestTraceWriter) notify(b []byte) {
 	defer func() { _ = recover() }()
-	w.observer(b, w.ResponseWriter.Status())
+	w.observer(b, w.Status())
 }
 
 func (w *requestTraceWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {

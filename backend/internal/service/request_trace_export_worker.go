@@ -386,7 +386,7 @@ func (w *RequestTraceExportWorker) runLoop(ctx context.Context) {
 	defer close(w.done)
 	for {
 		result, err := w.Tick(ctx)
-		next := w.opts.Interval
+		var next time.Duration
 		if err == nil {
 			next = w.nextInterval(result)
 		} else {

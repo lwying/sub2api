@@ -160,8 +160,14 @@ func ValidRequestTraceStageFacts(stage string, facts *RequestTraceStageFacts) bo
 		}
 	}
 	for _, headers := range []http.Header{facts.RequestHeaders, facts.ResponseHeaders} {
+		if len(headers) == 0 {
+			continue
+		}
+		// A fact set must already be the redacted projection of itself: a header
+		// that redaction would rewrite or drop means a raw credential survived
+		// into the projection.
 		clean := RedactRequestTraceHeaders(headers)
-		if clean.Omitted != 0 || !reflect.DeepEqual(clean.Values, headers) && !(len(clean.Values) == 0 && len(headers) == 0) {
+		if clean.Omitted != 0 || !reflect.DeepEqual(clean.Values, headers) {
 			return false
 		}
 	}

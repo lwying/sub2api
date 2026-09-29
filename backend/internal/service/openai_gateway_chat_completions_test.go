@@ -1214,10 +1214,14 @@ func TestOpenAINativeHTTPAttemptCount(t *testing.T) {
 				if tc.localBlock {
 					require.Empty(t, metadata)
 				} else {
+					// ValueProtocol 现在总是显式记录本次尝试真实发出的 wire
+					// 协议族（不再只在有 override 时才写），因此这个 OpenAI
+					// Responses 原生路径的值与 Protocol 相同，而不是留空。
 					require.Equal(t, []httpattempt.Metadata{{
-						AccountID: 1,
-						Model:     "gpt-5.4",
-						Protocol:  RequestAuditProtocolOpenAIResp,
+						AccountID:     1,
+						Model:         "gpt-5.4",
+						Protocol:      RequestAuditProtocolOpenAIResp,
+						ValueProtocol: RequestAuditProtocolOpenAIResp,
 					}}, metadata)
 				}
 				if tc.localBlock {

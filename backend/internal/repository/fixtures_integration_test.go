@@ -4,6 +4,8 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,12 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fixtureUserSeq 让本文件生成的合成邮箱在时钟粒度不足时仍保持唯一。
+var fixtureUserSeq atomic.Uint64
+
 func mustCreateUser(t *testing.T, client *dbent.Client, u *service.User) *service.User {
 	t.Helper()
 	ctx := context.Background()
 
 	if u.Email == "" {
-		u.Email = "user-" + time.Now().Format(time.RFC3339Nano) + "@example.com"
+		// 时间戳单独不足以保证唯一：本机（Windows）时钟粒度约 16ms，连续两次
+		// time.Now() 会得到同一个 RFC3339Nano 字符串，于是两个用户撞上
+		// users_email_unique_active。加进程内序号保证唯一。
+		u.Email = fmt.Sprintf("user-%d-%d@example.com", time.Now().UnixNano(), fixtureUserSeq.Add(1))
 	}
 	if u.PasswordHash == "" {
 		u.PasswordHash = "test-password-hash"

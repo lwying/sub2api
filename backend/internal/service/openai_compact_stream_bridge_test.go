@@ -311,7 +311,7 @@ func TestHandlePassthroughSSEToJSONConvertedBodyHasJSONContentType(t *testing.T)
 	c, rec := newCompactBridgeTestContext(t, false)
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
-		Header: http.Header{"Content-Type": {"text/event-stream"}},
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
 			`data: {"type":"response.completed","response":{"id":"synthetic","object":"response","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 			``,
