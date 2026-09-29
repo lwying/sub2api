@@ -665,6 +665,7 @@ export interface SystemSettings {
   risk_control_enabled: boolean;
 
   // Cyber session block
+  cyber_policy_user_allowlist: string;
   cyber_session_block_enabled: boolean;
   cyber_session_block_ttl_seconds: number;
 
@@ -991,6 +992,7 @@ export interface UpdateSettingsRequest {
   risk_control_enabled?: boolean;
 
   // Cyber session block
+  cyber_policy_user_allowlist?: string;
   cyber_session_block_enabled?: boolean;
   cyber_session_block_ttl_seconds?: number;
 

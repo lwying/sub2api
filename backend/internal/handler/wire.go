@@ -55,11 +55,13 @@ func ProvideAdminHandlers(
 	opencodeGoUsage *service.OpenCodeGoUsageService,
 	visibleAccountService *service.VisibleAccountService,
 	settingService *service.SettingService,
+	claudeResetCredits *service.ClaudeResetCreditService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
 	accountHandler.SetCodexTicketSettings(settingService)
+	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	// 普通用户只读账号视图的管理员分配入口（逐用户、默认关闭）。
 	userHandler.SetVisibleAccountService(visibleAccountService)
 	return &AdminHandlers{
@@ -152,6 +154,7 @@ func ProvideOpenAIGatewayHandler(
 	coordinator *securityaudit.Coordinator,
 	requestAuditRepo service.RequestAuditRepository,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
+	compositeResolver *service.CompositeRouteResolver,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
 	gatewayService.SetRequestAuditRepository(requestAuditRepo)
@@ -159,6 +162,7 @@ func ProvideOpenAIGatewayHandler(
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.claude429Cooldown = service.NewClaude429CooldownGate(gatewayService.Claude429CooldownSettings(), gatewayService.Claude429CooldownStore())
+	h.compositeResolver = compositeResolver
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
 	return h
