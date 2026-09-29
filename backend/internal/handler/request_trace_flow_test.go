@@ -72,14 +72,14 @@ func TestRequestTraceIdentityVerdictPersistsOutcomeWithoutIdentityValue(t *testi
 	flow := newRequestTraceFlow()
 	const identityCanary = "user_synthetic_identity_CANARY"
 	flow.identityVerdict(service.RequestTraceIdentityVerdictEvent{
-		Verdict: service.RequestTraceIdentityVerdictRewritten,
-		Source:  service.RequestTraceDecisionSourceIdentity,
+		Verdict:      service.RequestTraceIdentityVerdictRewritten,
+		Source:       service.RequestTraceDecisionSourceIdentity,
 		AttemptIndex: 1, Reason: "identity_rewritten",
 		InboundSeen: true, WireSeen: true, Changed: true,
 	})
 	flow.identityVerdict(service.RequestTraceIdentityVerdictEvent{
-		Verdict: service.RequestTraceIdentityVerdictNotSent,
-		Source:  service.RequestTraceDecisionSourceProtocolConvert,
+		Verdict:      service.RequestTraceIdentityVerdictNotSent,
+		Source:       service.RequestTraceDecisionSourceProtocolConvert,
 		AttemptIndex: 1, Reason: "identity_not_sent",
 		InboundSeen: true, WireSeen: false, Changed: false,
 	})
@@ -267,6 +267,35 @@ func TestRequestTraceUpstreamStreamBreakAfterHeadersIsNotComplete(t *testing.T) 
 	require.Contains(t, string(upstream.Payload), "first")
 }
 
+func TestRequestTraceAttemptEndedAtWaitsForResponseBodyEOF(t *testing.T) {
+	flow := newRequestTraceFlow()
+	sink := flow.traceObserver().OnAttempt(httpattempt.TraceAttemptStart{
+		Ordinal: 1, Method: http.MethodPost, Protocol: "anthropic.messages",
+	})
+	sink.RoundTripResult(http.StatusOK, http.Header{"Content-Type": {"application/json"}}, nil)
+	var headersAt time.Time
+	flow.mu.Lock()
+	require.Len(t, flow.attempts, 1)
+	if flow.attempts[0].facts.EndedAt != nil {
+		headersAt = *flow.attempts[0].facts.EndedAt
+	}
+	flow.mu.Unlock()
+	require.True(t, headersAt.IsZero(), "response headers are TTFB, not the end of a streaming attempt")
+
+	sink.ResponseBodyChunk([]byte(`{"response":"synthetic"}`), nil)
+	sink.ResponseBodyChunk(nil, io.EOF)
+	stages := flow.finish(strings.Repeat("a", 32), true)
+	for _, stage := range stages {
+		if stage.Stage == "wire_attempt" {
+			require.NotNil(t, stage.Metadata)
+			require.NotNil(t, stage.Metadata.EndedAt, "EOF must mark the actual response-read end")
+			require.False(t, stage.Metadata.EndedAt.Before(*stage.Metadata.StartedAt))
+			return
+		}
+	}
+	t.Fatal("wire_attempt stage not found")
+}
+
 func TestRequestTraceEncodedUpstreamResponseReportsUnverifiedTransmittedBytes(t *testing.T) {
 	flow := newRequestTraceFlow()
 	sink := flow.traceObserver().OnAttempt(httpattempt.TraceAttemptStart{Ordinal: 1, Method: http.MethodPost, Protocol: "anthropic.messages"})
@@ -451,6 +480,51 @@ func TestRequestTraceManyAttemptsKeepFinalClientResponseAndExplicitGap(t *testin
 			require.Positive(t, stage.DroppedEvents, "the gap must count omitted stages")
 		}
 	}
+}
+
+func TestRequestTraceStageBudgetGapCountsOnlyActuallyOmittedStages(t *testing.T) {
+	flow := newRequestTraceFlow()
+	for i := 1; i <= 70; i++ {
+		// Each real attempt contributes a wire_attempt and a wire_request body
+		// stage, so the 128-stage limit is exceeded without synthetic stage IDs.
+		sink := flow.traceObserver().OnAttempt(httpattempt.TraceAttemptStart{
+			Ordinal: i, Method: http.MethodPost, Protocol: "anthropic.messages",
+		})
+		require.NotNil(t, sink)
+	}
+	for i := 0; i < service.RequestTraceStageCountLimit/2+1; i++ {
+		flow.recordDecision(0, "route_selected", service.RequestTraceDecisionFacts{
+			Decision: service.RequestTraceDecisionRoute, Outcome: service.RequestTraceDecisionSelected,
+			Source: service.RequestTraceDecisionSourceInbound,
+		})
+	}
+	flow.downstreamChunk([]byte(`{"final":"FINAL_RESPONSE_CANARY"}`), 0)
+	flow.markHijacked()
+	const originalCount = 1 + 64 + 70 + 1 + 1 + 1 // metadata, decisions, attempts, downstream, decision gap, hijack gap
+	stages := flow.finish(strings.Repeat("a", 32), true)
+	require.Len(t, stages, service.RequestTraceStageCountLimit)
+	var final, hijack, decisions, budget int
+	for _, stage := range stages {
+		switch stage.Reason {
+		case "hijacked_unobservable":
+			hijack++
+		case "decision_budget_exceeded":
+			decisions++
+		case "stage_budget_exceeded":
+			budget++
+			// The gap itself is new, while the final response, hijack gap and
+			// decision gap are moved (not dropped) from the original stage set.
+			require.Equal(t, originalCount-(service.RequestTraceStageCountLimit-1), stage.DroppedEvents,
+				"only original stages missing from the retained set count as dropped")
+		}
+		if stage.Stage == "client_response" && strings.Contains(string(stage.Payload), "FINAL_RESPONSE_CANARY") {
+			final++
+		}
+	}
+	require.Equal(t, 1, final, "preserve one actual downstream response, never duplicate it")
+	require.Equal(t, 1, hijack)
+	require.Equal(t, 1, decisions)
+	require.Equal(t, 1, budget)
 }
 
 func TestRequestTraceClientDisconnectMidStreamIsNotClaimedComplete(t *testing.T) {

@@ -366,6 +366,16 @@ func (w *RequestTraceExportWorker) record(result RequestTraceExportWorkerTickRes
 	}
 }
 
+// Started reports whether the background loop was launched. It is a state, not
+// a counter: a worker that was never started and a worker that is idle between
+// ticks have identical counters, and an operator needs to tell them apart.
+func (w *RequestTraceExportWorker) Started() bool {
+	if w == nil {
+		return false
+	}
+	return w.started.Load()
+}
+
 func (w *RequestTraceExportWorker) Stats() RequestTraceExportWorkerStats {
 	if w == nil {
 		return RequestTraceExportWorkerStats{}

@@ -4,6 +4,7 @@ import {
   normalizeRequestTracePage,
   normalizeRequestTraceDetail,
   normalizeRequestTraceExportTask,
+  normalizeRequestTraceOpsStatus,
   requestTraceExportIDPattern,
   type RequestTraceOperatorStatus,
   type RequestTraceOperatorUpdateInput,
@@ -12,6 +13,7 @@ import {
   type RequestTraceDetail,
   type RequestTraceExportFilter,
   type RequestTraceExportTask,
+  type RequestTraceOpsStatus,
 } from './types'
 
 const path = '/admin/settings/request-trace'
@@ -35,6 +37,17 @@ export async function getOperatorSettings(): Promise<RequestTraceOperatorStatus>
   return normalizeRequestTraceOperatorStatus(data)
 }
 
+/**
+ * Reads the value-free operational status. The route is a static sibling of
+ * `/request-traces/:trace_id`, so it takes no trace id, no filter and no query
+ * string at all; the answer is counts and closed sets, and it never says
+ * whether the capture gate is enabled.
+ */
+export async function getTraceOpsStatus(options?: { signal?: AbortSignal }): Promise<RequestTraceOpsStatus> {
+  const { data } = await apiClient.get<unknown>(`${tracePath}/status`, { headers, signal: options?.signal })
+  return normalizeRequestTraceOpsStatus(data)
+}
+
 export async function updateOperatorSettings(input: RequestTraceOperatorUpdateInput): Promise<RequestTraceOperatorStatus> {
   const { data } = await apiClient.put<unknown>(path, {
     enabled: input.enabled,
@@ -50,8 +63,11 @@ export async function updateOperatorSettings(input: RequestTraceOperatorUpdateIn
  * full-text search cannot be expressed here. Only the originating admin session
  * may later read or download the task; the server enforces that.
  */
-export async function createTraceExport(filter: RequestTraceExportFilter): Promise<RequestTraceExportTask> {
-  const { data } = await apiClient.post<unknown>(exportPath, null, { params: filter, headers })
+export async function createTraceExport(
+  filter: RequestTraceExportFilter,
+  options?: { signal?: AbortSignal },
+): Promise<RequestTraceExportTask> {
+  const { data } = await apiClient.post<unknown>(exportPath, null, { params: filter, headers, signal: options?.signal })
   return normalizeRequestTraceExportTask(data)
 }
 

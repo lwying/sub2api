@@ -36,6 +36,14 @@
             </select>
           </label>
           <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+            <span>{{ t('admin.requestTrace.list.usageLogId') }}</span>
+            <input v-model.trim="filters.usage_log_id" data-testid="request-trace-usage-filter" class="input w-full font-mono" inputmode="numeric" autocomplete="off" />
+          </label>
+          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+            <span>{{ t('admin.requestTrace.list.accountId') }}</span>
+            <input v-model.trim="filters.account_id" data-testid="request-trace-account-filter" class="input w-full font-mono" inputmode="numeric" autocomplete="off" />
+          </label>
+          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
             <span>{{ t('admin.requestTrace.list.from') }}</span>
             <input v-model="filters.created_from" class="input w-full" type="datetime-local" />
           </label>
@@ -71,7 +79,7 @@
                 <td class="px-3 py-3 font-mono text-xs">{{ row.trace_id }}</td>
                 <td class="px-3 py-3 text-xs">{{ row.inbound_endpoint }}</td>
                 <td class="px-3 py-3 font-mono">{{ row.client_status || '—' }}</td>
-                <td class="px-3 py-3 text-xs">{{ row.capture_state }}</td>
+                <td class="px-3 py-3 text-xs" data-testid="request-trace-capture-state">{{ captureStateLabel(t, row.capture_state) }}</td>
                 <td class="max-w-xs px-3 py-3 text-xs" data-testid="request-trace-cleanup-rule">
                   {{ row.usage_log_id ? t('admin.requestTrace.list.followsUsage') : row.cleanup_after ? t('admin.requestTrace.list.plannedCleanup', { date: formatDate(row.cleanup_after) }) : '—' }}
                 </td>
@@ -84,6 +92,7 @@
         <Pagination :total="total" :page="page" :page-size="pageSize" @update:page="load" @update:page-size="changePageSize" />
       </template>
       <RequestTraceDetailDrawer :show="detailOpen" :trace-id="selectedID" @update:show="onDetailVisibility" />
+      <RequestTraceOpsStatusPanel />
       <RequestTraceExportPanel />
     </div>
   </AppLayout>
@@ -92,14 +101,18 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import RequestTraceDetailDrawer from './RequestTraceDetailDrawer.vue'
 import RequestTraceExportPanel from './RequestTraceExportPanel.vue'
+import RequestTraceOpsStatusPanel from './RequestTraceOpsStatusPanel.vue'
 import { listTraces } from './api'
+import { captureStateLabel } from './labels'
 import type { RequestTraceListParams, RequestTraceSummary } from './types'
 
 const { t } = useI18n()
+const route = useRoute()
 const rows = ref<RequestTraceSummary[]>([])
 const page = ref(1)
 const pageSize = ref(20)
@@ -109,10 +122,47 @@ const filterError = ref(false)
 const loading = ref(false)
 const detailOpen = ref(false)
 const selectedID = ref<string | null>(null)
-const filters = reactive({ trace_id: '', route_family: '', client_status: '', usage_linked: '', created_from: '', created_to: '' })
+const filters = reactive({ trace_id: '', route_family: '', client_status: '', usage_linked: '', account_id: '', usage_log_id: '', created_from: '', created_to: '' })
 let activeFilters: Partial<RequestTraceListParams> = {}
 let revision = 0
 let controller: AbortController | null = null
+
+/** A lookup id is only a filter when it is a positive integer; anything else is not a filter. */
+function parseLookupID(raw: string): number | null {
+  if (!/^[0-9]+$/.test(raw)) return null
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+function routeQueryString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * A usage row can jump here with `?usage_log_id=<id>`. Applying that lookup on
+ * load keeps the navigation meaningful: without it the page would load every
+ * Trace and the operator would think the row had been located. Only a positive
+ * integer is accepted, so a hand-edited URL cannot turn the filter into "all".
+ */
+function routePrefillFilters(): Partial<RequestTraceListParams> {
+  const next: Partial<RequestTraceListParams> = {}
+  const traceID = routeQueryString(route.query.trace_id)
+  if (/^[0-9a-f]{32}$/.test(traceID)) {
+    filters.trace_id = traceID
+    next.trace_id = traceID
+  }
+  const usageLogID = parseLookupID(routeQueryString(route.query.usage_log_id))
+  if (usageLogID !== null) {
+    filters.usage_log_id = String(usageLogID)
+    next.usage_log_id = usageLogID
+  }
+  const accountID = parseLookupID(routeQueryString(route.query.account_id))
+  if (accountID !== null) {
+    filters.account_id = String(accountID)
+    next.account_id = accountID
+  }
+  return next
+}
 
 function formatDate(value: string): string {
   const date = new Date(value)
@@ -143,6 +193,12 @@ function search() {
     next.client_status = status
   }
   if (filters.usage_linked !== '') next.usage_linked = filters.usage_linked === 'true'
+  for (const [raw, key] of [[filters.usage_log_id, 'usage_log_id'], [filters.account_id, 'account_id']] as const) {
+    if (raw === '') continue
+    const id = parseLookupID(raw)
+    if (id === null) { filterError.value = true; return }
+    next[key] = id
+  }
   if (filters.created_from) {
     const from = new Date(filters.created_from)
     if (Number.isNaN(from.getTime())) { filterError.value = true; return }
@@ -188,7 +244,10 @@ async function load(nextPage: number) {
   }
 }
 
-onMounted(() => { void load(1) })
+onMounted(() => {
+  activeFilters = routePrefillFilters()
+  void load(1)
+})
 onBeforeUnmount(() => {
   revision += 1
   controller?.abort()

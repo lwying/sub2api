@@ -158,7 +158,68 @@ func (s *SettingService) readRequestTraceAcknowledgement(ctx context.Context) (*
 	return &ack, nil
 }
 
+// requestTraceGateCacheTTL 是采集门控结论的进程内缓存时长，只影响其它实例写入设置
+// 后的传播延迟；本实例的开启／关闭写入会立即失效缓存。取小值以便运维改动快速生效。
+const requestTraceGateCacheTTL = 5 * time.Second
+
+// requestTraceGateDBTimeout 独立于请求上下文：客户端断连不得把门控读数变成"关闭"。
+const requestTraceGateDBTimeout = 5 * time.Second
+
+type cachedRequestTraceGate struct {
+	gate      RequestTraceGate
+	expiresAt time.Time
+	version   uint64
+}
+
+// RequestTraceGate 报告本请求是否允许采集 Trace。它在每条推理请求的准入路径上被调用，
+// 因此结论带进程内缓存与 singleflight：关闭状态（默认）也不会每请求回读设置表。
+// 读取失败按"关闭"处理并且只缓存一个短结论，绝不 fail-open。
 func (s *SettingService) RequestTraceGate(ctx context.Context) RequestTraceGate {
+	if s == nil || s.settingRepo == nil {
+		return RequestTraceGate{}
+	}
+	current := s.requestTraceGateVersion.Load()
+	if cached, ok := s.requestTraceGateCache.Load().(*cachedRequestTraceGate); ok && cached != nil &&
+		cached.version == current && time.Now().Before(cached.expiresAt) {
+		return cached.gate
+	}
+	value, _, _ := s.requestTraceGateSF.Do("request_trace_gate", func() (any, error) {
+		version := s.requestTraceGateVersion.Load()
+		if cached, ok := s.requestTraceGateCache.Load().(*cachedRequestTraceGate); ok && cached != nil &&
+			cached.version == version && time.Now().Before(cached.expiresAt) {
+			return *cached, nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		// 每次求值都带上自己的超时，不让断连取消影响其它排队请求。
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestTraceGateDBTimeout)
+		defer cancel()
+		gate := s.requestTraceGateUncached(dbCtx)
+		if version != s.requestTraceGateVersion.Load() {
+			// 写入设置在查询期间完成了：旧读数绝不能覆盖开关，也不能把
+			// "允许采集"返回给刚刚紧急关闭后的等待者。
+			return cachedRequestTraceGate{}, nil
+		}
+		cached := cachedRequestTraceGate{gate: gate, expiresAt: time.Now().Add(requestTraceGateCacheTTL), version: version}
+		s.requestTraceGateCache.Store(&cached)
+		return cached, nil
+	})
+	if cached, ok := value.(cachedRequestTraceGate); ok && cached.version == s.requestTraceGateVersion.Load() &&
+		time.Now().Before(cached.expiresAt) {
+		return cached.gate
+	}
+	return RequestTraceGate{}
+}
+
+// invalidateRequestTraceGate 让下一次门控重新求值。写入设置后立即调用。
+func (s *SettingService) invalidateRequestTraceGate() {
+	if s != nil {
+		s.requestTraceGateVersion.Add(1)
+	}
+}
+
+func (s *SettingService) requestTraceGateUncached(ctx context.Context) RequestTraceGate {
 	stored, err := s.readRequestTraceSettings(ctx)
 	if err != nil || !stored.Enabled || !stored.RiskAcknowledged {
 		return RequestTraceGate{}
@@ -242,6 +303,8 @@ func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context,
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return RequestTraceOperatorStatus{}, fmt.Errorf("save request trace settings: %w", err)
 	}
+	// 开启与紧急关闭都必须立即生效，不能等缓存 TTL。
+	s.invalidateRequestTraceGate()
 	slog.Info("request_trace.operator_settings_updated", "audit", true, "enabled", stored.Enabled,
 		"risk_version", RequestTraceRiskAcknowledgementVersion, "admin_user_id", input.AdminUserID)
 	if !stored.Enabled {

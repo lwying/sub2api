@@ -248,4 +248,21 @@ describe('admin Request Trace batch export panel', () => {
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5)
     expect(mocks.getTraceExport).toHaveBeenCalledTimes(calls)
   })
+
+  it('registers no interval when the panel unmounts while the create POST is in flight', async () => {
+    let resolveCreate!: (value: unknown) => void
+    mocks.createTraceExport.mockImplementationOnce(() => new Promise(resolve => { resolveCreate = resolve }))
+    const wrapper = mountPanel()
+    await wrapper.get('[data-testid="request-trace-export-create"]').trigger('click')
+
+    // The POST is still in flight when the panel goes away; the create call itself
+    // must not leave a 3s poller alive for the life of the tab.
+    wrapper.unmount()
+    resolveCreate(task())
+    await flushPromises()
+
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5)
+    expect(mocks.getTraceExport).not.toHaveBeenCalled()
+  })
 })

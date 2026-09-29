@@ -80,14 +80,24 @@ type RequestTraceDetail struct {
 }
 
 type RequestTraceListFilter struct {
-	TraceID      string
-	RouteFamily  RequestTraceRouteFamily
-	ClientStatus int
+	TraceID     string
+	RouteFamily RequestTraceRouteFamily
+	// ClientStatus 是指针：nil 表示"不过滤"，0 是合法值（列默认 0）。
+	ClientStatus *int
 	CreatedFrom  time.Time
 	CreatedTo    time.Time
 	Page         int
 	PageSize     int
 	UsageLinked  *bool
+	// UsageLogID / AccountID 也是可选检索：nil 表示"不过滤"，只有 >0 的 ID 才是
+	// 有效条件，0 或负数会被拒绝而不是退化成"返回全部"。
+	//
+	// UsageLogID 直接匹配 Trace 信封上的关联使用记录，供从使用记录跳转而来时定位。
+	// AccountID 只匹配 wire_attempt 阶段的类型化事实（stage facts 里的 account_id），
+	// 不是对任意元数据 JSONB 的全文匹配：一次 Trace 只要有一条真实上游尝试使用了该
+	// 账号即命中，列表响应本身仍只返回元数据信封，不回传阶段 JSONB。
+	UsageLogID *int64
+	AccountID  *int64
 }
 
 // RequestTraceRepository stores the independent envelope and on-demand per-stage

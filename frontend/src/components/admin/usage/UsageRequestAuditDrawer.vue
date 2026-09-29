@@ -12,11 +12,22 @@
     </div>
 
     <div v-else-if="detail" class="space-y-5 text-sm">
-      <div class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
-        {{ t('admin.usage.requestAudit.captureCompleteness') }}:
-        <span data-testid="request-audit-capture-status" class="ml-1 font-mono text-gray-900 dark:text-dark-100">
-          {{ captureCompletenessLabel(detail.capture_completeness) }}
-        </span>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
+          {{ t('admin.usage.requestAudit.captureCompleteness') }}:
+          <span data-testid="request-audit-capture-status" class="ml-1 font-mono text-gray-900 dark:text-dark-100">
+            {{ captureCompletenessLabel(detail.capture_completeness) }}
+          </span>
+        </div>
+        <button
+          v-if="hasUsableUsageLogId"
+          type="button"
+          data-testid="usage-open-trace"
+          class="btn btn-secondary btn-sm"
+          @click="openTrace"
+        >
+          {{ t('admin.usage.requestAudit.viewTrace') }}
+        </button>
       </div>
 
       <div
@@ -242,6 +253,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getRequestAudit, type RequestAudit } from '@/api/admin/usage'
 
@@ -255,6 +267,19 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
+
+const hasUsableUsageLogId = computed(() => typeof props.usageLogId === 'number' && props.usageLogId > 0)
+
+/**
+ * Jumps to the request Trace list filtered by this usage row. Only the usage log id
+ * travels in the URL; the Trace detail itself stays behind the admin login-session
+ * gate, so an admin API key session still cannot read a body from that page.
+ */
+function openTrace() {
+  if (!hasUsableUsageLogId.value) return
+  void router.push({ path: '/admin/request-traces', query: { usage_log_id: String(props.usageLogId) } })
+}
 
 const loading = ref(false)
 const loadError = ref(false)

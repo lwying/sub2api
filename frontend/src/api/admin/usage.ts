@@ -149,6 +149,11 @@ export interface RequestAudit {
 
 export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number
+  /**
+   * Exact usage record lookup (>0). Set when the page is opened from a linked request
+   * Trace, which only knows the usage log id of the record it points at.
+   */
+  usage_log_id?: number
   exact_total?: boolean
   billing_mode?: string
   upstream_model_mismatch?: boolean

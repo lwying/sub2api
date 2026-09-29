@@ -834,6 +834,18 @@ func ProvideRequestTraceExportWorker(svc *RequestTraceExportService) *RequestTra
 	return NewRequestTraceExportWorker(svc, RequestTraceExportWorkerOptions{})
 }
 
+// ProvideRequestTraceOpsStatusService assembles the value-free operational view.
+// backlog may be nil on a deployment without the probe: the status then reports
+// reachability as unknown rather than as healthy.
+func ProvideRequestTraceOpsStatusService(
+	capture *RequestTraceCaptureQueue,
+	export *RequestTraceExportWorker,
+	cleanup *RequestTraceCleanupService,
+	backlog RequestTraceBacklogProbe,
+) *RequestTraceOpsStatusService {
+	return NewRequestTraceOpsStatusService(capture, export, cleanup, backlog)
+}
+
 // ProvideSettingService wires SettingService with group reader, proxy repo and the
 // request-trace deployment probe.
 //
@@ -930,6 +942,7 @@ var ProviderSet = wire.NewSet(
 	ProvideRequestTraceExportService,
 	ProvideRequestTraceExportWorker,
 	ProvideRequestTraceGatewayLinker,
+	ProvideRequestTraceOpsStatusService, // 无敏感值运维状态：采集队列／写入失败与未关联清理积压
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
 	ProvideBatchImageModelPricingResolver,

@@ -30,8 +30,8 @@
         <div v-if="!status.capture_allowed" class="space-y-3" data-testid="request-trace-enable-form">
           <label class="block text-sm" for="request-trace-language">{{ t('admin.requestTrace.operator.language') }}</label>
           <select id="request-trace-language" v-model="language" data-testid="request-trace-language" class="rounded-lg border p-2 dark:bg-dark-900">
-            <option value="en">English</option>
-            <option value="zh">中文</option>
+            <option value="en">{{ ackLanguageLabel(t, 'en') }}</option>
+            <option value="zh">{{ ackLanguageLabel(t, 'zh') }}</option>
           </select>
           <p class="text-sm">{{ t('admin.requestTrace.operator.requiredPhrase') }}</p>
           <p class="rounded-lg border p-3 text-xs" data-testid="request-trace-required-phrase">{{ requiredPhrase }}</p>
@@ -55,6 +55,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getLocale } from '@/i18n'
 import { updateOperatorSettings } from './api'
+import { ackLanguageLabel } from './labels'
 import type { RequestTraceOperatorStatus, TraceAckLanguage } from './types'
 
 const props = defineProps<{ status: RequestTraceOperatorStatus | null; loading: boolean }>()

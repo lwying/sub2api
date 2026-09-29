@@ -58,7 +58,7 @@ func (s *requestTraceExportSource) NextTraceIDs(ctx context.Context, filter serv
 		SELECT trace_id FROM request_traces
 		WHERE ($1 = '' OR trace_id = $1)
 			AND ($2 = '' OR route_family = $2)
-			AND ($3 = 0 OR client_status = $3)
+			AND ($3::integer IS NULL OR client_status = $3)
 			AND ($4::timestamptz IS NULL OR created_at >= $4)
 			AND ($5::timestamptz IS NULL OR created_at < $5)
 			AND ($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)
@@ -119,7 +119,7 @@ func requestTraceExportSourcePageValid(filter service.RequestTraceExportFilter, 
 	default:
 		return false
 	}
-	if filter.ClientStatus < 0 || filter.ClientStatus > 599 {
+	if filter.ClientStatus != nil && (*filter.ClientStatus < 0 || *filter.ClientStatus > 599) {
 		return false
 	}
 	if filter.CreatedFrom != nil && filter.CreatedTo != nil && !filter.CreatedFrom.Before(*filter.CreatedTo) {

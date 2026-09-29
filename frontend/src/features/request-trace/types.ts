@@ -1,5 +1,55 @@
 export type TraceAckLanguage = 'en' | 'zh'
 
+/**
+ * The summary `capture_state` closed set, as a runtime list and a union type. It
+ * mirrors the Go contract's `RequestTraceCaptureState` values the summary endpoint
+ * can return, and it is the single source of truth for both the parser's `Set` and
+ * the localized capture-state labels.
+ */
+export const requestTraceCaptureStates = ['not_observed', 'stored', 'partial', 'write_failed'] as const
+
+export type RequestTraceCaptureState = (typeof requestTraceCaptureStates)[number]
+
+/**
+ * The per-stage `state` closed set. It is the same Go enum as the summary capture
+ * state, plus the body-level states only a stage can report.
+ */
+export const requestTraceStageStates = [
+  'not_observed', 'stored', 'truncated', 'unsupported', 'redaction_unverified', 'write_failed',
+] as const
+
+export type RequestTraceStageState = (typeof requestTraceStageStates)[number]
+
+/**
+ * The stage names the Trace pipeline emits, as the single source of truth for the
+ * localized stage labels. A name outside this set (an older or future server) is
+ * labelled generically rather than echoed as a raw token. `gateway_decision` is
+ * kept in step with `requestTraceDecisionStage` by a test, not by importing it here.
+ */
+export const requestTraceStageNames = [
+  'client_metadata', 'client_entry', 'wire_attempt', 'wire_request',
+  'upstream_response', 'client_response', 'capture_gap', 'gateway_decision',
+] as const
+
+/** The body views (`view_name`) a stage can report. */
+export const requestTraceStageViews = ['decoded', 'transmitted', 'downstream', 'received', 'wire'] as const
+
+/**
+ * The bounded reason codes the Trace pipeline currently emits. The server only
+ * bounds a reason by pattern, so this list can never be complete: it names the
+ * codes worth their own label, and every other bounded code is labelled
+ * generically instead of being rendered as a token.
+ */
+export const requestTraceStageReasons = [
+  'metadata_observed', 'retained', 'body_not_observed', 'auth_rejected_body_not_observed',
+  'attempt_not_observed', 'wire_observed', 'transport_error', 'wire_protocol_outside_phase1',
+  'hijacked_unobservable', 'truncated', 'truncated_unverified', 'credential_redaction_unverified',
+  'incomplete_event', 'incomplete_read', 'decode_failed', 'read_failed',
+  'stage_budget_exceeded', 'decision_budget_exceeded',
+  'decision_recorded', 'auth_accepted', 'auth_rejected', 'route_selected',
+  'account_switch', 'model_rewritten', 'identity_sent', 'identity_rewritten', 'identity_not_sent',
+] as const
+
 export interface RequestTraceSummary {
   trace_id: string
   route_family: 'messages' | 'chat_completions' | 'responses'
@@ -7,7 +57,7 @@ export interface RequestTraceSummary {
   created_at: string
   completed_at: string | null
   client_status: number
-  capture_state: 'not_observed' | 'stored' | 'partial' | 'write_failed'
+  capture_state: RequestTraceCaptureState
   usage_log_id: number | null
   cleanup_after: string | null
 }
@@ -17,7 +67,7 @@ export interface RequestTraceStage {
   stage: string
   attempt_index: number
   view_name: string
-  state: 'not_observed' | 'stored' | 'truncated' | 'unsupported' | 'redaction_unverified' | 'write_failed'
+  state: RequestTraceStageState
   reason: string
   observed_bytes: number
   retained_bytes: number
@@ -124,12 +174,20 @@ export interface RequestTraceListParams {
   created_from?: string
   created_to?: string
   usage_linked?: boolean
+  /**
+   * The two lookup filters the server resolves without returning any body:
+   * `usage_log_id` matches the Trace envelope's linked usage record (used when
+   * arriving from an admin usage row), `account_id` matches a real `wire_attempt`
+   * stage's typed account fact — never a free-text search over stage metadata.
+   */
+  usage_log_id?: number
+  account_id?: number
 }
 
 const traceIDPattern = /^[0-9a-f]{32}$/
 const routeFamilies = new Set(['messages', 'chat_completions', 'responses'])
-const captureStates = new Set(['not_observed', 'stored', 'partial', 'write_failed'])
-const stageStates = new Set(['not_observed', 'stored', 'truncated', 'unsupported', 'redaction_unverified', 'write_failed'])
+const captureStates = new Set<string>(requestTraceCaptureStates)
+const stageStates = new Set<string>(requestTraceStageStates)
 const safeStagePattern = /^[a-z][a-z0-9_]*$/
 
 // Mirror of the server-side stage fact budget and per-field bounds. The client
@@ -590,6 +648,155 @@ function normalizeRequestTraceExportFilter(value: unknown): RequestTraceExportFi
     if (parsed !== null) filter[key] = parsed
   }
   return filter
+}
+
+/**
+ * The value-free operational-status closed sets, as runtime lists as well as
+ * union types. Each list is the single source of truth for the parser's `Set`
+ * and for the labels the status panel renders, so a value the backend contract
+ * gains or drops cannot silently keep or lose a label.
+ *
+ * These mirror the Go contract's enum constants (`RequestTraceStorageState`,
+ * `RequestTraceStorageProbeState`, `RequestTraceBacklogState`).
+ */
+export const requestTraceStorageProbeStates = ['not_configured', 'reachable', 'unavailable'] as const
+
+export type RequestTraceStorageProbeState = (typeof requestTraceStorageProbeStates)[number]
+
+export const requestTraceStorageStates = ['not_wired', 'no_traffic', 'ok', 'write_failed'] as const
+
+export type RequestTraceStorageState = (typeof requestTraceStorageStates)[number]
+
+export const requestTraceBacklogStates = ['unavailable', 'measured', 'at_least'] as const
+
+export type RequestTraceBacklogState = (typeof requestTraceBacklogStates)[number]
+
+/**
+ * The capture queue's value-free state: counts and two flags, never an error
+ * text, a host, a statement or an observed trace.
+ */
+export interface RequestTraceOpsCapture {
+  storage: RequestTraceStorageState
+  repository_available: boolean
+  stopped: boolean
+  queue_depth: number
+  queue_capacity: number
+  accepted: number
+  stored: number
+  write_failed: number
+  dropped: number
+  rejected: number
+}
+
+/** The export worker's cumulative counters, since this process started. */
+export interface RequestTraceOpsExport {
+  worker_started: boolean
+  ticks: number
+  tasks_run: number
+  tasks_completed: number
+  tasks_failed: number
+  failures: number
+  disabled_ticks: number
+  cleanups: number
+  cleaned_files: number
+}
+
+/**
+ * The cleanup service's counters plus the bounded backlog of unlinked traces
+ * that are past their planned cleanup point. `backlog_state` is what keeps a
+ * capped count from being read as a total, and an unmeasured one from being
+ * read as zero.
+ */
+export interface RequestTraceOpsCleanup {
+  runs: number
+  deleted: number
+  failures: number
+  last_deleted: number
+  unlinked_backlog: number
+  backlog_limit: number
+  backlog_state: RequestTraceBacklogState
+}
+
+/**
+ * The whole value-free answer. It deliberately carries no enablement flag: the
+ * endpoint reports what the pipeline did, never whether the capture gate is on,
+ * so no consumer can infer "capture is enabled" from a healthy count.
+ */
+export interface RequestTraceOpsStatus {
+  storage_probe: RequestTraceStorageProbeState
+  capture: RequestTraceOpsCapture
+  export: RequestTraceOpsExport
+  cleanup: RequestTraceOpsCleanup
+}
+
+const storageProbeStates = new Set<string>(requestTraceStorageProbeStates)
+const storageStates = new Set<string>(requestTraceStorageStates)
+const backlogStates = new Set<string>(requestTraceBacklogStates)
+
+function opsEnum(value: unknown, allowed: Set<string>, message: string): string {
+  if (typeof value !== 'string' || !allowed.has(value)) throw new Error(message)
+  return value
+}
+
+/** A flag is a boolean or it is not an observed flag; `"true"` and `1` are refused. */
+function opsBool(value: unknown, message: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(message)
+  return value
+}
+
+/** A counter is a non-negative integer or it is not a count. */
+function opsCount(value: unknown, message: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(message)
+  return value as number
+}
+
+/**
+ * Normalizes the operational status. Only the allowlisted counters, flags and
+ * closed sets are read, so an unexpected field — a stored database message, a
+ * body, a header value, a raw query or a filename — is dropped rather than
+ * carried into the view. An enum outside its set is refused instead of being
+ * rendered as a state the pipeline reported.
+ */
+export function normalizeRequestTraceOpsStatus(value: unknown): RequestTraceOpsStatus {
+  const source = traceRecord(value)
+  const capture = traceRecord(source.capture)
+  const exportCounters = traceRecord(source.export)
+  const cleanup = traceRecord(source.cleanup)
+  return {
+    storage_probe: opsEnum(source.storage_probe, storageProbeStates, 'Invalid request Trace storage probe') as RequestTraceStorageProbeState,
+    capture: {
+      storage: opsEnum(capture.storage, storageStates, 'Invalid request Trace storage state') as RequestTraceStorageState,
+      repository_available: opsBool(capture.repository_available, 'Invalid request Trace repository flag'),
+      stopped: opsBool(capture.stopped, 'Invalid request Trace queue flag'),
+      queue_depth: opsCount(capture.queue_depth, 'Invalid request Trace queue depth'),
+      queue_capacity: opsCount(capture.queue_capacity, 'Invalid request Trace queue capacity'),
+      accepted: opsCount(capture.accepted, 'Invalid request Trace accepted count'),
+      stored: opsCount(capture.stored, 'Invalid request Trace stored count'),
+      write_failed: opsCount(capture.write_failed, 'Invalid request Trace write failure count'),
+      dropped: opsCount(capture.dropped, 'Invalid request Trace drop count'),
+      rejected: opsCount(capture.rejected, 'Invalid request Trace rejection count'),
+    },
+    export: {
+      worker_started: opsBool(exportCounters.worker_started, 'Invalid request Trace export worker flag'),
+      ticks: opsCount(exportCounters.ticks, 'Invalid request Trace export tick count'),
+      tasks_run: opsCount(exportCounters.tasks_run, 'Invalid request Trace export task count'),
+      tasks_completed: opsCount(exportCounters.tasks_completed, 'Invalid request Trace export completion count'),
+      tasks_failed: opsCount(exportCounters.tasks_failed, 'Invalid request Trace export failure count'),
+      failures: opsCount(exportCounters.failures, 'Invalid request Trace export failure count'),
+      disabled_ticks: opsCount(exportCounters.disabled_ticks, 'Invalid request Trace export disabled tick count'),
+      cleanups: opsCount(exportCounters.cleanups, 'Invalid request Trace export cleanup count'),
+      cleaned_files: opsCount(exportCounters.cleaned_files, 'Invalid request Trace export cleaned file count'),
+    },
+    cleanup: {
+      runs: opsCount(cleanup.runs, 'Invalid request Trace cleanup run count'),
+      deleted: opsCount(cleanup.deleted, 'Invalid request Trace cleanup deletion count'),
+      failures: opsCount(cleanup.failures, 'Invalid request Trace cleanup failure count'),
+      last_deleted: opsCount(cleanup.last_deleted, 'Invalid request Trace cleanup batch count'),
+      unlinked_backlog: opsCount(cleanup.unlinked_backlog, 'Invalid request Trace backlog count'),
+      backlog_limit: opsCount(cleanup.backlog_limit, 'Invalid request Trace backlog probe limit'),
+      backlog_state: opsEnum(cleanup.backlog_state, backlogStates, 'Invalid request Trace backlog state') as RequestTraceBacklogState,
+    },
+  }
 }
 
 export function normalizeRequestTraceExportTask(value: unknown): RequestTraceExportTask {

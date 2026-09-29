@@ -24,6 +24,11 @@ type requestTraceRepository struct {
 }
 
 func NewRequestTraceRepository(db *sql.DB) service.RequestTraceRepository {
+	if db == nil {
+		// 不能把 typed-nil 的 *sql.DB 装进接口：那样 r.q == nil 永远为假，第一个查询
+		// 会 panic，而不是像其它仓储那样返回 ErrRequestTraceRepositoryUnavailable。
+		return &requestTraceRepository{}
+	}
 	return &requestTraceRepository{q: db}
 }
 
@@ -365,15 +370,32 @@ func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter s
 	if filter.RouteFamily != "" && !requestTraceFamilyValid(filter.RouteFamily) {
 		return nil, 0, service.ErrRequestTraceInvalidRecord
 	}
-	if filter.ClientStatus < 0 || filter.ClientStatus > 599 {
+	if filter.ClientStatus != nil && (*filter.ClientStatus < 0 || *filter.ClientStatus > 599) {
 		return nil, 0, service.ErrRequestTraceInvalidRecord
 	}
+	if filter.UsageLogID != nil && *filter.UsageLogID <= 0 {
+		return nil, 0, service.ErrRequestTraceInvalidRecord
+	}
+	if filter.AccountID != nil && *filter.AccountID <= 0 {
+		return nil, 0, service.ErrRequestTraceInvalidRecord
+	}
+	// 账号检索只认 wire_attempt 阶段的类型化事实：stage 过滤把匹配范围钉在真实
+	// 上游尝试上，JSONB 包含判断用绑定参数而非把 ID 拼进语句。列表投影保持
+	// requestTraceEnvelopeColumns，绝不会 SELECT 出 metadata，因此检索条件不会
+	// 变成把阶段 JSONB 回传给管理端。
 	const where = `($1 = '' OR trace_id = $1)
 		AND ($2 = '' OR route_family = $2)
-		AND ($3 = 0 OR client_status = $3)
+		AND ($3::integer IS NULL OR client_status = $3)
 		AND ($4::timestamptz IS NULL OR created_at >= $4)
 		AND ($5::timestamptz IS NULL OR created_at < $5)
-		AND ($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)`
+		AND ($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)
+		AND ($7::bigint IS NULL OR usage_log_id = $7)
+		AND ($8::bigint IS NULL OR EXISTS (
+			SELECT 1 FROM request_trace_stages s
+			WHERE s.trace_id = request_traces.id
+			  AND s.stage = 'wire_attempt'
+			  AND s.metadata @> jsonb_build_object('account_id', $8::bigint)
+		))`
 	var from, to any
 	if !filter.CreatedFrom.IsZero() {
 		from = filter.CreatedFrom
@@ -385,13 +407,13 @@ func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter s
 	if filter.UsageLinked != nil {
 		usageLinked = *filter.UsageLinked
 	}
-	args := []any{filter.TraceID, filter.RouteFamily, filter.ClientStatus, from, to, usageLinked}
+	args := []any{filter.TraceID, filter.RouteFamily, filter.ClientStatus, from, to, usageLinked, filter.UsageLogID, filter.AccountID}
 	var count int64
 	if err := scanSingleRow(ctx, r.q, `SELECT COUNT(*) FROM request_traces WHERE `+where, args, &count); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.q.QueryContext(ctx, `SELECT `+requestTraceEnvelopeColumns+` FROM request_traces WHERE `+where+
-		` ORDER BY created_at DESC, id DESC LIMIT $7 OFFSET $8`, append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)...)
+		` ORDER BY created_at DESC, id DESC LIMIT $9 OFFSET $10`, append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)...)
 	if err != nil {
 		return nil, 0, err
 	}

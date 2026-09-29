@@ -29,13 +29,18 @@ func ValidRequestTraceStageReason(reason string) bool {
 	return requestTraceQueueReasonPattern.MatchString(reason)
 }
 
-// RequestTraceCaptureStats contains counts only; no request or response values.
+// RequestTraceCaptureStats contains counts, the fixed queue bound and two
+// booleans; no request or response value, no identifier and no error text.
 type RequestTraceCaptureStats struct {
-	Queued      uint64
-	Stored      uint64
-	WriteFailed uint64
-	Dropped     uint64
-	Rejected    uint64
+	Queued      uint64 // jobs accepted since start
+	Stored      uint64 // envelopes written with every stage
+	WriteFailed uint64 // storage refused a trace, a stage or a finalize
+	Dropped     uint64 // accepted by no one: queue full, stopping or shutdown
+	Rejected    uint64 // refused before queueing: invalid shape or no repository
+	Depth       int    // jobs waiting in the bounded channel right now
+	Capacity    int    // the fixed bound Depth is measured against
+	Available   bool   // a repository is wired at all
+	Stopped     bool   // Stop was called: no further job is accepted
 }
 
 type requestTraceCaptureJob struct {
@@ -287,8 +292,12 @@ func (q *RequestTraceCaptureQueue) Stats() RequestTraceCaptureStats {
 	if q == nil {
 		return RequestTraceCaptureStats{}
 	}
+	q.mu.Lock()
+	stopped := q.stopped
+	q.mu.Unlock()
 	return RequestTraceCaptureStats{
 		Queued: q.queued.Load(), Stored: q.stored.Load(), WriteFailed: q.writeFailed.Load(),
 		Dropped: q.dropped.Load(), Rejected: q.rejected.Load(),
+		Depth: len(q.jobs), Capacity: cap(q.jobs), Available: q.repo != nil, Stopped: stopped,
 	}
 }

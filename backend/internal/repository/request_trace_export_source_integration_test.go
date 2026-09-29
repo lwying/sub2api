@@ -173,8 +173,9 @@ func TestRequestTraceExportSourcePagesRealRowsByMonotonicCursor(t *testing.T) {
 
 	require.Equal(t, []string{ids[1], ids[3], ids[4], ids[2]},
 		walkRequestTraceExportSource(t, source, service.RequestTraceExportFilter{RouteFamily: string(service.RequestTraceMessages)}, 2))
+	statusOK := 200
 	require.Equal(t, []string{ids[1], ids[3], ids[0], ids[2]},
-		walkRequestTraceExportSource(t, source, service.RequestTraceExportFilter{ClientStatus: 200}, 4))
+		walkRequestTraceExportSource(t, source, service.RequestTraceExportFilter{ClientStatus: &statusOK}, 4))
 	require.Equal(t, []string{ids[2]},
 		walkRequestTraceExportSource(t, source, service.RequestTraceExportFilter{TraceID: ids[2]}, 4))
 

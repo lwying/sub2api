@@ -13,6 +13,10 @@ import {
   requestTraceDecisionKinds,
   requestTraceDecisionOutcomes,
   requestTraceDecisionSources,
+  requestTraceStageNames,
+  requestTraceStageReasons,
+  requestTraceStageStates,
+  requestTraceStageViews,
 } from '../types'
 
 const detail = (id: string, overrides: Record<string, unknown> = {}) => ({
@@ -21,7 +25,7 @@ const detail = (id: string, overrides: Record<string, unknown> = {}) => ({
   client_status: 401, capture_state: 'partial', usage_log_id: null,
   cleanup_after: '2026-10-28T00:00:00Z',
   stages: [
-    { ordinal: 1, stage: 'inbound_request', attempt_index: 0, view_name: '', state: 'not_observed', reason: 'auth_rejected_before_body', observed_bytes: 0, retained_bytes: 0, dropped_events: 0, redaction_unverified: false },
+    { ordinal: 1, stage: 'inbound_request', attempt_index: 0, view_name: '', state: 'not_observed', reason: 'auth_rejected_body_not_observed', observed_bytes: 0, retained_bytes: 0, dropped_events: 0, redaction_unverified: false },
     { ordinal: 2, stage: 'downstream_response', attempt_index: 0, view_name: '', state: 'stored', reason: 'recorded', observed_bytes: 0, retained_bytes: 0, dropped_events: 0, redaction_unverified: false },
   ], ...overrides,
 })
@@ -29,10 +33,13 @@ const BaseDialogStub = {
   props: ['show'], emits: ['close'],
   template: '<div v-if="show" data-testid="trace-dialog"><slot /></div>',
 }
+// The usage-record id renders as a link to the admin usage page; RouterLink is
+// stubbed so a mount without a real router still resolves it.
+const RouterLinkStub = { props: { to: { type: Object, required: true } }, template: '<a><slot /></a>' }
 function mountDrawer(id: string) {
   return mount(RequestTraceDetailDrawer, {
     props: { show: true, traceId: id },
-    global: { stubs: { BaseDialog: BaseDialogStub } },
+    global: { stubs: { BaseDialog: BaseDialogStub, RouterLink: RouterLinkStub } },
   })
 }
 
@@ -66,8 +73,9 @@ describe('admin Request Trace detail', () => {
     const wrapper = mountDrawer(id)
     await flushPromises()
     expect(api.getTrace).toHaveBeenCalledWith(id, expect.anything())
-    expect(wrapper.get('[data-testid="trace-stage-1"]').text()).toContain('not_observed')
-    expect(wrapper.get('[data-testid="trace-stage-1"]').text()).toContain('auth_rejected_before_body')
+    // The closed-set wire values render through their labels, never raw.
+    expect(wrapper.get('[data-testid="trace-stage-state"]').text()).toBe('admin.requestTrace.detail.stateLabel.not_observed')
+    expect(wrapper.get('[data-testid="trace-stage-reason"]').text()).toBe('admin.requestTrace.detail.reasonLabel.auth_rejected_body_not_observed')
     expect(wrapper.find('[data-testid="trace-upstream-attempt-1"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="trace-detail-cleanup-rule"]').text()).toContain('plannedCleanup')
   })
@@ -279,4 +287,78 @@ describe('admin Request Trace detail', () => {
       wrapper.unmount()
     },
   )
+
+  /**
+   * Every value of every closed stage set the drawer renders, mapped to the field
+   * it travels in, the label map it must address and the element it must reach. A
+   * tier that stops at one sampled value cannot prove the rest of the contract
+   * renders through a label at all.
+   */
+  const stageLabelCases: [string, string, string, string, string][] = []
+  requestTraceStageNames.forEach((value, index) => {
+    stageLabelCases.push(['stage', value, 'trace-stage-name', 'stageLabel', caseTraceId(index + 32)])
+  })
+  requestTraceStageStates.forEach((value, index) => {
+    stageLabelCases.push(['state', value, 'trace-stage-state', 'stateLabel', caseTraceId(index + 48)])
+  })
+  requestTraceStageViews.forEach((value, index) => {
+    stageLabelCases.push(['view_name', value, 'trace-stage-view', 'viewLabel', caseTraceId(index + 64)])
+  })
+  requestTraceStageReasons.forEach((value, index) => {
+    stageLabelCases.push(['reason', value, 'trace-stage-reason', 'reasonLabel', caseTraceId(index + 80)])
+  })
+
+  it.each(stageLabelCases)(
+    'renders the localized %s label for %s instead of the raw token',
+    async (field, value, testid, group, id) => {
+      api.getTrace.mockResolvedValue(detail(id, { stages: [{
+        ordinal: 1, stage: 'wire_attempt', attempt_index: 0, view_name: 'decoded', state: 'stored',
+        reason: 'retained', observed_bytes: 0, retained_bytes: 0, dropped_events: 0, redaction_unverified: false,
+        [field]: value,
+      }] }))
+      const wrapper = mountDrawer(id)
+      await flushPromises()
+      const rendered = wrapper.get(`[data-testid="${testid}"]`).text()
+      expect(rendered).toBe(`admin.requestTrace.detail.${group}.${value}`)
+      expect(rendered).not.toBe(value)
+      wrapper.unmount()
+    },
+  )
+
+  const unknownStageCases: [string, string, string, string][] = [
+    ['stage', 'some_future_stage', 'trace-stage-name', 'stageLabel'],
+    ['view_name', 'some_future_view', 'trace-stage-view', 'viewLabel'],
+  ]
+
+  it.each(unknownStageCases)('labels an unknown %s generically instead of echoing it', async (field, value, testid, group) => {
+    const id = caseTraceId(112)
+    api.getTrace.mockResolvedValue(detail(id, { stages: [{
+      ordinal: 1, stage: 'wire_attempt', attempt_index: 0, view_name: 'decoded', state: 'stored',
+      reason: 'retained', observed_bytes: 0, retained_bytes: 0, dropped_events: 0, redaction_unverified: false,
+      [field]: value,
+    }] }))
+    const wrapper = mountDrawer(id)
+    await flushPromises()
+    const rendered = wrapper.get(`[data-testid="${testid}"]`).text()
+    expect(rendered).toBe(`admin.requestTrace.detail.${group}.unknown`)
+    expect(rendered).not.toContain(value)
+    wrapper.unmount()
+  })
+
+  it('labels an unrecognized reason code generically and keeps the code out of the text', async () => {
+    const id = caseTraceId(113)
+    const reason = 'some_future_reason_code'
+    api.getTrace.mockResolvedValue(detail(id, { stages: [{
+      ordinal: 1, stage: 'wire_attempt', attempt_index: 0, view_name: 'decoded', state: 'stored',
+      reason, observed_bytes: 0, retained_bytes: 0, dropped_events: 0, redaction_unverified: false,
+    }] }))
+    const wrapper = mountDrawer(id)
+    await flushPromises()
+    const rendered = wrapper.get('[data-testid="trace-stage-reason"]')
+    expect(rendered.text()).toBe('admin.requestTrace.detail.reasonLabel.other')
+    expect(rendered.text()).not.toContain(reason)
+    // The bounded code stays available for debugging, but only as a non-display attribute.
+    expect(rendered.attributes('title')).toBe(reason)
+    wrapper.unmount()
+  })
 })

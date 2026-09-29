@@ -509,6 +509,7 @@ export default {
     usage: {
       title: '使用记录',
       description: '查看和管理所有用户的使用记录',
+      exactRecordFilter: '仅显示使用记录 #{id}',
       userFilter: '用户',
       searchUserPlaceholder: '按邮箱搜索用户...',
       searchApiKeyPlaceholder: '按名称搜索 API 密钥...',
@@ -556,6 +557,7 @@ export default {
       userDeletedBadge: '已删除',
       requestAudit: {
         title: '请求审计',
+        viewTrace: '查看请求 Trace',
         loading: '正在加载请求审计',
         empty: '没有上游尝试记录',
         loadFailed: '加载请求审计失败',

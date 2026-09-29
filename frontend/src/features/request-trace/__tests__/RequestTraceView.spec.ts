@@ -3,12 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ listTraces: vi.fn(), getTrace: vi.fn() }))
 vi.mock('../api', () => ({ listTraces: mocks.listTraces, getTrace: mocks.getTrace }))
+// The list reads lookup prefills from the route; an empty query keeps these cases
+// on the plain, unfiltered load path they assert.
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
 
 import RequestTraceView from '../RequestTraceView.vue'
+import { requestTraceCaptureStates } from '../types'
 
 const trace = (overrides: Record<string, unknown> = {}) => ({
   trace_id: 'a'.repeat(32), route_family: 'messages', inbound_endpoint: '/v1/messages',
@@ -28,6 +32,7 @@ function mountView() {
       Pagination: { template: '<div data-testid="trace-pagination" />' },
       RequestTraceDetailDrawer: DetailStub,
       RequestTraceExportPanel: { template: '<div data-testid="request-trace-export-panel-stub" />' },
+      RequestTraceOpsStatusPanel: { template: '<div data-testid="request-trace-ops-status-panel-stub" />' },
     } },
   })
 }
@@ -46,6 +51,8 @@ describe('admin Request Trace list', () => {
     expect(mocks.listTraces).toHaveBeenCalledWith({ page: 1, page_size: 20 }, expect.anything())
     expect(wrapper.findAll('[data-testid="request-trace-row"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="request-trace-row"]').text()).toContain('/v1/messages')
+    // The closed-set capture state renders through its label, never raw.
+    expect(wrapper.get('[data-testid="request-trace-capture-state"]').text()).toBe('admin.requestTrace.list.captureStateLabel.partial')
     expect(wrapper.text()).not.toContain('BODY_CANARY')
     expect(wrapper.text()).not.toContain('Bearer CANARY')
     expect(mocks.getTrace).not.toHaveBeenCalled()
@@ -92,4 +99,16 @@ describe('admin Request Trace list', () => {
     expect(wrapper.find('[data-testid="request-trace-export-panel-stub"]').exists()).toBe(true)
     expect(mocks.listTraces).toHaveBeenCalledTimes(1)
   })
+
+  it.each([...requestTraceCaptureStates])(
+    'renders the localized capture state label for %s instead of the raw token',
+    async (state) => {
+      mocks.listTraces.mockResolvedValue(page([trace({ capture_state: state })]))
+      const wrapper = mountView()
+      await flushPromises()
+      const rendered = wrapper.get('[data-testid="request-trace-capture-state"]').text()
+      expect(rendered).toBe(`admin.requestTrace.list.captureStateLabel.${state}`)
+      expect(rendered).not.toBe(state)
+    },
+  )
 })

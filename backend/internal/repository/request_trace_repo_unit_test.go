@@ -242,3 +242,62 @@ func TestDecodeRequestTraceStageProjectionFailsClosed(t *testing.T) {
 		[]byte(`{"method":"POST","url":"https://synthetic.example/`+strings.Repeat("u", requestTraceStageMetadataLimit)+`"}`))
 	require.ErrorIs(t, err, service.ErrRequestTraceInvalidRecord)
 }
+
+// client_status 的 0 是合法值（列默认 0），只有 nil 才表示"不过滤"。两者必须在绑定
+// 上可区分，否则 ?client_status=0 会静默退化成"返回全部"，让运维以为筛选生效了。
+func TestRequestTraceRepositoryBindsOptionalClientStatusFilter(t *testing.T) {
+	ctx := context.Background()
+	zero := 0
+	// database/sql 会把 *int 解引用成具体值（nil 指针即 NULL），所以绑定的就是筛选
+	// 值本身：nil 与指向 0 的指针在驱动层是两种不同的参数。
+	for _, tc := range []struct {
+		name   string
+		filter service.RequestTraceListFilter
+		bound  bool
+	}{
+		{name: "absent binds NULL", filter: service.RequestTraceListFilter{Page: 1, PageSize: 20}},
+		{name: "zero binds 0", filter: service.RequestTraceListFilter{Page: 1, PageSize: 20, ClientStatus: &zero}, bound: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &recordingRequestTraceQueryer{}
+			repo := &requestTraceRepository{q: stub}
+			_, _, err := repo.ListRequestTraces(ctx, tc.filter)
+			require.Error(t, err, "the stub returns no rows")
+			require.Len(t, stub.args, 1)
+			bound, isOptional := stub.args[0][2].(*int)
+			require.True(t, isOptional, "client_status must be bound as an optional value")
+			if tc.bound {
+				require.NotNil(t, bound)
+				require.Equal(t, 0, *bound)
+			} else {
+				require.Nil(t, bound, "an absent filter must bind SQL NULL, never 0")
+			}
+			require.Contains(t, stub.queries[0], "$3::integer IS NULL OR client_status = $3")
+		})
+	}
+}
+
+// 越界值仍然在进 SQL 之前被拒绝：可选化不等于放宽校验。
+func TestRequestTraceRepositoryRejectsOutOfRangeClientStatus(t *testing.T) {
+	tooHigh := 600
+	repo := &requestTraceRepository{q: &recordingRequestTraceQueryer{}}
+	_, _, err := repo.ListRequestTraces(context.Background(),
+		service.RequestTraceListFilter{Page: 1, PageSize: 20, ClientStatus: &tooHigh})
+	require.ErrorIs(t, err, service.ErrRequestTraceInvalidRecord)
+}
+
+// 没有数据库句柄时必须 fail-closed：返回可识别的"不可用"，而不是 panic。
+func TestRequestTraceRepositoryWithoutDatabaseHandleFailsClosed(t *testing.T) {
+	repo := NewRequestTraceRepository(nil)
+	require.ErrorIs(t, repo_appendStageErr(repo), service.ErrRequestTraceRepositoryUnavailable)
+	_, _, err := repo.ListRequestTraces(context.Background(), service.RequestTraceListFilter{Page: 1, PageSize: 20})
+	require.ErrorIs(t, err, service.ErrRequestTraceRepositoryUnavailable)
+}
+
+func repo_appendStageErr(repo service.RequestTraceRepository) error {
+	_, err := repo.AppendRequestTraceStage(context.Background(), service.RequestTraceStage{
+		TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Ordinal: 1, Stage: "wire",
+		State: service.RequestTraceStored, Reason: "retained", ObservedBytes: 1,
+	})
+	return err
+}

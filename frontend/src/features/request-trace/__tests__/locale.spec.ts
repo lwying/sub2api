@@ -22,9 +22,15 @@ import sharedEn from '@/i18n/locales/en'
 import sharedZh from '@/i18n/locales/zh'
 import { requestTraceEn, requestTraceZh } from '../locale'
 import {
+  requestTraceCaptureStates,
   requestTraceDecisionKinds,
   requestTraceDecisionOutcomes,
   requestTraceDecisionSources,
+  requestTraceDecisionStage,
+  requestTraceStageNames,
+  requestTraceStageReasons,
+  requestTraceStageStates,
+  requestTraceStageViews,
 } from '../types'
 
 const ADMIN_PREFIX = 'admin.'
@@ -74,6 +80,25 @@ function usedKeys(): string[] {
 function decisionLabels(messages: unknown, group: string): string[] {
   return flattenLeafKeys(readLeaf(messages, `requestTrace.detail.decision.${group}`) ?? {}).sort()
 }
+
+/** The leaf keys of a label map, as the component addresses it. */
+function labelKeys(messages: unknown, path: string): string[] {
+  return flattenLeafKeys(readLeaf(messages, path) ?? {}).sort()
+}
+
+/**
+ * Every closed-set label map the UI renders through: the map path, the wire values
+ * it must cover, and the fallback key for a value outside the set. Each list is
+ * the same list the parser and the components use, so a value the contract gains
+ * or drops cannot silently keep or lose a label in either language.
+ */
+const closedSetLabelGroups: [string, readonly string[], string][] = [
+  ['requestTrace.list.captureStateLabel', requestTraceCaptureStates, 'unknown'],
+  ['requestTrace.detail.stateLabel', requestTraceStageStates, 'unknown'],
+  ['requestTrace.detail.stageLabel', requestTraceStageNames, 'unknown'],
+  ['requestTrace.detail.viewLabel', requestTraceStageViews, 'unknown'],
+  ['requestTrace.detail.reasonLabel', requestTraceStageReasons, 'other'],
+]
 
 describe('request Trace locale', () => {
   const enKeys = flattenLeafKeys(requestTraceEn).sort()
@@ -141,6 +166,34 @@ describe('request Trace locale', () => {
         }
         expect(new Set(values).size, `${locale} ${group} has repeated labels`).toBe(labels.length)
       }
+    }
+  })
+
+  it.each(closedSetLabelGroups)('labels every value of %s the backend can send', (path, values, fallback) => {
+    for (const [locale, messages] of Object.entries({ en: requestTraceEn, zh: requestTraceZh })) {
+      // Exactly the closed set plus the explicit fallback: no missing and no stray label.
+      expect(labelKeys(messages, path), `${locale} ${path}`).toEqual([...values, fallback].sort())
+    }
+  })
+
+  it.each(closedSetLabelGroups)('labels each %s value as a distinct message rather than a raw token', (path, values, fallback) => {
+    // A label that merely echoes the wire value (or another label) would pass the
+    // coverage check above while disclosing nothing to an operator.
+    for (const [locale, messages] of Object.entries({ en: requestTraceEn, zh: requestTraceZh })) {
+      const keys = [...values, fallback]
+      const labels = keys.map((key) => readLeaf(messages, `${path}.${key}`))
+      for (const [index, label] of labels.entries()) {
+        expect(typeof label, `${locale} ${path}.${keys[index]}`).toBe('string')
+        expect((label as string).trim(), `${locale} ${path}.${keys[index]}`).not.toBe('')
+        expect(label, `${locale} ${path}.${keys[index]} must not echo the wire value`).not.toBe(keys[index])
+      }
+      expect(new Set(labels).size, `${locale} ${path} has repeated labels`).toBe(keys.length)
+    }
+  })
+
+  it('labels the gateway decision stage with the other stage names', () => {
+    for (const [locale, messages] of Object.entries({ en: requestTraceEn, zh: requestTraceZh })) {
+      expect(labelKeys(messages, 'requestTrace.detail.stageLabel'), locale).toContain(requestTraceDecisionStage)
     }
   })
 })

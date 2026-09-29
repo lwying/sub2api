@@ -114,6 +114,19 @@ func (h *UsageHandler) List(c *gin.Context) {
 
 	// Parse filters
 	var userID, apiKeyID, accountID, groupID int64
+
+	// usage_log_id 是精确记录定位（请求 Trace 详情跳转而来）：只接受正整数，
+	// 非法值必须拒绝，而不是静默退化成"全部使用记录"让管理员误以为定位生效。
+	var usageLogID int64
+	if usageLogIDStr := strings.TrimSpace(c.Query("usage_log_id")); usageLogIDStr != "" {
+		id, err := strconv.ParseInt(usageLogIDStr, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid usage_log_id")
+			return
+		}
+		usageLogID = id
+	}
+
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		id, err := strconv.ParseInt(userIDStr, 10, 64)
 		if err != nil {
@@ -230,6 +243,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 	}
 	filters := usagestats.UsageLogFilters{
+		UsageLogID:            usageLogID,
 		UserID:                userID,
 		APIKeyID:              apiKeyID,
 		AccountID:             accountID,

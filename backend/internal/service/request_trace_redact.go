@@ -243,6 +243,10 @@ func requestTraceRedactJSONValue(input any, depth int, budget *int) (any, bool, 
 	case []any:
 		out := make([]any, len(value))
 		for i, item := range value {
+			*budget--
+			if *budget < 0 {
+				return nil, credential, false
+			}
 			redacted, found, ok := requestTraceRedactJSONValue(item, depth+1, budget)
 			if !ok {
 				return nil, credential || found, false

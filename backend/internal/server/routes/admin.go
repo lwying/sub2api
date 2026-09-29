@@ -726,6 +726,11 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 func registerRequestTraceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	traces := admin.Group("/request-traces")
 	traces.GET("", h.Admin.RequestTrace.List)
+	// Value-free operational status: counts and closed-set enums only, so it is
+	// readable with the ordinary admin credential rather than a login session.
+	// The static segment is registered alongside /:trace_id on purpose: gin
+	// resolves it first, and "status" can never be a 32-hex trace id.
+	traces.GET("/status", h.Admin.RequestTraceStatus.Get)
 	traces.POST("/exports", h.Admin.RequestTraceExport.Create)
 	traces.GET("/exports/:id", h.Admin.RequestTraceExport.Get)
 	traces.GET("/exports/:id/download", h.Admin.RequestTraceExport.Download)

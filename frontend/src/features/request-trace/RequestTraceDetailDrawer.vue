@@ -11,7 +11,14 @@
         <dt>{{ t('admin.requestTrace.list.status') }}</dt>
         <dd>{{ detail.client_status || '—' }}</dd>
         <dt>{{ t('admin.requestTrace.list.usage') }}</dt>
-        <dd v-if="detail.usage_log_id" class="font-mono">#{{ detail.usage_log_id }}</dd>
+        <dd v-if="detail.usage_log_id" class="font-mono">
+          <RouterLink
+            :to="usageLink"
+            data-testid="trace-detail-usage-link"
+            class="text-primary-600 underline decoration-dashed underline-offset-2 hover:text-primary-700 dark:text-primary-400"
+            :title="t('admin.requestTrace.detail.usageMeteringNote')"
+          >#{{ detail.usage_log_id }}</RouterLink>
+        </dd>
         <dd v-else>{{ t('admin.requestTrace.list.usageAbsent') }}</dd>
       </dl>
       <p v-if="detail.usage_log_id" data-testid="trace-detail-cleanup-rule" class="text-xs text-gray-500">{{ t('admin.requestTrace.detail.followsUsage') }}</p>
@@ -20,17 +27,17 @@
       </p>
       <section v-for="stage in detail.stages" :key="stage.ordinal" :data-testid="`trace-stage-${stage.ordinal}`" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h4 class="font-semibold">{{ t('admin.requestTrace.detail.stage') }} {{ stage.ordinal }} · {{ stage.stage }}</h4>
-          <span class="font-mono text-xs">{{ stage.state }}</span>
+          <h4 class="font-semibold">{{ t('admin.requestTrace.detail.stage') }} {{ stage.ordinal }} · <span data-testid="trace-stage-name">{{ stageLabel(t, stage.stage) }}</span></h4>
+          <span data-testid="trace-stage-state" class="font-mono text-xs">{{ stageStateLabel(t, stage.state) }}</span>
         </div>
-        <p v-if="stage.state === 'not_observed' && !isDecisionStage(stage.stage)" data-testid="trace-stage-not-observed" class="mt-2 text-sm text-amber-700 dark:text-amber-300">{{ t('admin.requestTrace.detail.notObserved') }}</p>
+        <p v-if="stage.state === 'not_observed' && isBodyStage(stage.stage)" data-testid="trace-stage-not-observed" class="mt-2 text-sm text-amber-700 dark:text-amber-300">{{ t('admin.requestTrace.detail.notObserved') }}</p>
         <dl class="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-          <dt>{{ t('admin.requestTrace.detail.reason') }}</dt><dd class="break-all font-mono">{{ stage.reason }}</dd>
+          <dt>{{ t('admin.requestTrace.detail.reason') }}</dt><dd data-testid="trace-stage-reason" class="break-all font-mono" :title="stage.reason">{{ stageReasonLabel(t, stage.reason) }}</dd>
           <template v-if="stage.attempt_index > 0">
             <dt>{{ t('admin.requestTrace.detail.attempt') }}</dt><dd class="font-mono" :data-testid="`trace-upstream-attempt-${stage.attempt_index}`">{{ stage.attempt_index }}</dd>
           </template>
           <template v-if="stage.view_name">
-            <dt>{{ t('admin.requestTrace.detail.source') }}</dt><dd>{{ stage.view_name }}</dd>
+            <dt>{{ t('admin.requestTrace.detail.source') }}</dt><dd data-testid="trace-stage-view">{{ stageViewLabel(t, stage.view_name) }}</dd>
           </template>
           <dt>{{ t('admin.requestTrace.detail.observed') }}</dt><dd>{{ stage.observed_bytes }}</dd>
           <dt>{{ t('admin.requestTrace.detail.retained') }}</dt><dd>{{ stage.retained_bytes }}</dd>
@@ -148,11 +155,12 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getTrace } from './api'
-import { requestTraceDecisionStage, type RequestTraceDetail } from './types'
+import { stageLabel, stageReasonLabel, stageStateLabel, stageViewLabel } from './labels'
+import type { RequestTraceDetail } from './types'
 
 const props = defineProps<{ show: boolean; traceId: string | null }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
@@ -168,6 +176,21 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+/**
+ * The Trace envelope carries a usage id but no token or cost figure: metering
+ * facts belong to the usage record, not to a request payload, and the Trace must
+ * not invent them from retained text. The id therefore links to the existing
+ * admin usage page, which is the session-gated owner of those facts, and carries
+ * the id so that page opens on that exact record instead of the unfiltered list.
+ * Only the id travels with the link: no Trace body, no plaintext.
+ */
+const usageLink = computed(() => {
+  const usageLogId = detail.value?.usage_log_id
+  return usageLogId
+    ? { path: '/admin/usage', query: { usage_log_id: String(usageLogId) } }
+    : { path: '/admin/usage' }
+})
+
 function hasHeaders(headers: Record<string, string[]>): boolean {
   return Object.keys(headers).length > 0
 }
@@ -178,12 +201,16 @@ function headerText(headers: Record<string, string[]>): string {
 }
 
 /**
- * A decision stage is body-less by contract: it reports a gateway decision and
- * never a request or response body, so the unobserved-body note would be a
- * claim about a body this stage can never carry.
+ * The stages that carry a client or upstream body. The unobserved-body note claims a
+ * body was not observed, so only these stages may show it: `client_metadata` and
+ * `wire_attempt` report observed facts instead of a body, and a decision stage reports
+ * a gateway decision, so their `not_observed` describes a body they never carry. An
+ * unknown stage is left unlabelled rather than told it is missing a body.
  */
-function isDecisionStage(stage: string): boolean {
-  return stage === requestTraceDecisionStage
+const bodyStages = new Set(['client_entry', 'wire_request', 'upstream_response', 'client_response'])
+
+function isBodyStage(stage: string): boolean {
+  return bodyStages.has(stage)
 }
 
 watch(() => [props.show, props.traceId] as const, ([show, id]) => {

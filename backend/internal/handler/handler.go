@@ -30,6 +30,7 @@ type AdminHandlers struct {
 	Usage                  *admin.UsageHandler
 	RequestTrace           *admin.RequestTraceHandler
 	RequestTraceExport     *admin.RequestTraceExportHandler
+	RequestTraceStatus     *admin.RequestTraceStatusHandler
 	UserAttribute          *admin.UserAttributeHandler
 	ErrorPassthrough       *admin.ErrorPassthroughHandler
 	TLSFingerprintProfile  *admin.TLSFingerprintProfileHandler

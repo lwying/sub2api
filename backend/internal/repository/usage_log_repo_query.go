@@ -123,9 +123,15 @@ type UsageLogFilters = usagestats.UsageLogFilters
 
 // ListWithFilters lists usage logs with optional filters (for admin)
 func (r *usageLogRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters UsageLogFilters) ([]service.UsageLog, *pagination.PaginationResult, error) {
-	conditions := make([]string, 0, 9)
-	args := make([]any, 0, 9)
+	conditions := make([]string, 0, 10)
+	args := make([]any, 0, 10)
 
+	// 精确记录定位放在最前：它是最强的筛选（至多一行），也是从请求 Trace 跳转时
+	// 唯一携带的条件，绑定为 id = $1 而不是被忽略成整表列表。
+	if filters.UsageLogID > 0 {
+		conditions = append(conditions, fmt.Sprintf("id = $%d", len(args)+1))
+		args = append(args, filters.UsageLogID)
+	}
 	if filters.UserID > 0 {
 		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
 		args = append(args, filters.UserID)
@@ -199,7 +205,7 @@ func shouldUseFastUsageLogTotal(filters UsageLogFilters) bool {
 		return false
 	}
 	// 强选择过滤下记录集通常较小，保留精确总数。
-	return filters.UserID == 0 && filters.APIKeyID == 0 && filters.AccountID == 0
+	return filters.UsageLogID == 0 && filters.UserID == 0 && filters.APIKeyID == 0 && filters.AccountID == 0
 }
 
 func (r *usageLogRepository) listUsageLogsWithPagination(ctx context.Context, whereClause string, args []any, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {

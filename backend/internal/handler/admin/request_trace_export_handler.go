@@ -109,8 +109,9 @@ func (h *RequestTraceExportHandler) Create(c *gin.Context) {
 	}
 	filter, ok := parseRequestTraceExportFilter(c)
 	if !ok {
-		setRequestTraceExportAudit(c, "failed", "request_trace_export_invalid_filter", nil)
 		response.ErrorFrom(c, errRequestTraceExportInvalidFilter)
+		// 审计必须在响应写出后调用，否则 http_status 会记成默认的 200。
+		setRequestTraceExportAudit(c, "failed", "request_trace_export_invalid_filter", nil)
 		return
 	}
 	task, err := h.service.CreateTask(c.Request.Context(), actor, filter)
@@ -228,7 +229,7 @@ func parseRequestTraceExportFilter(c *gin.Context) (service.RequestTraceExportFi
 		if err != nil || status < 0 || status > 599 {
 			return service.RequestTraceExportFilter{}, false
 		}
-		filter.ClientStatus = status
+		filter.ClientStatus = &status
 	}
 	if raw := strings.TrimSpace(c.Query("usage_linked")); raw != "" {
 		linked, err := strconv.ParseBool(raw)

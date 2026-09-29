@@ -34,6 +34,7 @@ func ProvideAdminHandlers(
 	usageHandler *admin.UsageHandler,
 	requestTraceHandler *admin.RequestTraceHandler,
 	requestTraceExportHandler *admin.RequestTraceExportHandler,
+	requestTraceStatusHandler *admin.RequestTraceStatusHandler,
 	userAttributeHandler *admin.UserAttributeHandler,
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
@@ -85,6 +86,7 @@ func ProvideAdminHandlers(
 		Usage:                  usageHandler,
 		RequestTrace:           requestTraceHandler,
 		RequestTraceExport:     requestTraceExportHandler,
+		RequestTraceStatus:     requestTraceStatusHandler,
 		UserAttribute:          userAttributeHandler,
 		ErrorPassthrough:       errorPassthroughHandler,
 		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
@@ -256,6 +258,12 @@ func ProvideRequestTraceExportHandler(svc *service.RequestTraceExportService) *a
 	return admin.NewRequestTraceExportHandler(svc)
 }
 
+// ProvideRequestTraceStatusHandler exposes only the value-free operational view:
+// queue depth, write failures, worker counters and the bounded cleanup backlog.
+func ProvideRequestTraceStatusHandler(svc *service.RequestTraceOpsStatusService) *admin.RequestTraceStatusHandler {
+	return admin.NewRequestTraceStatusHandler(svc)
+}
+
 // ProvideAdminUsageHandler 构造使用记录处理器。
 //
 // 票据 10 已退役值明细的读取／揭示接缝，因此这里不再注入任何值明细依赖。
@@ -318,6 +326,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAdminUsageHandler, // 使用记录处理器
 	ProvideRequestTraceHandler,
 	ProvideRequestTraceExportHandler,
+	ProvideRequestTraceStatusHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

@@ -4,9 +4,15 @@ import {
   normalizeRequestTraceOperatorStatus,
   normalizeRequestTraceStageDecision,
   normalizeRequestTraceStageFacts,
+  requestTraceCaptureStates,
   requestTraceDecisionKinds,
   requestTraceDecisionOutcomes,
   requestTraceDecisionSources,
+  requestTraceDecisionStage,
+  requestTraceStageNames,
+  requestTraceStageReasons,
+  requestTraceStageStates,
+  requestTraceStageViews,
 } from '../types'
 
 const status = {
@@ -344,5 +350,40 @@ describe('gateway decision stage boundary', () => {
     const withoutDecision = normalizeRequestTraceDetail(decisionDetail(undefined, { decision: undefined, metadata: { authorization: 'Bearer SECRET' } }))
     expect(withoutDecision.stages[0].decision).toBeUndefined()
     expect(JSON.stringify(withoutDecision)).not.toContain('Bearer SECRET')
+  })
+})
+
+describe('closed state and stage label sets', () => {
+  it('pins the closed state sets to the backend contract', () => {
+    // The list column and the drawer key their label maps off these lists, so a
+    // change here is a contract change that must be acknowledged on both sides.
+    expect([...requestTraceCaptureStates]).toEqual(['not_observed', 'stored', 'partial', 'write_failed'])
+    expect([...requestTraceStageStates]).toEqual([
+      'not_observed', 'stored', 'truncated', 'unsupported', 'redaction_unverified', 'write_failed',
+    ])
+  })
+
+  it('keeps the decision stage name inside the stage label set', () => {
+    // The drawer labels `stage.stage` through this set; the bodyless decision
+    // stage must stay addressable there.
+    expect([...requestTraceStageNames]).toContain(requestTraceDecisionStage)
+  })
+
+  it('names only bounded, pattern-safe stage names, views and reason codes', () => {
+    // The client refuses anything that is not a bounded token, so a label set
+    // value that could never travel the wire would be a dead label.
+    for (const value of [...requestTraceStageNames, ...requestTraceStageViews, ...requestTraceStageReasons]) {
+      expect(value, value).toMatch(/^[a-z][a-z0-9_]*$/)
+      expect(value.length, value).toBeLessThanOrEqual(96)
+    }
+  })
+
+  it('keeps every label set free of duplicates', () => {
+    for (const [name, values] of Object.entries({
+      requestTraceStageNames, requestTraceStageViews, requestTraceStageReasons,
+      requestTraceCaptureStates, requestTraceStageStates,
+    })) {
+      expect(new Set(values).size, name).toBe(values.length)
+    }
   })
 })

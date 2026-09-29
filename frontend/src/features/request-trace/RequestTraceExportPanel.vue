@@ -109,6 +109,7 @@ const downloadRefusal = ref<'file_lost' | 'expired' | null>(null)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollController: AbortController | null = null
+let createController: AbortController | null = null
 let downloadController: AbortController | null = null
 let revision = 0
 
@@ -205,17 +206,26 @@ async function create() {
   creating.value = true
   stopPolling()
   pollController?.abort()
-  revision += 1
+  createController?.abort()
+  const controller = new AbortController()
+  createController = controller
+  // The same revision guard `poll()` uses: if the panel unmounts (or another
+  // create starts) while the POST is in flight, this response must not adopt a
+  // task or register a poller that nothing will ever clear.
+  const current = ++revision
   try {
-    const created = await createTraceExport(filter)
+    const created = await createTraceExport(filter, { signal: controller.signal })
+    if (current !== revision) return
     task.value = created
     downloadRefusal.value = null
     statusUnknown.value = false
     startPollingIfActive()
   } catch {
+    if (current !== revision) return
     task.value = null
     createError.value = true
   } finally {
+    if (createController === controller) createController = null
     creating.value = false
   }
 }
@@ -262,6 +272,7 @@ onBeforeUnmount(() => {
   revision += 1
   stopPolling()
   pollController?.abort()
+  createController?.abort()
   downloadController?.abort()
   // The task handle is deliberately kept in memory only; nothing is persisted.
   task.value = null

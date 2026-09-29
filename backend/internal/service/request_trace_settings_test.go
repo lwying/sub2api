@@ -70,6 +70,8 @@ func TestRequestTraceWrittenAcknowledgementRequiresCurrentVerbatimStatement(t *t
 	payload, err := json.Marshal(ack)
 	require.NoError(t, err)
 	repo.values[SettingKeyRequestTraceRiskAcknowledgement] = string(payload)
+	// 直接用夹具改库等价于"另一个实例写入了坏值"：本实例要重新求值才能看到。
+	svc.invalidateRequestTraceGate()
 	require.False(t, svc.RequestTraceGate(ctx).CaptureAllowed)
 
 	ack.Phrase = RequestTraceRiskAcknowledgementPhraseEN
@@ -77,6 +79,7 @@ func TestRequestTraceWrittenAcknowledgementRequiresCurrentVerbatimStatement(t *t
 	payload, err = json.Marshal(ack)
 	require.NoError(t, err)
 	repo.values[SettingKeyRequestTraceRiskAcknowledgement] = string(payload)
+	svc.invalidateRequestTraceGate()
 	require.False(t, svc.RequestTraceGate(ctx).CaptureAllowed)
 }
 
@@ -193,4 +196,42 @@ func TestRequestTraceFreshSupportComesFromItsOwnProbe(t *testing.T) {
 	require.False(t, status.PlaintextCaptureSupported)
 	require.Equal(t, PlaintextCaptureSupportReasonUnknownDeployment, status.PlaintextCaptureSupportReason,
 		"运维状态必须与采集侧同一套收敛，不得回显探针自报的原始原因码")
+}
+
+// 关闭是默认状态，也是绝大多数部署的常态：热路径门控不得每个请求都回读设置表，
+// 否则每条推理请求都要多付一次 SELECT（仓库既有的面板限流门控就是带缓存的）。
+func TestRequestTraceGateCachesTheDisabledState(t *testing.T) {
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	require.False(t, svc.RequestTraceGate(context.Background()).CaptureAllowed)
+	reads := repo.getValueCalls
+	require.Positive(t, reads, "the first decision must consult the stored setting")
+	for i := 0; i < 25; i++ {
+		require.False(t, svc.RequestTraceGate(context.Background()).CaptureAllowed)
+	}
+	require.Equal(t, reads, repo.getValueCalls,
+		"a disabled gate must not re-read the settings table on every request")
+}
+
+// 运维点开启后必须立即生效，不能等缓存过期才开采集。
+func TestRequestTraceGateWriteTakesEffectImmediately(t *testing.T) {
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	svc.SetRequestTraceSupportProbe(&traceSupportProbeStub{
+		support: PlaintextCaptureSupport{Supported: true, Reason: PlaintextCaptureSupportReasonSupported},
+	})
+	require.False(t, svc.RequestTraceGate(context.Background()).CaptureAllowed)
+
+	_, err := svc.UpdateRequestTraceOperatorSettings(context.Background(), RequestTraceOperatorUpdateInput{
+		Enabled: true, AdminUserID: 7, Language: "zh", Phrase: RequestTraceRiskAcknowledgementPhraseZH,
+	})
+	require.NoError(t, err)
+	require.True(t, svc.RequestTraceGate(context.Background()).CaptureAllowed,
+		"the write must invalidate the cached disabled state")
+
+	_, err = svc.UpdateRequestTraceOperatorSettings(context.Background(), RequestTraceOperatorUpdateInput{Enabled: false})
+	require.NoError(t, err)
+	require.False(t, svc.RequestTraceGate(context.Background()).CaptureAllowed,
+		"emergency disable must invalidate an enabled decision immediately")
 }

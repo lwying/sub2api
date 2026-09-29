@@ -122,6 +122,21 @@
           </template>
         </UsageFilters>
 
+        <!-- 从请求 Trace 跳转到单条使用记录时的定位提示：只有一条结果，且可退出该范围 -->
+        <div
+          v-if="exactUsageLogId"
+          data-testid="usage-exact-record"
+          class="flex flex-wrap items-center gap-2 border-b border-gray-100 px-4 py-2 text-xs text-gray-600 dark:border-dark-700/50 dark:text-gray-300"
+        >
+          <span class="font-mono">{{ t('admin.usage.exactRecordFilter', { id: exactUsageLogId }) }}</span>
+          <button
+            type="button"
+            data-testid="usage-exact-record-clear"
+            class="btn btn-secondary btn-sm"
+            @click="clearExactUsageLogId"
+          >{{ t('common.clear') }}</button>
+        </div>
+
         <div v-show="activeTab === 'usage'" class="overflow-hidden rounded-b-2xl">
           <UsageTable
             flat
@@ -308,6 +323,13 @@ const sortState = reactive({
   sort_order: 'desc' as 'asc' | 'desc'
 })
 
+/**
+ * Exact usage record the page was opened on from a linked request Trace. It is kept
+ * outside `filters` because it locates one record instead of scoping a range: the
+ * stats and charts below still describe the selected range.
+ */
+const exactUsageLogId = ref<number | null>(null)
+
 const getSingleQueryValue = (value: string | null | Array<string | null> | undefined): string | undefined => {
   if (Array.isArray(value)) return value.find((item): item is string => typeof item === 'string' && item.length > 0)
   return typeof value === 'string' && value.length > 0 ? value : undefined
@@ -320,10 +342,24 @@ const getNumericQueryValue = (value: string | null | Array<string | null> | unde
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+/**
+ * The request Trace detail links a usage record as `/admin/usage?usage_log_id=<id>`.
+ * Only a positive integer is an exact record lookup: anything else must not be
+ * forwarded as a filter, and must not silently leave the operator on the
+ * unfiltered list while the URL claims otherwise.
+ */
+const getExactUsageLogIdQueryValue = (value: string | null | Array<string | null> | undefined): number | undefined => {
+  const raw = getSingleQueryValue(value)
+  if (!raw) return undefined
+  const parsed = Number(raw)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
 const applyRouteQueryFilters = () => {
   const queryStartDate = getSingleQueryValue(route.query.start_date)
   const queryEndDate = getSingleQueryValue(route.query.end_date)
   const queryUserId = getNumericQueryValue(route.query.user_id)
+  const queryUsageLogId = getExactUsageLogIdQueryValue(route.query.usage_log_id)
 
   if (queryStartDate) {
     startDate.value = queryStartDate
@@ -331,6 +367,8 @@ const applyRouteQueryFilters = () => {
   if (queryEndDate) {
     endDate.value = queryEndDate
   }
+
+  exactUsageLogId.value = queryUsageLogId ?? null
 
   filters.value = {
     ...filters.value,
@@ -380,11 +418,16 @@ const buildUsageListParams = (
 ): AdminUsageQueryParams => {
   const requestType = filters.value.request_type
   const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+  const exactUsageLogIdValue = exactUsageLogId.value
   return {
     page,
     page_size: pageSize,
     exact_total: exactTotal,
     ...filters.value,
+    // 定位到具体记录时按 id 取数，不受当前时间范围约束：目标记录可能早于所显示的区间。
+    start_date: exactUsageLogIdValue ? undefined : filters.value.start_date,
+    end_date: exactUsageLogIdValue ? undefined : filters.value.end_date,
+    ...(exactUsageLogIdValue ? { usage_log_id: exactUsageLogIdValue } : {}),
     stream: legacyStream === null ? undefined : legacyStream,
     sort_by: sortState.sort_by,
     sort_order: sortState.sort_order
@@ -548,7 +591,16 @@ const resetFilters = () => {
   startDate.value = range.start
   endDate.value = range.end
   filters.value = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, native_compaction_v2: null, billing_type: null, billing_mode: undefined }
+  // 重置筛选即离开"只看这一条记录"的范围；URL 仍保留跳转参数时由用户自行刷新页面找回。
+  exactUsageLogId.value = null
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
+  applyFilters()
+}
+
+/** Leaves the exact-record scope without discarding the rest of the filters. */
+const clearExactUsageLogId = () => {
+  if (exactUsageLogId.value === null) return
+  exactUsageLogId.value = null
   applyFilters()
 }
 const handlePageChange = (p: number) => { pagination.page = p; loadLogs() }
@@ -888,6 +940,17 @@ onUnmounted(() => { abortController?.abort(); exportAbortController?.abort(); do
 watch(modelDistributionSource, (source) => {
   void loadModelStats(source)
 })
+
+// 页面已打开时再次跳转（浏览器前进/后退）到另一条记录也要跟随：同一路由只变 query 时
+// 组件实例会复用，onMounted 不会重跑。
+watch(
+  () => getExactUsageLogIdQueryValue(route.query.usage_log_id),
+  (next) => {
+    if ((next ?? null) === exactUsageLogId.value) return
+    exactUsageLogId.value = next ?? null
+    applyFilters()
+  }
+)
 
 defineExpose({ requestedModelStats, refreshData })
 </script>

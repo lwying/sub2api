@@ -9,6 +9,8 @@ import (
 // traceSettingRepoStub is a minimal SettingRepository for Trace gate tests.
 type traceSettingRepoStub struct {
 	values map[string]string
+	// getValueCalls 记录设置读取次数：热路径门控必须走进程内缓存，不能每请求回表。
+	getValueCalls int
 }
 
 func (r *traceSettingRepoStub) Get(_ context.Context, key string) (*Setting, error) {
@@ -19,6 +21,7 @@ func (r *traceSettingRepoStub) Get(_ context.Context, key string) (*Setting, err
 }
 
 func (r *traceSettingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	r.getValueCalls++
 	setting, err := r.Get(ctx, key)
 	if err != nil {
 		return "", err

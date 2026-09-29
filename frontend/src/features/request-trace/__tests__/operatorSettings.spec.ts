@@ -77,6 +77,15 @@ describe('Trace operator gate', () => {
     expect(api.updateOperatorSettings).toHaveBeenCalledWith({ enabled: false, language: 'en', phrase: '' })
   })
 
+  it('labels the risk-statement language selector through the UI locale', () => {
+    const wrapper = mountGate()
+    const options = wrapper.get('[data-testid="request-trace-language"]').findAll('option')
+    expect(options.map(option => option.text())).toEqual([
+      'admin.requestTrace.operator.languages.en',
+      'admin.requestTrace.operator.languages.zh',
+    ])
+  })
+
   it('never renders unexpected credential or body fields supplied with status', () => {
     const wrapper = mountGate({ ...status(), body: 'BODY_CANARY', authorization: 'Bearer secret' } as RequestTraceOperatorStatus)
     expect(wrapper.text()).not.toContain('BODY_CANARY')

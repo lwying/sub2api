@@ -108,6 +108,7 @@ var ProviderSet = wire.NewSet(
 	NewRequestTraceUsageLinker,
 	NewRequestTraceExportRepository,
 	NewRequestTraceExportSource,
+	NewRequestTraceBacklogRepository, // 无敏感值运维状态：有界统计未关联清理积压
 	NewUsageBillingRepository,
 	NewBatchImageRepository,
 	NewIdempotencyRepository,

@@ -102,7 +102,7 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	to := from.Add(time.Hour)
 	linked := true
 	filter := service.RequestTraceExportFilter{
-		TraceID: exportSourceTraceIDThird, RouteFamily: string(service.RequestTraceMessages), ClientStatus: 200,
+		TraceID: exportSourceTraceIDThird, RouteFamily: string(service.RequestTraceMessages), ClientStatus: requestTraceExportTestStatus(200),
 		CreatedFrom: &from, CreatedTo: &to, UsageLinked: &linked,
 	}
 
@@ -114,7 +114,7 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	require.Contains(t, normalized, "FROM request_traces")
 	require.Contains(t, normalized, "($1 = '' OR trace_id = $1)")
 	require.Contains(t, normalized, "($2 = '' OR route_family = $2)")
-	require.Contains(t, normalized, "($3 = 0 OR client_status = $3)")
+	require.Contains(t, normalized, "($3::integer IS NULL OR client_status = $3)")
 	require.Contains(t, normalized, "($4::timestamptz IS NULL OR created_at >= $4)")
 	require.Contains(t, normalized, "($5::timestamptz IS NULL OR created_at < $5)")
 	require.Contains(t, normalized, "($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)")
@@ -133,7 +133,10 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	require.Len(t, stub.args[0], 8)
 	require.Equal(t, exportSourceTraceIDThird, stub.args[0][0])
 	require.Equal(t, string(service.RequestTraceMessages), stub.args[0][1])
-	require.Equal(t, 200, stub.args[0][2])
+	status, ok := stub.args[0][2].(*int)
+	require.True(t, ok)
+	require.NotNil(t, status)
+	require.Equal(t, 200, *status)
 	require.Equal(t, from.UTC(), stub.args[0][3])
 	require.Equal(t, to.UTC(), stub.args[0][4])
 	require.Equal(t, true, stub.args[0][5])
@@ -151,7 +154,9 @@ func TestRequestTraceExportSourceNextTraceIDsOmitsAbsentFilters(t *testing.T) {
 	require.Len(t, stub.args[0], 8)
 	require.Equal(t, "", stub.args[0][0])
 	require.Equal(t, "", stub.args[0][1])
-	require.Equal(t, 0, stub.args[0][2])
+	status, ok := stub.args[0][2].(*int)
+	require.True(t, ok)
+	require.Nil(t, status, "an omitted status filter must bind SQL NULL")
 	require.Nil(t, stub.args[0][3])
 	require.Nil(t, stub.args[0][4])
 	require.Nil(t, stub.args[0][5])
@@ -175,8 +180,8 @@ func TestRequestTraceExportSourceNextTraceIDsRejectsUnboundedOrMalformedInput(t 
 		{name: "uppercase cursor", after: "0123456789ABCDEF0123456789ABCDEF", limit: 10},
 		{name: "malformed trace id filter", filter: service.RequestTraceExportFilter{TraceID: "zz"}, limit: 10},
 		{name: "unsupported route family", filter: service.RequestTraceExportFilter{RouteFamily: "gemini"}, limit: 10},
-		{name: "client status above range", filter: service.RequestTraceExportFilter{ClientStatus: 600}, limit: 10},
-		{name: "negative client status", filter: service.RequestTraceExportFilter{ClientStatus: -1}, limit: 10},
+		{name: "client status above range", filter: service.RequestTraceExportFilter{ClientStatus: requestTraceExportTestStatus(600)}, limit: 10},
+		{name: "negative client status", filter: service.RequestTraceExportFilter{ClientStatus: requestTraceExportTestStatus(-1)}, limit: 10},
 		{name: "inverted window", filter: service.RequestTraceExportFilter{CreatedFrom: &from, CreatedTo: &earlier}, limit: 10},
 		{name: "empty window", filter: service.RequestTraceExportFilter{CreatedFrom: &from, CreatedTo: &from}, limit: 10},
 	}
@@ -512,4 +517,9 @@ func mustJSON(t *testing.T, value any) string {
 	encoded, err := json.Marshal(value)
 	require.NoError(t, err)
 	return string(encoded)
+}
+
+// requestTraceExportTestStatus 构造可选的 client_status 筛选值：nil 与 0 是不同含义。
+func requestTraceExportTestStatus(value int) *int {
+	return &value
 }

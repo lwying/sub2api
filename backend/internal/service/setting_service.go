@@ -166,6 +166,13 @@ type SettingService struct {
 	requestTraceSupportProbe RequestTraceSupportProbe
 	requestTraceSupportCache atomic.Value // *cachedPlaintextCaptureSupport
 	requestTraceSupportSF    singleflight.Group
+
+	// requestTraceGateCache 缓存「Trace 采集现在是否真的允许」的结论。门控在每条
+	// 推理请求的准入路径上求值，关闭状态（默认）也不能每请求回读设置表；写入设置
+	// 会立即失效，跨实例最长等 requestTraceGateCacheTTL。
+	requestTraceGateCache   atomic.Value // *cachedRequestTraceGate
+	requestTraceGateVersion atomic.Uint64
+	requestTraceGateSF      singleflight.Group
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

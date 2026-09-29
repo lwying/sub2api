@@ -58,7 +58,7 @@ const (
 type RequestTraceExportFilter struct {
 	TraceID      string     `json:"trace_id,omitempty"`
 	RouteFamily  string     `json:"route_family,omitempty"`
-	ClientStatus int        `json:"client_status,omitempty"`
+	ClientStatus *int       `json:"client_status,omitempty"`
 	CreatedFrom  *time.Time `json:"created_from,omitempty"`
 	CreatedTo    *time.Time `json:"created_to,omitempty"`
 	UsageLinked  *bool      `json:"usage_linked,omitempty"`
@@ -204,7 +204,7 @@ func exportFilterValid(filter RequestTraceExportFilter) bool {
 	default:
 		return false
 	}
-	if filter.ClientStatus < 0 || filter.ClientStatus > 599 {
+	if filter.ClientStatus != nil && (*filter.ClientStatus < 0 || *filter.ClientStatus > 599) {
 		return false
 	}
 	return filter.CreatedFrom == nil || filter.CreatedTo == nil || filter.CreatedFrom.Before(*filter.CreatedTo)

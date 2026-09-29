@@ -45,6 +45,7 @@ func newGatewayRoutesTestRouterWithGroup(group *service.Group) *gin.Engine {
 				TextMaxBodySize: 1024 * 1024,
 			},
 		},
+		nil, nil,
 	)
 	return router
 }

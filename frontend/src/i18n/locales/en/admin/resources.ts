@@ -512,6 +512,7 @@ export default {
     usage: {
       title: 'Usage Records',
       description: 'View and manage all user usage records',
+      exactRecordFilter: 'Showing only usage record #{id}',
       userFilter: 'User',
       searchUserPlaceholder: 'Search user by email...',
       searchApiKeyPlaceholder: 'Search API key by name...',
@@ -559,6 +560,7 @@ export default {
       userDeletedBadge: 'Deleted',
       requestAudit: {
         title: 'Request audit',
+        viewTrace: 'View request Trace',
         loading: 'Loading request audit',
         empty: 'No upstream attempts recorded',
         loadFailed: 'Failed to load request audit',

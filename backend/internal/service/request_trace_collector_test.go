@@ -507,7 +507,11 @@ func TestTraceJSONRedactionRetainsBothClaudeUserIDStringFormats(t *testing.T) {
 		require.True(t, verified)
 		require.True(t, credential)
 		require.NotContains(t, string(redacted), "synthetic-secret")
-		var value struct { Metadata struct { UserID string `json:"user_id"` } `json:"metadata"` }
+		var value struct {
+			Metadata struct {
+				UserID string `json:"user_id"`
+			} `json:"metadata"`
+		}
 		require.NoError(t, json.Unmarshal(redacted, &value))
 		require.Equal(t, userID, value.Metadata.UserID)
 	}
@@ -668,4 +672,22 @@ func TestTraceJSONRedactionDoesNotFlattenMetadataUserIDString(t *testing.T) {
 	require.Equal(t, `{"device_id":"dev-1","account_uuid":"acct-1","session_id":"sess-1"}`, metadata["user_id"])
 	require.NotContains(t, string(redacted), "hidden")
 	require.False(t, strings.Contains(string(redacted), "client_secret\":\"hidden"))
+}
+
+// 节点预算必须同时约束对象键与数组元素：数组不计数就等于没有上限，
+// 一个只由数组组成的正文会绕过"有界 JSON 副本"的承诺。
+func TestTraceJSONRedactionBudgetCoversArrayElements(t *testing.T) {
+	body := []byte("[")
+	for i := 0; i < 200_000; i++ {
+		if i > 0 {
+			body = append(body, ',')
+		}
+		body = append(body, '1')
+	}
+	body = append(body, ']')
+	require.Less(t, len(body), RequestTraceBodyLimit, "the fixture must fit the stage limit")
+
+	redacted, _, verified := RedactRequestTraceJSON(body)
+	require.False(t, verified, "an over-budget array must fail closed instead of being copied whole")
+	require.Nil(t, redacted)
 }

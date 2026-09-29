@@ -62,7 +62,7 @@ func (h *RequestTraceHandler) List(c *gin.Context) {
 			response.ErrorFrom(c, errRequestTraceInvalidFilter)
 			return
 		}
-		filter.ClientStatus = status
+		filter.ClientStatus = &status
 	}
 	for _, entry := range []struct {
 		key string
@@ -84,6 +84,24 @@ func (h *RequestTraceHandler) List(c *gin.Context) {
 			return
 		}
 		filter.UsageLinked = &linked
+	}
+	// account_id / usage_log_id 是可选检索：出现时必须是正整数；非法值直接拒绝，
+	// 不静默退化成"无筛选"，否则从使用记录跳转过来会看到全部 Trace。
+	for _, entry := range []struct {
+		key string
+		out **int64
+	}{{"usage_log_id", &filter.UsageLogID}, {"account_id", &filter.AccountID}} {
+		raw := c.Query(entry.key)
+		if raw == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			response.ErrorFrom(c, errRequestTraceInvalidFilter)
+			return
+		}
+		value := id
+		*entry.out = &value
 	}
 	if page < 1 || page > 100000 || pageSize <= 0 {
 		response.ErrorFrom(c, errRequestTraceInvalidFilter)

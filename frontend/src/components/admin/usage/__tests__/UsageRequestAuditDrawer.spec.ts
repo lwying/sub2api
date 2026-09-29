@@ -19,6 +19,10 @@ vi.mock('@/api/admin/usage', async (importOriginal) => {
   }
 })
 
+// The drawer can jump to the Trace list; these cases exercise the audit read only,
+// so the router is stubbed to keep the composable resolvable without a real router.
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   const labels: Record<string, string> = {

@@ -187,6 +187,11 @@ type requestTraceAttemptSink struct {
 	responseEOF     bool
 	responseStarted bool
 	responseEncoded bool
+
+	// The transport may upload the request body concurrently with an early
+	// response. Per-attempt fields are protected separately from flow.mu so no
+	// callback can hold the sink lock while acquiring the flow or collector lock.
+	mu sync.Mutex
 }
 
 func (s *requestTraceAttemptSink) RequestBodyChunk(chunk []byte, err error) {
@@ -195,14 +200,19 @@ func (s *requestTraceAttemptSink) RequestBodyChunk(chunk []byte, err error) {
 	}
 	s.flow.collector.AppendStage(s.requestKey, chunk)
 	if err == io.EOF {
+		s.mu.Lock()
 		s.requestEOF = true
+		s.mu.Unlock()
 		s.flow.collector.FinishStage(s.requestKey, true)
 	}
 }
 
 func (s *requestTraceAttemptSink) RequestBodyClosed(error) {
 	if s != nil && s.flow != nil {
-		s.flow.collector.FinishStage(s.requestKey, s.requestEOF)
+		s.mu.Lock()
+		complete := s.requestEOF
+		s.mu.Unlock()
+		s.flow.collector.FinishStage(s.requestKey, complete)
 	}
 }
 
@@ -220,8 +230,13 @@ func (s *requestTraceAttemptSink) RoundTripResult(status int, headers http.Heade
 			if status >= 100 && status <= 599 {
 				facts.Status = status
 			}
-			ended := time.Now().UTC()
-			facts.EndedAt = &ended
+			// Response headers establish the status, not the end of a stream.
+			// EndedAt is set only when the observed response body reaches EOF
+			// (or is closed early, in which case the body stage reports a gap).
+			if status == 0 || err != nil {
+				ended := time.Now().UTC()
+				facts.EndedAt = &ended
+			}
 			facts.TrimToBudget()
 			s.flow.attempts[i].hadError = err != nil
 			break
@@ -230,11 +245,17 @@ func (s *requestTraceAttemptSink) RoundTripResult(status int, headers http.Heade
 	s.flow.mu.Unlock()
 	// An upstream status does not prove the request body reached its EOF: a
 	// server can answer 413 before consuming the submitted payload.
-	s.flow.collector.FinishStage(s.requestKey, s.requestEOF)
+	s.mu.Lock()
+	complete := s.requestEOF
 	if status > 0 {
 		s.responseStarted = true
 		encoded := strings.TrimSpace(headers.Get("Content-Encoding"))
 		s.responseEncoded = encoded != "" && !strings.EqualFold(encoded, "identity")
+	}
+	s.mu.Unlock()
+	s.flow.collector.FinishStage(s.requestKey, complete)
+	if status > 0 {
+		encoded := strings.TrimSpace(headers.Get("Content-Encoding"))
 		s.flow.collector.StartStage(s.responseKey, headers.Get("Content-Type"),
 			strings.HasPrefix(strings.ToLower(headers.Get("Content-Type")), "text/event-stream") &&
 				(encoded == "" || strings.EqualFold(encoded, "identity")))
@@ -245,24 +266,55 @@ func (s *requestTraceAttemptSink) ResponseBodyChunk(chunk []byte, err error) {
 	if s == nil || s.flow == nil {
 		return
 	}
-	if !s.responseStarted {
+	s.mu.Lock()
+	started, encoded := s.responseStarted, s.responseEncoded
+	if err == io.EOF && started {
+		s.responseEOF = true
+	}
+	s.mu.Unlock()
+	if !started {
 		return
 	}
 	s.flow.collector.AppendStage(s.responseKey, chunk)
 	if err == io.EOF {
-		s.responseEOF = true
 		s.flow.collector.FinishStage(s.responseKey, true)
-		if s.responseEncoded {
+		if encoded {
 			s.flow.collector.MarkStageEncoding(s.responseKey)
 		}
+		s.markResponseEnded()
 	}
 }
 
 func (s *requestTraceAttemptSink) ResponseBodyClosed(error) {
-	if s != nil && s.flow != nil && s.responseStarted {
-		s.flow.collector.FinishStage(s.responseKey, s.responseEOF)
-		if s.responseEncoded {
+	if s == nil || s.flow == nil {
+		return
+	}
+	s.mu.Lock()
+	started, eof, encoded := s.responseStarted, s.responseEOF, s.responseEncoded
+	s.mu.Unlock()
+	if started {
+		s.flow.collector.FinishStage(s.responseKey, eof)
+		if encoded {
 			s.flow.collector.MarkStageEncoding(s.responseKey)
+		}
+		// A close without EOF is an observed end to the read, not proof of a
+		// complete upstream response. The body stage still records the gap.
+		s.markResponseEnded()
+	}
+}
+
+func (s *requestTraceAttemptSink) markResponseEnded() {
+	ended := time.Now().UTC()
+	s.flow.mu.Lock()
+	defer s.flow.mu.Unlock()
+	for i := range s.flow.attempts {
+		if s.flow.attempts[i].index == s.index {
+			facts := &s.flow.attempts[i].facts
+			if facts.EndedAt == nil {
+				facts.EndedAt = &ended
+				facts.TrimToBudget()
+			}
+			return
 		}
 	}
 }
@@ -324,6 +376,8 @@ func (f *requestTraceFlow) finish(id string, authenticated bool) []service.Reque
 	f.mu.Unlock()
 	f.collector.FinishStage(service.RequestTraceBodyKey{Stage: "client_response", View: "downstream"}, clientComplete)
 	for _, fact := range facts {
+		// If the body never reached EOF or Close, EndedAt stays absent rather
+		// than inventing a duration. The body stage reports incomplete_read.
 		f.collector.FinishStage(service.RequestTraceBodyKey{Stage: "upstream_response", AttemptIndex: fact.index, View: "received"}, false)
 	}
 	sort.Slice(facts, func(i, j int) bool { return facts[i].index < facts[j].index })
@@ -388,47 +442,87 @@ func (f *requestTraceFlow) finish(id string, authenticated bool) []service.Reque
 	}
 	if len(stages) > service.RequestTraceStageCountLimit {
 		originalCount := len(stages)
-		// Reserve the last two records for a visible gap and the actual client
+		// Reserve the last slots for a visible gap and the actual client
 		// response. Otherwise a long retry chain silently discards the result.
-		var final, hijackGap, decisionGap *service.RequestTraceStage
+		// These are value copies on purpose: the appends below write into the
+		// same backing array, so a pointer would be clobbered before it is read.
+		var final, hijackGap, decisionGap service.RequestTraceStage
+		var hasFinal, hasHijackGap, hasDecisionGap bool
 		for i := range stages {
 			if stages[i].Stage == "client_response" && stages[i].View == "downstream" {
-				final = &stages[i]
+				final, hasFinal = stages[i], true
+				final.Ordinal = i + 1
 			}
 			if stages[i].Reason == "hijacked_unobservable" {
-				hijackGap = &stages[i]
+				hijackGap, hasHijackGap = stages[i], true
+				hijackGap.Ordinal = i + 1
 			}
 			if stages[i].Reason == "decision_budget_exceeded" {
-				decisionGap = &stages[i]
+				decisionGap, hasDecisionGap = stages[i], true
+				decisionGap.Ordinal = i + 1
 			}
 		}
 		keep := service.RequestTraceStageCountLimit - 1
-		if final != nil {
+		if hasFinal {
 			keep--
 		}
-		if hijackGap != nil {
+		if hasHijackGap {
 			keep--
 		}
-		if decisionGap != nil {
+		if hasDecisionGap {
 			keep--
 		}
-		stages = stages[:keep]
-		stages = append(stages, service.RequestTraceStage{
+		kept := append([]service.RequestTraceStage(nil), stages[:keep]...)
+		// Some reserved records may already be in the prefix. Do not duplicate
+		// them or count them as dropped when the tail is trimmed.
+		if hasFinal {
+			kept = removeRequestTraceStageOrdinal(kept, final.Ordinal)
+		}
+		if hasHijackGap {
+			kept = removeRequestTraceStageOrdinal(kept, hijackGap.Ordinal)
+		}
+		if hasDecisionGap {
+			kept = removeRequestTraceStageOrdinal(kept, decisionGap.Ordinal)
+		}
+		reserved := 0
+		if hasFinal {
+			reserved++
+		}
+		if hasHijackGap {
+			reserved++
+		}
+		if hasDecisionGap {
+			reserved++
+		}
+		dropped := originalCount - len(kept) - reserved
+		stages = append(kept, service.RequestTraceStage{
 			TraceID: id, Stage: "capture_gap", State: service.RequestTraceTruncated,
-			Reason: "stage_budget_exceeded", DroppedEvents: originalCount - keep,
+			Reason: "stage_budget_exceeded", DroppedEvents: dropped,
 		})
-		if final != nil {
-			stages = append(stages, *final)
+		if hasFinal {
+			stages = append(stages, final)
 		}
-		if hijackGap != nil {
-			stages = append(stages, *hijackGap)
+		if hasHijackGap {
+			stages = append(stages, hijackGap)
 		}
-		if decisionGap != nil {
-			stages = append(stages, *decisionGap)
+		if hasDecisionGap {
+			stages = append(stages, decisionGap)
 		}
 	}
 	for i := range stages {
 		stages[i].Ordinal = i + 1
+	}
+	return stages
+}
+
+// removeRequestTraceStageOrdinal removes one reserved stage from the prefix
+// before it is re-appended at the end. The ordinal is assigned from the
+// original slice position during trimming; zero never matches.
+func removeRequestTraceStageOrdinal(stages []service.RequestTraceStage, ordinal int) []service.RequestTraceStage {
+	for i := range stages {
+		if stages[i].Ordinal == ordinal {
+			return append(stages[:i], stages[i+1:]...)
+		}
 	}
 	return stages
 }
