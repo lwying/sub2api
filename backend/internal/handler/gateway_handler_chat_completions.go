@@ -70,6 +70,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 
 	// Extract model and stream
 	modelResult := gjson.GetBytes(body, "model")
@@ -129,6 +130,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+			"type": "rate_limit_error", "code": claude429CooldownCode, "message": claude429CooldownMessage,
+		}})
+		return
+	}
+
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gateway.cc.user_slot_acquire_failed", zap.Error(err))
@@ -182,11 +191,15 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	for {
-		if c.Request.Context().Err() != nil {
+		if failoverClientGone(c) {
 			return
 		}
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("gateway.cc.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform)
 				cls = classifySelectionFailureError(err, cls)
@@ -346,6 +359,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 					}
 					continue
 				case FailoverExhausted:
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:

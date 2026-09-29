@@ -603,7 +603,12 @@ function mountView() {
 }
 
 it("saves the request-scoped 429 account limit from gateway settings", async () => {
-  getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 2 });
+  getRateLimit429AccountLimit.mockResolvedValue({
+    max_accounts: 2,
+    enabled: false,
+    scope: "session",
+    cooldown_seconds: 60,
+  });
   updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
   getSettings.mockResolvedValue({ ...baseSettingsResponse });
   const wrapper = mountView();
@@ -615,11 +620,23 @@ it("saves the request-scoped 429 account limit from gateway settings", async () 
   await input.setValue("3");
   await wrapper.get('[data-testid="save-rate-limit-429-account-limit"]').trigger("click");
   await flushPromises();
-  expect(updateRateLimit429AccountLimit).toHaveBeenCalledWith({ max_accounts: 3 });
+  // N 与跨请求冷却属于同一设置组：保存 N 时必须一并回写冷却字段，
+  // 否则后端会把缺省字段绑定为默认值（关闭 / 会话级 / 60 秒），悄悄关掉已启用的冷却。
+  expect(updateRateLimit429AccountLimit).toHaveBeenCalledWith({
+    max_accounts: 3,
+    enabled: false,
+    scope: "session",
+    cooldown_seconds: 60,
+  });
 });
 
 it("keeps the 429 account limit control inside the backend 1-100 contract", async () => {
-  getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 7 });
+  getRateLimit429AccountLimit.mockResolvedValue({
+    max_accounts: 7,
+    enabled: false,
+    scope: "session",
+    cooldown_seconds: 60,
+  });
   getSettings.mockResolvedValue({ ...baseSettingsResponse });
   const wrapper = mountView();
   await flushPromises();
@@ -631,6 +648,89 @@ it("keeps the 429 account limit control inside the backend 1-100 contract", asyn
   expect((input.element as HTMLInputElement).max).toBe("100");
   // 已保存的非默认值按原值回显，而不是落到默认 2。
   expect((input.element as HTMLInputElement).value).toBe("7");
+});
+
+it("reads back the cross-request Claude cooldown inside the same 429 account-limit card", async () => {
+  getRateLimit429AccountLimit.mockResolvedValue({
+    max_accounts: 4,
+    enabled: true,
+    scope: "device",
+    cooldown_seconds: 900,
+  });
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  const toggle = wrapper.get('[data-testid="rate-limit-429-account-limit-enabled"]');
+  expect((toggle.element as HTMLInputElement).checked).toBe(true);
+
+  const scope = wrapper.get('[data-testid="rate-limit-429-account-limit-scope"]');
+  expect((scope.element as HTMLSelectElement).value).toBe("device");
+
+  const seconds = wrapper.get('[data-testid="rate-limit-429-account-limit-cooldown-seconds"]');
+  // 后端只接受 1–7200 秒，前端控件的边界必须一致。
+  expect((seconds.element as HTMLInputElement).min).toBe("1");
+  expect((seconds.element as HTMLInputElement).max).toBe("7200");
+  // 已保存的非默认值按原值回显，而不是落到默认 60。
+  expect((seconds.element as HTMLInputElement).value).toBe("900");
+});
+
+it("defaults the cross-request Claude cooldown to off, session level and 60 seconds", async () => {
+  getRateLimit429AccountLimit.mockResolvedValue({
+    max_accounts: 2,
+    enabled: false,
+    scope: "session",
+    cooldown_seconds: 60,
+  });
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  const toggle = wrapper.get('[data-testid="rate-limit-429-account-limit-enabled"]');
+  expect((toggle.element as HTMLInputElement).checked).toBe(false);
+
+  const scope = wrapper.get('[data-testid="rate-limit-429-account-limit-scope"]');
+  expect((scope.element as HTMLSelectElement).value).toBe("session");
+  // 两种粒度都在同一选择控件里，默认会话级。
+  expect(Array.from((scope.element as HTMLSelectElement).options).map((option) => option.value)).toEqual([
+    "session",
+    "device",
+  ]);
+
+  const seconds = wrapper.get('[data-testid="rate-limit-429-account-limit-cooldown-seconds"]');
+  expect((seconds.element as HTMLInputElement).value).toBe("60");
+});
+
+it("saves N together with an enabled device-level cross-request cooldown", async () => {
+  getRateLimit429AccountLimit.mockResolvedValue({
+    max_accounts: 2,
+    enabled: false,
+    scope: "session",
+    cooldown_seconds: 60,
+  });
+  updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  await wrapper.get('[data-testid="rate-limit-429-account-limit"]').setValue("3");
+  await wrapper.get('[data-testid="rate-limit-429-account-limit-enabled"]').setValue(true);
+  await wrapper.get('[data-testid="rate-limit-429-account-limit-scope"]').setValue("device");
+  await wrapper
+    .get('[data-testid="rate-limit-429-account-limit-cooldown-seconds"]')
+    .setValue("300");
+  await wrapper.get('[data-testid="save-rate-limit-429-account-limit"]').trigger("click");
+  await flushPromises();
+
+  expect(updateRateLimit429AccountLimit).toHaveBeenCalledWith({
+    max_accounts: 3,
+    enabled: true,
+    scope: "device",
+    cooldown_seconds: 300,
+  });
 });
 
 it("configures the per-key outward billing snapshot without changing the default", async () => {

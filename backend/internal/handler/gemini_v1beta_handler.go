@@ -338,6 +338,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "Request body is empty")
 		return
 	}
+	claude429Cooldown := claude429CooldownRequest{}
+	if action == "generateContent" || action == "streamGenerateContent" {
+		claude429Cooldown = captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
+	}
 
 	setOpsRequestContext(c, modelName, stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(stream, false)))
@@ -362,6 +366,12 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
 
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		googleError(c, http.StatusTooManyRequests, claude429CooldownMessage)
+		return
+	}
+
 	// 1) user concurrency slot
 	streamStarted := false
 	if h.errorPassthroughService != nil {
@@ -370,7 +380,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	userReleaseFunc, err := geminiConcurrency.AcquireUserSlotWithWait(c, authSubject.UserID, authSubject.Concurrency, stream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gemini.user_slot_acquire_failed", zap.Error(err))
-		googleError(c, http.StatusTooManyRequests, err.Error())
+		googleConcurrencyError(c, err, "user")
 		return
 	}
 	// 确保请求取消时也会释放槽位，避免长连接被动中断造成泄漏
@@ -507,6 +517,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	for {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, modelName, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("gemini.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, modelName, modelName, service.PlatformGemini)
 				if !cls.ModelNotFound {
@@ -599,7 +613,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			)
 			if err != nil {
 				reqLog.Warn("gemini.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-				googleError(c, http.StatusTooManyRequests, err.Error())
+				googleConcurrencyError(c, err, "account")
 				return
 			}
 			if accountWaitCounted {
@@ -642,6 +656,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
 		}
 		sessionGroupID := derefGroupID(apiKey.GroupID)
+		writerSizeBeforeForward := c.Writer.Size()
 		if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 			result, err = h.antigravityGatewayService.ForwardGemini(
 				requestCtx,
@@ -663,11 +678,15 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				// 保持 Gemini 既有 failover 行为；只禁止转发期间已有输出时
+				// 把本次 429 触顶升级成跨请求冷却。
+				outputWritten := c.Writer.Size() != writerSizeBeforeForward
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached() && !outputWritten)
 					h.handleGeminiFailoverExhausted(c, fs.LastFailoverErr)
 					return
 				case FailoverCanceled:
@@ -675,7 +694,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 					return
 				}
 			}
-			// ForwardNative already wrote the response
+			// 转发层已写出错误响应；客户端断开时转发层不写，响应未提交则标记 499。
+			failoverClientGone(c)
 			reqLog.Error("gemini.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			return
 		}
@@ -836,6 +856,13 @@ func googleError(c *gin.Context, status int, message string) {
 			"status":  googleapi.HTTPStatusToGoogleStatus(status),
 		},
 	})
+}
+
+// googleConcurrencyError 以 Google 错误格式回写并发槽获取失败，状态码与文案
+// 沿用 concurrencyErrorResponse 的统一映射（客户端断开为 499）。
+func googleConcurrencyError(c *gin.Context, err error, slotType string) {
+	status, _, _, message := concurrencyErrorResponse(err, slotType)
+	googleError(c, status, message)
 }
 
 func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {

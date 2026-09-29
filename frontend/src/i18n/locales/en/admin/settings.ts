@@ -1063,8 +1063,16 @@ export default {
       },
       rateLimit429AccountLimit: {
         title: 'Per-Request 429 Account Limit',
-        description: 'Maximum distinct upstream accounts ending in 429 within one request; does not cool down the shared API key.',
+        description: 'Maximum distinct upstream accounts ending in 429 within one request; does not cool down the shared API key. Once this cap is reached, the same session or device can optionally be cooled down across requests.',
         maxAccounts: 'Maximum 429 accounts (1–100)',
+        crossRequestEnabled: 'Enable cross-request cooldown',
+        crossRequestEnabledHint: 'Applies only after the 429 account count above is reached: it briefly blocks later Claude message requests from the same client for the chosen granularity. The shared API key as a whole is never cooled down.',
+        crossRequestScope: 'Cooldown granularity',
+        crossRequestScopeSession: 'Per session',
+        crossRequestScopeDevice: 'Per device',
+        crossRequestScopeHint: 'Per session: a new session on the same device no longer matches. Per device: new sessions on the same device still match. Both granularities apply only when the client identity is complete and its header agrees with the body.',
+        crossRequestCooldownSeconds: 'Cooldown duration (seconds)',
+        crossRequestCooldownSecondsHint: 'Range 1–7200 seconds. Changing it only affects records written afterwards; existing records still expire on their original duration.',
         saved: 'Per-request 429 account limit saved',
         loadFailed: 'Failed to load the 429 account limit',
         saveFailed: 'Failed to save the 429 account limit'

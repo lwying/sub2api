@@ -592,6 +592,10 @@ const (
 	SettingKeyRateLimit429CooldownSettings = "rate_limit_429_cooldown_settings"
 	// SettingKeyRateLimit429AccountLimit caps distinct accounts exhausted by 429 in one logical request.
 	SettingKeyRateLimit429AccountLimit = "rate_limit_429_account_limit"
+	// SettingKeyRateLimit429AccountLimitCooldown stores JSON config for the optional cross-request
+	// cooldown that accompanies the per-request 429 account limit (enabled, scope, cooldown_seconds).
+	// It is deliberately separate from SettingKeyRateLimit429CooldownSettings (upstream account-level avoidance).
+	SettingKeyRateLimit429AccountLimitCooldown = "rate_limit_429_account_limit_cooldown"
 	// SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings stores the cooldown applied when the OAuth image tool is unavailable.
 	SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings = "openai_images_oauth_unavailable_cooldown_settings"
 	// SettingKeyOpenAIAPIKeyHealthBreakerSettings stores the opt-in OpenAI pool API-key breaker config.

@@ -70,6 +70,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := claude429CooldownRequest{}
+	if !service.IsOpenAIResponsesInputTokensRequestPath(c) {
+		claude429Cooldown = captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
+	}
 
 	// Extract model and stream using gjson (like OpenAI handler)
 	modelResult := gjson.GetBytes(body, "model")
@@ -138,6 +142,12 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		h.responsesErrorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		return
+	}
+
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gateway.responses.user_slot_acquire_failed", zap.Error(err))
@@ -185,11 +195,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 
 	for {
-		if requestCtx.Err() != nil {
+		if failoverClientGone(c) {
 			return
 		}
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("gateway.responses.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, effectiveAPIKeyPlatform(c, apiKey))
 				cls = classifySelectionFailureError(err, cls)
@@ -335,6 +349,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 					}
 					continue
 				case FailoverExhausted:
+					claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:

@@ -57,6 +57,7 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	claude429Cooldown         *service.Claude429CooldownGate
 	keyBillingSnapshot        *service.KeyBillingSnapshotService
 }
 
@@ -168,6 +169,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 	body = parsedReq.Body.Bytes()
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
@@ -250,6 +252,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+
+	if seconds, blocked := claude429Cooldown.retryAfter(c.Request.Context()); blocked {
+		claude429Cooldown.prepareLocalResponse(c, seconds)
+		h.errorResponseWithCode(c, http.StatusTooManyRequests, "rate_limit_error", claude429CooldownCode, claude429CooldownMessage)
+		return
+	}
 
 	// 1. 首先获取用户并发槽位
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
@@ -358,6 +366,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		for {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 			if err != nil {
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
+					return
+				}
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformGemini)
 					if !cls.ModelNotFound {
@@ -533,6 +545,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					case FailoverContinue:
 						continue
 					case FailoverExhausted:
+						claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformGemini, streamStarted)
 						return
 					case FailoverCanceled:
@@ -693,6 +706,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			)
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
 			if err != nil {
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
+					return
+				}
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, currentAPIKey, reqModel, reqModel, platform)
 					if !cls.ModelNotFound {
@@ -1154,6 +1171,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						delete(sessionSlotAccounts, account.ID)
 						continue
 					case FailoverExhausted:
+						claude429Cooldown.markIfCapReached(c, fs.Request429CapReached())
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, account.Platform, streamStarted)
 						return
 					case FailoverCanceled:
@@ -2082,8 +2100,13 @@ func (h *GatewayHandler) handleStreamingAwareErrorWithCode(c *gin.Context, statu
 // Writer 已被写过时（ping 已 flush）走 streamStarted 分支，
 // 让 handleStreamingAwareError 通过 SSE 发协议合规的终止事件，
 // 否则下游收到的就是 silent EOF。
+// 客户端已断开时不补写，响应未提交则标记 499（见 failoverClientGone）。
 func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarted bool) bool {
 	if c == nil || c.Writer == nil {
+		return false
+	}
+	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.Canceled) {
+		failoverClientGone(c)
 		return false
 	}
 	if service.IsResponseCommitted(c) {
