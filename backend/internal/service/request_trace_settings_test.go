@@ -400,6 +400,40 @@ func TestRequestTraceLegacySettingsWithoutScopeKeysDefaultToAll(t *testing.T) {
 		"三个维度缺省均为全部时，观察不到分组/模型/平台的请求同样保留采集")
 }
 
+// 旧设置未存采集范围时，服务端虽按"全部"执行，也必须把范围列表
+// 编码成数组而不是 null；否则管理端会把已读到的状态误判成不可读。
+func TestRequestTraceOperatorStatusLegacyScopeUsesArraysOnWire(t *testing.T) {
+	ctx := context.Background()
+	repo := &traceSettingRepoStub{values: map[string]string{
+		SettingKeyRequestTrace: `{"enabled":true,"risk_acknowledged":true}`,
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+	for _, tc := range []struct {
+		name string
+		read func() (RequestTraceOperatorStatus, error)
+	}{
+		{"read", func() (RequestTraceOperatorStatus, error) { return svc.GetRequestTraceOperatorStatus(ctx) }},
+		{"emergency disable", func() (RequestTraceOperatorStatus, error) {
+			return svc.UpdateRequestTraceOperatorSettings(ctx, RequestTraceOperatorUpdateInput{Enabled: false})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, err := tc.read()
+			require.NoError(t, err)
+			require.True(t, status.AllGroups)
+			require.Equal(t, RequestTraceScopeAll, status.ModelScope)
+			require.Equal(t, RequestTraceScopeAll, status.PlatformScope)
+			encoded, err := json.Marshal(status)
+			require.NoError(t, err)
+			var wire map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(encoded, &wire))
+			for _, name := range []string{"group_ids", "models", "platforms"} {
+				require.JSONEq(t, `[]`, string(wire[name]), "%s must be an empty array", name)
+			}
+		})
+	}
+}
+
 // 从未存过设置（采集从未开启）时，读取侧同样给出"关闭 + 范围全部"的缺省。
 // 管理端状态必须回显完整的缺省范围，而不是把零值当成"指定分组但为空"。
 func TestRequestTraceMissingSettingDefaultsToFullScopeWhileDisabled(t *testing.T) {

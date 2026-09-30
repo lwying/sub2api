@@ -78,6 +78,22 @@ describe('operator status boundary', () => {
     expect(normalized).toMatchObject({ platform_scope: 'exclude', platforms: ['antigravity'] })
   })
 
+  it('reads legacy all-scope status with nil Go slices serialized as null', () => {
+    const normalized = normalizeRequestTraceOperatorStatus({
+      ...goOperatorStatusJSON,
+      all_groups: true,
+      group_ids: null,
+      model_scope: 'all',
+      models: null,
+      platform_scope: 'all',
+      platforms: null,
+    })
+    expect(normalized).toMatchObject({
+      enabled: true, capture_allowed: true, all_groups: true,
+      group_ids: [], model_scope: 'all', models: [], platform_scope: 'all', platforms: [],
+    })
+  })
+
   it('retains only the server gate verdict and safe acknowledgement metadata', () => {
     const normalized = normalizeRequestTraceOperatorStatus({ ...status, body: 'CANARY_BODY', headers: { Authorization: 'CANARY_KEY' } })
     expect(normalized).toMatchObject({ enabled: true, capture_allowed: false, plaintext_capture_supported: false })
@@ -105,6 +121,13 @@ describe('operator status boundary', () => {
     expect(() => normalizeRequestTraceOperatorStatus(withoutGroups)).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, model_scope: 'some' })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, platform_scope: '' })).toThrow()
+    const { group_ids: _groupIDs, ...withoutIDs } = goOperatorStatusJSON
+    expect(() => normalizeRequestTraceOperatorStatus({ ...withoutIDs, all_groups: true })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: null })).toThrow()
+    const { models: _models, ...withoutModels } = goOperatorStatusJSON
+    expect(() => normalizeRequestTraceOperatorStatus({ ...withoutModels, model_scope: 'all' })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, models: null })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, platforms: null })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: [4, 0] })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: ['4'] })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, models: ['claude', ''] })).toThrow()

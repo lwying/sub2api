@@ -778,7 +778,10 @@ function scopeKind(value: unknown): RequestTraceScope {
 }
 
 /** A bounded list of observed scope entries; a blank entry is not an entry. */
-function scopeEntryList(value: unknown): string[] {
+function scopeEntryList(value: unknown, scope: RequestTraceScope): string[] {
+  // Go serializes the nil list for the "all" scope as null. Other scope kinds
+  // must retain their explicit list; null there cannot mean "capture all".
+  if (value === null && scope === 'all') return []
   if (!Array.isArray(value) || value.length > maxScopeEntries) throw new Error('Trace capture scope is unavailable')
   return value.map(entry => {
     if (typeof entry !== 'string' || entry === '' || entry.length > maxScopeEntryLength) {
@@ -792,7 +795,8 @@ function scopeEntryList(value: unknown): string[] {
 }
 
 /** Group ids are positive ids; zero and negatives are not groups. */
-function scopeGroupIDs(value: unknown): number[] {
+function scopeGroupIDs(value: unknown, allGroups: boolean): number[] {
+  if (value === null && allGroups) return []
   if (!Array.isArray(value) || value.length > maxScopeEntries) throw new Error('Trace capture scope is unavailable')
   return value.map(id => {
     if (!Number.isSafeInteger(id) || (id as number) <= 0) throw new Error('Trace capture scope is unavailable')
@@ -821,6 +825,8 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
   if (typeof source.all_groups !== 'boolean') {
     throw new Error('Trace capture scope is unavailable')
   }
+  const modelScope = scopeKind(source.model_scope)
+  const platformScope = scopeKind(source.platform_scope)
   const status: RequestTraceOperatorStatus = {
     enabled: source.enabled,
     capture_allowed: source.capture_allowed,
@@ -832,11 +838,11 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
     plaintext_capture_supported: source.plaintext_capture_supported,
     plaintext_capture_support_reason: reason as TraceDeploymentReason,
     all_groups: source.all_groups,
-    group_ids: scopeGroupIDs(source.group_ids),
-    model_scope: scopeKind(source.model_scope),
-    models: scopeEntryList(source.models),
-    platform_scope: scopeKind(source.platform_scope),
-    platforms: scopeEntryList(source.platforms),
+    group_ids: scopeGroupIDs(source.group_ids, source.all_groups),
+    model_scope: modelScope,
+    models: scopeEntryList(source.models, modelScope),
+    platform_scope: platformScope,
+    platforms: scopeEntryList(source.platforms, platformScope),
   }
   if (source.risk_acknowledgement !== undefined && source.risk_acknowledgement !== null) {
     const ack = record(source.risk_acknowledgement)

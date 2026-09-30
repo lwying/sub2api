@@ -120,6 +120,14 @@ describe('Trace capture scope', () => {
     localStorage.clear()
   })
 
+  it('labels empty all-scope lists as all rather than no matches', () => {
+    const wrapper = mountGate()
+    for (const dimension of ['groups', 'models', 'platforms']) {
+      expect(wrapper.get(`[data-testid="request-trace-scope-stored-${dimension}"]`).text())
+        .toBe('admin.requestTrace.operator.scope.allValues')
+    }
+  })
+
   it('shows the stored scope from the server and saves it back whole', async () => {
     const current = status({
       all_groups: false, group_ids: [4, 7],

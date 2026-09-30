@@ -95,6 +95,18 @@ type RequestTraceOperatorStatus struct {
 	Platforms     []string `json:"platforms"`
 }
 
+// requestTraceScopeStatus keeps the status response's scope lists as JSON arrays.
+// Read-time normalization uses nil for an "all" scope, which would otherwise
+// marshal as null and make the operator panel reject an otherwise valid status.
+func requestTraceScopeStatus(status *RequestTraceOperatorStatus, stored RequestTraceSettings) {
+	status.AllGroups = stored.AllGroups
+	status.GroupIDs = append([]int64{}, stored.GroupIDs...)
+	status.ModelScope = stored.ModelScope
+	status.Models = append([]string{}, stored.Models...)
+	status.PlatformScope = stored.PlatformScope
+	status.Platforms = append([]string{}, stored.Platforms...)
+}
+
 type RequestTraceOperatorUpdateInput struct {
 	Enabled bool
 
@@ -555,12 +567,7 @@ func (s *SettingService) GetRequestTraceOperatorStatus(ctx context.Context) (Req
 	}
 	status.Enabled = stored.Enabled
 	status.RiskAcknowledged = stored.RiskAcknowledged
-	status.AllGroups = stored.AllGroups
-	status.GroupIDs = stored.GroupIDs
-	status.ModelScope = stored.ModelScope
-	status.Models = stored.Models
-	status.PlatformScope = stored.PlatformScope
-	status.Platforms = stored.Platforms
+	requestTraceScopeStatus(&status, stored)
 	if ack != nil {
 		status.RiskAcknowledgement = &RequestTraceRiskAcknowledgementView{Version: ack.Version, Phrase: ack.Phrase, AdminUserID: ack.AdminUserID, AcceptedAt: ack.AcceptedAt}
 		status.RiskAcknowledgementCurrent = ack.CoversCurrentStatement()
@@ -654,12 +661,7 @@ func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context,
 			RiskPhraseZH: RequestTraceRiskAcknowledgementPhraseZH,
 		}
 		// 紧急关闭路径也要回显当前范围，避免管理端误以为范围被清空。
-		status.AllGroups = stored.AllGroups
-		status.GroupIDs = stored.GroupIDs
-		status.ModelScope = stored.ModelScope
-		status.Models = stored.Models
-		status.PlatformScope = stored.PlatformScope
-		status.Platforms = stored.Platforms
+		requestTraceScopeStatus(&status, stored)
 		status.PlaintextCaptureSupportReason = PlaintextCaptureSupportReasonProbeUnavailable
 		if cached, ok := s.requestTraceSupportCache.Load().(*cachedPlaintextCaptureSupport); ok && cached != nil {
 			status.PlaintextCaptureSupported = cached.support.Supported

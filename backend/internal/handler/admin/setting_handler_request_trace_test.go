@@ -5,6 +5,7 @@ package admin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -91,6 +92,34 @@ func putRequestTraceSettings(t *testing.T, h *SettingHandler, payload string) *h
 	c.Request.Header.Set("Content-Type", "application/json")
 	h.UpdateRequestTraceOperatorSettings(c)
 	return w
+}
+
+func TestRequestTraceOperatorSettingsReadLegacyScopeUsesArrays(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, repo := newRequestTraceAdminHandler()
+	repo.values[service.SettingKeyRequestTrace] = `{"enabled":true,"risk_acknowledged":true}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings/request-trace", nil)
+	h.GetRequestTraceOperatorSettings(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Data struct {
+			AllGroups     bool            `json:"all_groups"`
+			GroupIDs      json.RawMessage `json:"group_ids"`
+			ModelScope    string          `json:"model_scope"`
+			Models        json.RawMessage `json:"models"`
+			PlatformScope string          `json:"platform_scope"`
+			Platforms     json.RawMessage `json:"platforms"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.True(t, response.Data.AllGroups)
+	require.Equal(t, "all", response.Data.ModelScope)
+	require.Equal(t, "all", response.Data.PlatformScope)
+	for _, item := range []json.RawMessage{response.Data.GroupIDs, response.Data.Models, response.Data.Platforms} {
+		require.JSONEq(t, `[]`, string(item))
+	}
 }
 
 // 票据 05/06：管理端提交"仅指定/排除指定"范围却给出空列表或空白项时，

@@ -269,6 +269,7 @@ function parseScopeNames(raw: string): string[] | null {
 }
 
 function scopeValues(kind: RequestTraceScope, entries: readonly (string | number)[]): string {
+  if (kind === 'all') return t('admin.requestTrace.operator.scope.allValues')
   if (entries.length === 0) return t('admin.requestTrace.operator.scope.emptyValues')
   const values = entries.join(', ')
   return kind === 'include'
