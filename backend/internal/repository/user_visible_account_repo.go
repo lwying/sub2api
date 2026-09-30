@@ -95,6 +95,8 @@ func (r *userVisibleAccountRepository) GetStoredAccountViewEnabled(ctx context.C
 //
 // 任一校验失败（用户不存在或已软删除、账号 id 不存在）都整体回滚，
 // 不会留下「开关已打开但分配未落库」的中间状态。
+// 账号 id 不可用时的错误带本次被拒的具体 id（service.UnknownVisibleAccountError），
+// 供管理员界面指出失败项；错误只描述 id，不含账号名称或凭据。
 func (r *userVisibleAccountRepository) UpdateAccountView(
 	ctx context.Context,
 	userID int64,
@@ -145,9 +147,10 @@ func (r *userVisibleAccountRepository) UpdateAccountView(
 
 	var ids []int64
 	if accountIDs != nil {
-		// 非法（<=0）id 明确报错，而不是被静默丢弃成「清空分配」。
-		if err := validateAccountIDs(*accountIDs); err != nil {
-			return err
+		// 非法（<=0）id 明确报错，而不是被静默丢弃成「清空分配」；
+		// 报错时同样指出具体是哪几项。
+		if invalid := nonPositiveAccountIDs(*accountIDs); len(invalid) > 0 {
+			return service.UnknownVisibleAccountError(invalid)
 		}
 		ids = uniquePositiveIDs(*accountIDs)
 		if err := validateNewVisibleAccountIDs(ctx, txClient, ids, current); err != nil {
@@ -184,6 +187,11 @@ func (r *userVisibleAccountRepository) UpdateAccountView(
 // 放行保留是必要的：管理员界面的 account_ids 是权威集合，会原样回传（详情缺失的
 // id 也照传）。若拒绝，原样保存会变成 400；而如果把这类 id 当成未知账号隐式丢弃，
 // 原样保存就会静默撤销这条分配关系。
+//
+// 失败时返回带具体 id 的 ErrUnknownVisibleAccount 副本（service.UnknownVisibleAccountError）：
+// 整批授权都不落库，但管理员能据此知道是哪个账号在此期间被删除或失效，从而移除或
+// 替换该项后重试，而不是面对一句无从下手的泛化失败。校验发生在任何写入之前，
+// 因此失败仍不产生部分授权。
 func validateNewVisibleAccountIDs(
 	ctx context.Context,
 	txClient *dbent.Client,
@@ -200,16 +208,33 @@ func validateNewVisibleAccountIDs(
 	if len(newIDs) == 0 {
 		return nil
 	}
-	found, err := txClient.Account.Query().
+	live, err := txClient.Account.Query().
 		Where(dbaccount.IDIn(newIDs...), dbaccount.DeletedAtIsNil()).
-		Count(ctx)
+		Select(dbaccount.FieldID).
+		All(ctx)
 	if err != nil {
 		return err
 	}
-	if found != len(newIDs) {
-		return service.ErrUnknownVisibleAccount
+	liveIDs := make(map[int64]struct{}, len(live))
+	for _, account := range live {
+		liveIDs[account.ID] = struct{}{}
+	}
+	if missing := missingVisibleAccountIDs(newIDs, liveIDs); len(missing) > 0 {
+		return service.UnknownVisibleAccountError(missing)
 	}
 	return nil
+}
+
+// missingVisibleAccountIDs 返回 wanted 里不存在于 live 的 id，保持 wanted 的顺序。
+// 纯函数：只描述「哪些新增项不可用」，不触碰任何行。
+func missingVisibleAccountIDs(wanted []int64, live map[int64]struct{}) []int64 {
+	var missing []int64
+	for _, id := range wanted {
+		if _, ok := live[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing
 }
 
 // replaceVisibleAccountAssignments 在当前事务里把分配集合替换为 wanted，但只做增量：
@@ -462,15 +487,17 @@ func dbaccountNotManuallyDisabled() dbpredicate.Account {
 // 用 \uXXXX 转义需要数据库编码为 UTF8（本项目的迁移与部署都以 UTF8 建库）。
 const postgresTrimSpaceChars = `E'\x09\x0a\x0b\x0c\x0d\x20\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000'`
 
-// validateAccountIDs 拒绝对非正整数 id 的分配请求。这类输入只可能来自错误的
-// 客户端或篡改的载荷，不能当成「该项未提供」或「清空分配」处理。
-func validateAccountIDs(ids []int64) error {
+// nonPositiveAccountIDs 返回请求里的非正整数 id。这类输入只可能来自错误的
+// 客户端或篡改的载荷，不能当成「该项未提供」或「清空分配」处理。返回原值而不是
+// 布尔，是为了让失败响应能指出具体是哪几项（含 id <= 0 的项）。
+func nonPositiveAccountIDs(ids []int64) []int64 {
+	var invalid []int64
 	for _, id := range ids {
 		if id <= 0 {
-			return service.ErrUnknownVisibleAccount
+			invalid = append(invalid, id)
 		}
 	}
-	return nil
+	return invalid
 }
 
 func uniquePositiveIDs(ids []int64) []int64 {

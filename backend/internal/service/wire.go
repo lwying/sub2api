@@ -836,7 +836,7 @@ func ProvideRequestTraceExportService(store RequestTraceExportStore, source Requ
 		svc.SetAcknowledgementChecker(func() bool {
 			return settings.RequestTraceExportAcknowledged(context.Background())
 		})
-		// 任务上限同样在开始执行时读取：管理员改配置只影响之后开始的任务。
+		// 创建任务时固定当前资源上限；之后改配置只影响新建任务。
 		svc.SetLimitsProvider(settings.GetRequestTraceExportLimits)
 	}
 	return svc

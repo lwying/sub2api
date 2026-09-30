@@ -28,7 +28,6 @@ const status = (overrides: Partial<RequestTraceOperatorStatus> = {}): RequestTra
   models: [],
   platform_scope: 'all',
   platforms: [],
-  platform_exclude_unknown: false,
   ...overrides,
 })
 
@@ -46,7 +45,6 @@ function scopeBody(overrides: Record<string, unknown> = {}) {
     models: [],
     platform_scope: 'all',
     platforms: [],
-    platform_exclude_unknown: false,
     ...overrides,
   }
 }
@@ -126,7 +124,7 @@ describe('Trace capture scope', () => {
     const current = status({
       all_groups: false, group_ids: [4, 7],
       model_scope: 'include', models: ['claude-sonnet-4-5'],
-      platform_scope: 'exclude', platforms: ['antigravity'], platform_exclude_unknown: true,
+      platform_scope: 'exclude', platforms: ['antigravity'],
     })
     api.updateOperatorSettings.mockResolvedValue(current)
     const wrapper = mountGate(current)
@@ -135,7 +133,6 @@ describe('Trace capture scope', () => {
     expect(wrapper.get('[data-testid="request-trace-scope-stored-models"]').text()).toBe('admin.requestTrace.operator.scope.onlyValues')
     expect(wrapper.get('[data-testid="request-trace-scope-stored-platforms"]').text()).toBe('admin.requestTrace.operator.scope.exceptValues')
     expect((wrapper.get('[data-testid="request-trace-scope-all-groups"]').element as HTMLInputElement).checked).toBe(false)
-    expect((wrapper.get('[data-testid="request-trace-scope-platform-exclude-unknown"]').element as HTMLInputElement).checked).toBe(true)
 
     await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
     await flushPromises()
@@ -150,7 +147,6 @@ describe('Trace capture scope', () => {
       models: ['claude-sonnet-4-5'],
       platform_scope: 'exclude',
       platforms: ['antigravity'],
-      platform_exclude_unknown: true,
     })
   })
 
@@ -233,8 +229,22 @@ describe('Trace capture scope', () => {
       .toBe('admin.requestTrace.operator.scope.modelsNote')
     expect(wrapper.get('[data-testid="request-trace-scope-groups-note"]').text())
       .toBe('admin.requestTrace.operator.scope.groupsNote')
-    // The unknown-platform flag is offered only where it has a meaning.
-    expect(wrapper.find('[data-testid="request-trace-scope-platform-exclude-unknown"]').exists()).toBe(false)
+  })
+
+  it('offers no unknown-platform toggle, because the backend has no such setting', () => {
+    // `service.RequestTraceOperatorStatus` carries no `platform_exclude_unknown`:
+    // an unknown platform is never captured under "only"/"except", and only "all
+    // platforms" covers it. A control here would let the operator set a rule the
+    // server cannot store, and reading the field would make the panel fail to
+    // load against a real backend.
+    for (const platformScope of ['all', 'include', 'exclude'] as const) {
+      const wrapper = mountGate(status({ platform_scope: platformScope, platforms: platformScope === 'all' ? [] : ['antigravity'] }))
+      expect(wrapper.find('[data-testid="request-trace-scope-platform-exclude-unknown"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="request-trace-scope-stored-platform-unknown"]').exists()).toBe(false)
+      // The exclusion risk is still stated, in every platform scope.
+      expect(wrapper.get('[data-testid="request-trace-scope-platform-risk"]').text())
+        .toBe('admin.requestTrace.operator.scope.excludeRisk')
+    }
   })
 
   it('confirms a saved scope only until the draft is edited again', async () => {

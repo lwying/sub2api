@@ -33,6 +33,7 @@ func (r *requestAuditRepository) CreateRequestAudit(ctx context.Context, rec *se
 	}
 	_, err := r.client.RequestAudit.Create().
 		SetUsageLogID(rec.UsageLogID).
+		SetNillableForcedProvenance(optionalForcedAuditProvenance(rec.ForcedProvenance)).
 		SetHeaders(headers).
 		SetEvents(requestAuditEventsToMaps(rec.Events)).
 		SetAttempts(requestAuditAttemptsToMaps(rec.Attempts)).
@@ -64,8 +65,13 @@ func (r *requestAuditRepository) GetByUsageLogID(ctx context.Context, usageLogID
 			if reservationErr != nil {
 				return nil, reservationErr
 			}
+			provenance := ""
+			if reservation.Forced {
+				provenance = service.RequestAuditForcedProvenance
+			}
 			return service.SanitizeRequestAuditRecord(&service.RequestAuditRecord{
 				UsageLogID:          usageLogID,
+				ForcedProvenance:    provenance,
 				Headers:             reservation.Headers,
 				Attempts:            requestAuditMapsToAttempts(reservation.Attempts),
 				CaptureCompleteness: reservation.CaptureCompleteness,
@@ -76,6 +82,7 @@ func (r *requestAuditRepository) GetByUsageLogID(ctx context.Context, usageLogID
 	}
 	return service.SanitizeRequestAuditRecord(&service.RequestAuditRecord{
 		UsageLogID:            row.UsageLogID,
+		ForcedProvenance:      forcedAuditProvenance(row.ForcedProvenance),
 		Headers:               row.Headers,
 		Events:                requestAuditMapsToEvents(row.Events),
 		Attempts:              requestAuditMapsToAttempts(row.Attempts),
@@ -86,6 +93,20 @@ func (r *requestAuditRepository) GetByUsageLogID(ctx context.Context, usageLogID
 		FingerprintSalt:       requestAuditFingerprintSalt(row.FingerprintSalt),
 		Metadata:              requestAuditMetadataFromMap(row.Metadata),
 	}), nil
+}
+
+func optionalForcedAuditProvenance(provenance string) *string {
+	if provenance != service.RequestAuditForcedProvenance {
+		return nil
+	}
+	return &provenance
+}
+
+func forcedAuditProvenance(provenance *string) string {
+	if provenance == nil || *provenance != service.RequestAuditForcedProvenance {
+		return ""
+	}
+	return *provenance
 }
 
 func requestAuditMetadataToMap(v service.RequestAuditMetadata) map[string]any {

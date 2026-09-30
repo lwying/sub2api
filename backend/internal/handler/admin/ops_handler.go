@@ -42,6 +42,14 @@ func (h *OpsHandler) GetErrorLogByID(c *gin.Context) {
 		return
 	}
 
+	if detail == nil {
+		response.NotFound(c, "Ops error log not found")
+		return
+	}
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		detail.RequestTraceID = ""
+		detail.RequestTraceAvailable = false
+	}
 	response.Success(c, detail)
 }
 
@@ -208,6 +216,15 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		for _, item := range result.Errors {
+			if item == nil {
+				continue
+			}
+			item.RequestTraceID = ""
+			item.RequestTraceAvailable = false
+		}
+	}
 	response.Paginated(c, result.Errors, int64(result.Total), result.Page, result.PageSize)
 }
 
@@ -320,6 +337,15 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		for _, item := range result.Errors {
+			if item == nil {
+				continue
+			}
+			item.RequestTraceID = ""
+			item.RequestTraceAvailable = false
+		}
 	}
 	response.Paginated(c, result.Errors, int64(result.Total), result.Page, result.PageSize)
 }

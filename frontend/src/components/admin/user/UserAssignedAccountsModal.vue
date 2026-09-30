@@ -55,11 +55,26 @@
             <li
               v-for="account in assigned"
               :key="account.id"
-              class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 px-4 py-3 dark:border-dark-600"
+              class="flex items-center justify-between gap-3 rounded-xl border px-4 py-3"
+              :class="
+                invalidPendingIdSet.has(account.id)
+                  ? 'border-red-300 bg-red-50/50 dark:border-red-900/50 dark:bg-red-900/10'
+                  : 'border-gray-200 dark:border-dark-600'
+              "
               :data-test="`assigned-${account.id}`"
             >
               <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ accountLabel(account) }}</p>
+                <div class="flex items-center gap-2">
+                  <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ accountLabel(account) }}</p>
+                  <!-- 服务端上一次保存点名的失效项：只标出 id，不猜原因。 -->
+                  <span
+                    v-if="invalidPendingIdSet.has(account.id)"
+                    class="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/40 dark:text-red-300"
+                    :data-test="`assigned-invalid-${account.id}`"
+                  >
+                    {{ t('assignedAccounts.admin.invalidPending') }}
+                  </span>
+                </div>
                 <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                   {{ accountMeta(account) }}
                 </p>
@@ -74,6 +89,28 @@
               </button>
             </li>
           </ul>
+
+          <!--
+            保存被整批回滚时，服务端返回的失效 id 在此点名：草稿、勾选与开关都保持不动，
+            管理员只需移除或替换被标出的账号再保存，不必重新挑选整批。
+          -->
+          <div
+            v-if="pendingInvalidIds.length > 0"
+            class="mt-3 rounded-xl border border-red-200 bg-red-50/50 px-4 py-3 dark:border-red-900/40 dark:bg-red-900/10"
+            data-test="save-invalid-accounts"
+          >
+            <p class="text-sm text-red-700 dark:text-red-300">
+              {{
+                t('assignedAccounts.admin.saveUnknownAccounts', {
+                  count: pendingInvalidIds.length,
+                  ids: pendingInvalidIds.join(', ')
+                })
+              }}
+            </p>
+            <p class="mt-1 text-xs text-red-600/80 dark:text-red-400/80">
+              {{ t('assignedAccounts.admin.saveUnknownAccountsHint') }}
+            </p>
+          </div>
         </div>
 
         <!-- 添加账号：搜索与分页都走后端，避免只能授权前若干账号 -->
@@ -269,7 +306,7 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useAppStore } from '@/stores/app'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 import { useTableSelection } from '@/composables/useTableSelection'
-import { extractApiErrorMessage } from '@/utils/apiError'
+import { extractApiErrorMessage, extractApiErrorMetadata } from '@/utils/apiError'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import { ACCOUNT_TYPE_OPTIONS } from '@/constants/accountTypes'
 
@@ -344,6 +381,17 @@ const canSave = computed(
 )
 
 const assignedIds = computed(() => new Set(assigned.value.map((account) => account.id)))
+
+/**
+ * 服务端上一次保存点名的失效账号 id。只用于就地标出失败项，不改变草稿内容：
+ * 整批回滚后待授权列表与勾选原样保留，管理员据此移除或替换后再保存。
+ */
+const invalidPendingIds = ref<number[]>([])
+const invalidPendingIdSet = computed(() => new Set(invalidPendingIds.value))
+/** 仍留在待授权列表里的失败项：已被移除的项不再提示。 */
+const pendingInvalidIds = computed(() =>
+  invalidPendingIds.value.filter((id) => assignedIds.value.has(id))
+)
 
 const visibleCandidates = computed(() =>
   candidates.value.filter((candidate) => !assignedIds.value.has(candidate.id))
@@ -533,6 +581,7 @@ function resetForNewUser(): void {
   accountDetails.clear()
   candidateDetails.clear()
   lastBatchAddResult.value = null
+  invalidPendingIds.value = []
   clearCandidateSelection()
   search.value = ''
   candidatePlatform.value = ''
@@ -650,10 +699,32 @@ function addAccount(option: AccountOption): void {
   })
   accountDetails.set(grantAccount.id, grantAccount)
   assigned.value = [...assigned.value, grantAccount]
+  // 逐行添加改动了待授权列表，上一次「一键添加」的计数不再描述当前草稿。
+  lastBatchAddResult.value = null
 }
 
 function removeAccount(id: number): void {
   assigned.value = assigned.value.filter((account) => account.id !== id)
+  lastBatchAddResult.value = null
+}
+
+/**
+ * 从保存失败响应里取出服务端点名的失效账号 id。
+ *
+ * 只认服务端约定的 `invalid_account_ids`（逗号分隔的十进制 id，有界）：字段缺失或
+ * 形状不符时返回空数组，界面退回通用失败提示，绝不凭客户端猜测标记任何账号。
+ * 名字与状态只有服务端返回详情时才有，失败项一律只用 id 表达。
+ */
+function invalidAccountIdsFromError(error: unknown): number[] {
+  const raw = extractApiErrorMetadata(error)?.invalid_account_ids
+  if (typeof raw !== 'string') {
+    return []
+  }
+  const ids = raw
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+  return Array.from(new Set(ids))
 }
 
 function handleToggleSelectVisible(event: Event): void {
@@ -792,6 +863,7 @@ async function handleSave(): Promise<void> {
     if (!isSameSaveSession(userId, generation)) {
       return
     }
+    invalidPendingIds.value = []
     // 响应缺少账号详情时沿用已有详情与提交的 id，避免界面把授权显示成空。
     applyGrant(grant, submittedIds)
     appStore.showSuccess(t('assignedAccounts.admin.saveSuccess'))
@@ -801,6 +873,8 @@ async function handleSave(): Promise<void> {
     if (!isSameSaveSession(userId, generation)) {
       return
     }
+    // 整批回滚：草稿、勾选与开关都保持原样，只把服务端点名的失效项标出来供修正。
+    invalidPendingIds.value = invalidAccountIdsFromError(error)
     appStore.showError(extractApiErrorMessage(error, t('assignedAccounts.admin.saveFailed')))
   } finally {
     // 旧会话的保存不得解除新会话的保存中状态。

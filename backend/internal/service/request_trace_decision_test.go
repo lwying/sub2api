@@ -32,7 +32,7 @@ func validRequestTraceDecisionFacts() RequestTraceDecisionFacts {
 func TestRequestTraceDecisionFactsAcceptsOnlyClosedEnums(t *testing.T) {
 	for _, decision := range []RequestTraceDecisionKind{
 		RequestTraceDecisionAuth, RequestTraceDecisionRoute, RequestTraceDecisionModelMapping,
-		RequestTraceDecisionAccountSwitch, RequestTraceDecisionIdentity,
+		RequestTraceDecisionAccountSwitch, RequestTraceDecisionIdentity, RequestTraceDecisionMock,
 	} {
 		facts := validRequestTraceDecisionFacts()
 		facts.Decision = decision
@@ -56,6 +56,32 @@ func TestRequestTraceDecisionFactsAcceptsOnlyClosedEnums(t *testing.T) {
 		facts.Source = source
 		require.Truef(t, ValidRequestTraceDecisionFacts(&facts), "source %q must be accepted", source)
 	}
+}
+
+// The local-mock decision is one more value of the same closed enum, not a new
+// column: migration 262's key allowlist is per key, so a new *value* needs no
+// migration. The literal is the wire contract the detail view's closed enum
+// mirrors, so it is pinned here rather than left to the caller.
+func TestRequestTraceDecisionMockIsLocalMockWithoutUpstreamAttempt(t *testing.T) {
+	require.Equal(t, "mock", string(RequestTraceDecisionMock))
+
+	facts := validRequestTraceDecisionFacts()
+	facts.Decision = RequestTraceDecisionMock
+	facts.Outcome = RequestTraceDecisionNotSent
+	facts.Source = RequestTraceDecisionSourceInbound
+	facts.ModelFrom, facts.ModelTo = "", ""
+	facts.ProtocolFrom, facts.ProtocolTo = "", ""
+	facts.AccountID = 0
+	require.True(t, ValidRequestTraceDecisionFacts(&facts),
+		"本地 mock 的决策必须能在既有枚举里表达，不需要新迁移")
+
+	stage := NewRequestTraceGatewayDecisionStage("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 0, "mock_served", &facts)
+	require.True(t, ValidRequestTraceDecisionStage(stage))
+	require.Equal(t, RequestTraceDecisionMock, stage.Decision.Decision)
+	require.Equal(t, RequestTraceDecisionNotSent, stage.Decision.Outcome)
+	require.Equal(t, RequestTraceDecisionSourceInbound, stage.Decision.Source)
+	require.Empty(t, stage.Payload)
+	require.Nil(t, stage.Metadata)
 }
 
 func TestRequestTraceDecisionFactsRejectsValuesOutsideTheClosedSets(t *testing.T) {

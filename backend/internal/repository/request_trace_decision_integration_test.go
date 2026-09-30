@@ -43,6 +43,10 @@ const (
 	// 隔离 schema 必须按生产顺序应用它们，否则仓库写出的行会被自身 schema 拒绝。
 	requestTraceScopeFactsMigration    = "265_request_trace_scope_facts.sql"
 	requestTraceStagePlatformMigration = "266_request_trace_stage_facts_platform.sql"
+	// 270 给信封补上"实际选中平台历史"：同样按生产顺序应用，
+	// 否则仓库的信封 SELECT 会因为隔离 schema 缺列而失败。
+	requestTraceObservedPlatformsMigration = "270_request_trace_observed_platforms.sql"
+	requestTraceIdentityMigration          = "272_request_trace_identity.sql"
 
 	requestTraceStagesTable = "request_trace_stages"
 
@@ -274,7 +278,8 @@ func newMigratedRequestTraceTx(t *testing.T) *sql.Tx {
 
 	for _, name := range []string{
 		requestTraceEnvelopeMigration, requestTraceFactsMigration, requestTraceDecisionMigration,
-		requestTraceScopeFactsMigration, requestTraceStagePlatformMigration,
+		requestTraceScopeFactsMigration, requestTraceStagePlatformMigration, requestTraceObservedPlatformsMigration,
+		requestTraceIdentityMigration,
 	} {
 		applyRequestTraceMigrationFile(t, tx, name)
 	}

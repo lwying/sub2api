@@ -474,11 +474,11 @@ func requireChatFallbackAuditCompleteness(t *testing.T, result *OpenAIForwardRes
 	t.Helper()
 	require.NotNil(t, result)
 	repo := &stubRequestAuditRepo{}
-	require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, RequestAuditInput{
+	recordAuditProjectionForTest(repo, RequestAuditInput{
 		SSEEvents:        requestAuditSSEEventsFromOpenAIResult(result),
 		ClientDisconnect: result.ClientDisconnect,
 		StreamIncomplete: result.StreamIncomplete,
-	}))
+	})
 	require.NotNil(t, repo.created)
 	require.Equal(t, want, repo.created.CaptureCompleteness)
 	encoded, err := json.Marshal(repo.created)

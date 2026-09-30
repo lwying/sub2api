@@ -26,12 +26,6 @@
           <dd data-testid="request-trace-scope-stored-models">{{ storedModels }}</dd>
           <dt>{{ t('admin.requestTrace.operator.scope.storedPlatforms') }}</dt>
           <dd data-testid="request-trace-scope-stored-platforms">{{ storedPlatforms }}</dd>
-          <template v-if="status.platform_scope === 'exclude'">
-            <dt>{{ t('admin.requestTrace.operator.scope.platformUnknownPolicy') }}</dt>
-            <dd data-testid="request-trace-scope-stored-platform-unknown" :data-state="status.platform_exclude_unknown ? 'excluded' : 'captured'">
-              {{ status.platform_exclude_unknown ? t('admin.requestTrace.operator.off') : t('admin.requestTrace.operator.on') }}
-            </dd>
-          </template>
         </dl>
         <p v-if="!status.plaintext_capture_supported" role="alert" data-testid="request-trace-deployment-blocked" class="text-amber-700 dark:text-amber-300">
           {{ t('admin.requestTrace.operator.deploymentBlocked') }}
@@ -137,13 +131,6 @@
             <p class="text-xs text-gray-500 dark:text-gray-400" data-testid="request-trace-scope-platforms-note">
               {{ t('admin.requestTrace.operator.scope.platformsNote') }}
             </p>
-            <template v-if="platformScope === 'exclude'">
-              <label class="flex items-center gap-2 text-sm">
-                <input v-model="excludeUnknown" data-testid="request-trace-scope-platform-exclude-unknown" type="checkbox" />
-                <span>{{ t('admin.requestTrace.operator.scope.excludeUnknown') }}</span>
-              </label>
-              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.requestTrace.operator.scope.excludeUnknownNote') }}</p>
-            </template>
             <p class="text-xs text-amber-700 dark:text-amber-300" data-testid="request-trace-scope-platform-risk">
               {{ t('admin.requestTrace.operator.scope.excludeRisk') }}
             </p>
@@ -216,7 +203,6 @@ const modelScope = ref<RequestTraceScope>('all')
 const models = ref('')
 const platformScope = ref<RequestTraceScope>('all')
 const platforms = ref('')
-const excludeUnknown = ref(false)
 const scopePhrase = ref('')
 const scopeError = ref(false)
 const scopeSaved = ref(false)
@@ -233,7 +219,6 @@ function syncScopeDraft(status: RequestTraceOperatorStatus) {
   models.value = status.models.join(', ')
   platformScope.value = status.platform_scope
   platforms.value = status.platforms.join(', ')
-  excludeUnknown.value = status.platform_exclude_unknown
   syncingScope = false
 }
 
@@ -241,7 +226,7 @@ watch(() => props.status, status => {
   if (status) syncScopeDraft(status)
 }, { immediate: true })
 // A save is confirmed only until the operator edits the draft again.
-watch([allGroups, groupIDs, modelScope, models, platformScope, platforms, excludeUnknown], () => {
+watch([allGroups, groupIDs, modelScope, models, platformScope, platforms], () => {
   if (!syncingScope) scopeSaved.value = false
 }, { flush: 'sync' })
 
@@ -320,7 +305,6 @@ function scopePayload(): {
   models: string[]
   platform_scope: RequestTraceScope
   platforms: string[]
-  platform_exclude_unknown: boolean
 } | null {
   const ids = allGroups.value ? [] : parseScopeGroupIDs(groupIDs.value)
   if (ids === null) return null
@@ -343,10 +327,6 @@ function scopePayload(): {
     models: modelList,
     platform_scope: platformScope.value,
     platforms: platformList,
-    // The flag only has a meaning under exclusion; under any other scope the
-    // server ignores it, and sending it as on would claim a rule that is not in
-    // effect.
-    platform_exclude_unknown: platformScope.value === 'exclude' && excludeUnknown.value,
   }
 }
 

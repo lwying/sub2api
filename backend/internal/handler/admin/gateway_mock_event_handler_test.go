@@ -57,13 +57,12 @@ type gatewayMockEventPageBody struct {
 // 并且一次请求的条数有界。
 func TestGatewayMockEventHandlerListsOnlyMinimalFactsWithinBounds(t *testing.T) {
 	occurred := time.Date(2026, 9, 30, 3, 4, 5, 0, time.UTC)
-	cleanup := occurred.AddDate(0, 0, 90)
 	stub := &gatewayMockEventReaderStub{
 		total: 1,
 		records: []service.GatewayMockEventRecord{{
 			OccurredAt: occurred, RuleID: "gmr_0123456789abcdef", RuleVersion: "2026-09-30T03:00:00Z",
 			Protocol: "messages", Model: "claude-sonnet-4-5", APIKeyID: 7, UserID: 3, GroupID: 2,
-			AccountID: 11, ClientIP: "203.0.113.7", TraceID: "0123456789abcdef0123456789abcdef", CleanupAfter: cleanup,
+			AccountID: 11, ClientIP: "203.0.113.7", TraceID: "0123456789abcdef0123456789abcdef",
 		}},
 	}
 
@@ -96,6 +95,11 @@ func TestGatewayMockEventHandlerListsOnlyMinimalFactsWithinBounds(t *testing.T) 
 
 	require.Equal(t, "gmr_0123456789abcdef", body.Data.Items[0]["rule_id"])
 	require.Equal(t, "203.0.113.7", body.Data.Items[0]["client_ip"])
+
+	// 没有记录到清理期限时给 null：当前策略下的实际清理时间由 occurred_at 与当次保留
+	// 策略决定，编一个期限、或落成 0001-01-01 的零值时间，都是在冒充真实清理时间。
+	require.Nil(t, body.Data.Items[0]["cleanup_after"], "an unrecorded cleanup deadline is null")
+	require.NotContains(t, recorder.Body.String(), "0001-01-01")
 
 	// 关键词与回复正文从未落库，也就不可能出现在这里；数据库主键同样不属于管理端事实。
 	lowered := strings.ToLower(recorder.Body.String())

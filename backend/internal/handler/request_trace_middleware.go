@@ -15,6 +15,25 @@ import (
 
 type requestTraceIDContextKey struct{}
 
+// requestTraceGateSnapshotKey 是入口时门控/采集范围快照在请求上下文中的键。
+// 快照按请求存放（请求上下文本身），不落在跨请求共享的闭包变量里：中间件闭包只
+// 构造一次、被所有并发请求复用，共享状态会互相污染。
+type requestTraceGateSnapshotKey struct{}
+
+// withRequestTraceGateSnapshot 把入口处求出的门控与采集范围冻结进请求上下文。
+func withRequestTraceGateSnapshot(ctx context.Context, gate service.RequestTraceGate) context.Context {
+	return context.WithValue(ctx, requestTraceGateSnapshotKey{}, gate)
+}
+
+// requestTraceGateSnapshot 读取入口快照；缺失时返回 false，调用方必须按"不采集"处理。
+func requestTraceGateSnapshot(ctx context.Context) (service.RequestTraceGate, bool) {
+	if ctx == nil {
+		return service.RequestTraceGate{}, false
+	}
+	gate, ok := ctx.Value(requestTraceGateSnapshotKey{}).(service.RequestTraceGate)
+	return gate, ok
+}
+
 // RequestTraceGateForCapture 构造只带采集结论的门控，范围按"全部分组/所有模型/所有平台"。
 // 测试与只关心开关的调用方用它表达"开关打开"，不必重复拼范围字段。
 func RequestTraceGateForCapture(allowed bool) service.RequestTraceGate {
@@ -43,8 +62,9 @@ func RequestTraceID(ctx context.Context) string {
 // RequestTraceCaptureMiddleware observes only selected, opted-in HTTP requests.
 // Authentication rejects still get a Trace but are never made to read a body.
 //
-// resolveGate 返回门控与采集范围快照。范围在请求结束时按实际观察到的事实复核，
-// 因此无法在入口处一次判定；这里只决定"是否可能采集"。
+// resolveGate 在请求入口处解析一次，返回的门控与采集范围随即按请求冻结；请求结束
+// 时只用这份入口快照复核实际观察到的事实。管理员在请求执行中修改范围只影响后续
+// 请求，不改变在途请求的采集结论（spec §2.2）。
 func RequestTraceCaptureMiddleware(resolveGate func(context.Context) service.RequestTraceGate, repo service.RequestTraceRepository, queues ...*service.RequestTraceCaptureQueue) gin.HandlerFunc {
 	var queue *service.RequestTraceCaptureQueue
 	if len(queues) > 0 {
@@ -54,12 +74,20 @@ func RequestTraceCaptureMiddleware(resolveGate func(context.Context) service.Req
 		if c.Request == nil || resolveGate == nil || repo == nil || queue == nil {
 			return false
 		}
-		_, _, supported := requestTraceRoute(c.Request.Method, c.Request.URL.Path)
-		return supported && resolveGate(c.Request.Context()).CaptureAllowed
+		if _, _, supported := requestTraceRoute(c.Request.Method, c.Request.URL.Path); !supported {
+			return false
+		}
+		gate := resolveGate(c.Request.Context())
+		c.Request = c.Request.WithContext(withRequestTraceGateSnapshot(c.Request.Context(), gate))
+		return gate.CaptureAllowed
 	}, func(c *gin.Context, id string, _ bool) {
-		requestTraceGate := service.RequestTraceGate{}
-		if resolveGate != nil && c.Request != nil {
-			requestTraceGate = resolveGate(c.Request.Context())
+		if c.Request == nil {
+			return
+		}
+		// 只用入口快照判定：拿不到快照就不采集，绝不用请求结束时的当前配置补判。
+		requestTraceGate, hasGate := requestTraceGateSnapshot(c.Request.Context())
+		if !hasGate {
+			return
 		}
 		family, endpoint, ok := requestTraceRoute(c.Request.Method, c.Request.URL.Path)
 		if !ok {
@@ -72,7 +100,7 @@ func RequestTraceCaptureMiddleware(resolveGate func(context.Context) service.Req
 			state = service.RequestTracePartial
 		}
 		groupID, requestedModel, platforms := requestTraceScopeFacts(c, apiKey)
-		// 采集范围在请求结束时按**实际观察到的事实**复核：鉴权前无法确定分组，
+		// 用**入口快照的范围**在请求结束时按实际观察到的事实复核：鉴权前无法确定分组，
 		// 模型要等请求体解析，平台要等选号。范围不匹配就不落库，避免留下不该采的明文。
 		if !requestTraceGate.Scope.InScope(service.RequestTraceScopeFacts{
 			GroupID: groupID, RequestedModel: requestedModel, Platforms: platforms,
@@ -84,6 +112,11 @@ func RequestTraceCaptureMiddleware(resolveGate func(context.Context) service.Req
 			CaptureState: state, ClientStatus: c.Writer.Status(),
 			CreatedAt: completed, CompletedAt: &completed,
 			GroupID: groupID, RequestedModel: requestedModel,
+			ObservedPlatforms: requestTraceObservedPlatforms(c),
+		}
+		if authenticated && apiKey != nil && apiKey.ID > 0 && apiKey.UserID > 0 {
+			userID, keyID := apiKey.UserID, apiKey.ID
+			trace.UserID, trace.APIKeyID = &userID, &keyID
 		}
 		reason := "body_not_observed"
 		if !authenticated {
@@ -166,6 +199,28 @@ func requestTraceScopeFacts(c *gin.Context, apiKey *service.APIKey) (*int64, str
 	}
 	model, platforms := service.RequestTraceScopeFactsFromContext(c.Request.Context())
 	return groupID, model, platforms
+}
+
+// requestTraceObservedPlatforms 读出信封上的"实际选中平台历史"：本次逻辑请求选中过的全部
+// 平台（去重、按首次观察顺序、有界），而不仅是采集范围判定用的首个平台。
+//
+// 采集门控仍按首个平台决定整条请求是否进入采集（见 InPlatformScope 的说明）；这里记录的是
+// 页面/导出按"任一实际选中平台"检索所需的事实。两者语义不同，不能合并：
+// 只用首个平台会让"首次命中、后来换号"的多平台请求在第二个平台上检索不到，
+// 只用全部平台又会改变采集结论。尚未选中任何账号时返回 nil——未知不得伪造成某个平台。
+func requestTraceObservedPlatforms(c *gin.Context) []string {
+	if c == nil {
+		return nil
+	}
+	value, exists := c.Get("request_trace_flow")
+	if !exists {
+		return nil
+	}
+	flow, ok := value.(*requestTraceFlow)
+	if !ok {
+		return nil
+	}
+	return service.NormalizeRequestTraceObservedPlatforms(flow.observedPlatformSnapshot())
 }
 
 // RequestTraceMiddleware gives each gated request a unique server-only ID. It does

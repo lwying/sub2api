@@ -348,6 +348,7 @@ export default {
         loading: 'Loading…',
         requestId: 'Request ID',
         viewRequestTrace: 'View request Trace',
+        backToError: 'Back to error detail',
         time: 'Time',
         phase: 'Phase',
         status: 'Status',

@@ -119,6 +119,7 @@ var auditSensitiveReads = map[string]string{
 	"GET /api/v1/admin/groups/:id/api-keys":                 "admin.groups.api_keys.read",
 	"GET /api/v1/admin/backups/s3-config":                   "admin.backups.s3_config.read",
 	"GET /api/v1/admin/data-management/s3/config":           "admin.data_management.s3_config.read",
+	"GET /api/v1/admin/usage/:id/request-audit/forced":      "admin.request_audit.forced.read",
 	"GET /api/v1/admin/request-traces/:trace_id":            "admin.request_traces.read",
 	"GET /api/v1/admin/request-traces/exports/:id":          "admin.request_trace_export.status",
 	"GET /api/v1/admin/request-traces/exports/:id/download": "admin.request_trace_export.download",

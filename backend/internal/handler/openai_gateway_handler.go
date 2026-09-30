@@ -806,15 +806,37 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 
 		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-		// compact 保活可能已经写出字节并提交 200，那时再写 JSON mock 会污染响应，
-		// 因此只在响应尚未提交时接管。
+		//
+		// 判定必须先于停拍。compact 的下游心跳是上游 unary 等待期间唯一的下游空闲
+		// 保护（大上下文可达数分钟零字节，反代空闲/读超时会掐断连接），而真实
+		// body-signal compact 请求的 input 必带 compaction_trigger，按定义不可能被
+		// 判为下游测试请求。若先无条件停拍，每个真实 compact 请求都会在判定处被摘
+		// 掉心跳，重新回到零字节静默（#3887）。因此这里先用同一份设置快照做纯判定，
+		// 不命中就完全不动心跳，命中才停拍接管。
+		//
+		// 接管前还必须确认响应尚未被提交，两条来源都要看：
+		//   - handleErrorResponse 系列写完错误响应后会置 response_committed；
+		//   - body-signal compact 的下游心跳会直接写出 SSE 注释行并提交 200，但它
+		//     不置 response_committed（该 key 只属于错误写回）。而 compact 的白名单
+		//     归一化删掉了 stream 字段，mock 会按非流式写回裸 JSON——追加到已提交
+		//     的 SSE 流上，客户端拿到的是 ": keepalive\n\n{...json...}"，注释行后面
+		//     的裸 JSON 不是合法事件，解析必然失败。
+		// 因此命中后先停拍 compact 心跳并读取其提交状态：停拍经心跳互斥锁建立
+		// happens-before，返回后不会再有心跳字节写出，可安全接管 ResponseWriter；
+		// 锁在 Stop 内部立即释放，不在持锁状态下写响应（无死锁）。心跳已提交 200
+		// 时不接管，交回标准 compact 写回路径（writeOpenAICompactSSEBridge 会按
+		// 客户端流式协议合成 SSE）。判定与写回共用预检得到的同一份结论，不会出现
+		// "先停拍、后又不命中"的中间态。
 		if !service.IsResponseCommitted(c) {
-			markGatewayMockStream(c, reqStream)
-			if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolResponses, reqModel, account.ID, body) {
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
+			mockMatch := h.resolveDownstreamTestMockMatch(c, service.GatewayMockProtocolResponses, body)
+			if mockMatch.Matched && !service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+				markGatewayMockStream(c, reqStream)
+				if h.serveResolvedDownstreamTestMock(c, service.GatewayMockProtocolResponses, reqModel, account.ID, mockMatch) {
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					return
 				}
-				return
 			}
 		}
 

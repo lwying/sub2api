@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpattempt"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 // RequestAuditInput 是从逻辑请求收集的审计输入。Body 只用于调用方持有，不得写入记录。
@@ -90,13 +88,6 @@ const RequestAuditNotCapturedReasonPhase1Uncovered = "phase1_uncovered"
 // （事件骨架、终止状态），因此审计按 incomplete 落库并带这个原因码，绝不标 complete。
 const RequestAuditPartialReasonCyberPolicy = "cyber_policy_audit_partial"
 
-var requestAuditOrdinaryWriteFailures atomic.Uint64
-
-// RequestAuditOrdinaryWriteFailureCount counts audit write failures in this process.
-func RequestAuditOrdinaryWriteFailureCount() uint64 {
-	return requestAuditOrdinaryWriteFailures.Load()
-}
-
 // RequestAuditAttempt 是一次上游尝试的协议元数据，不含模型正文。
 type RequestAuditAttempt struct {
 	AccountID               int64          `json:"account_id,omitempty"`
@@ -145,8 +136,11 @@ type RequestAuditProtocolFields struct {
 	NormalizedFields []string `json:"normalized_fields,omitempty"`
 }
 
+const RequestAuditForcedProvenance = "forced"
+
 type RequestAuditRecord struct {
 	UsageLogID            int64                       `json:"usage_log_id"`
+	ForcedProvenance      string                      `json:"forced_provenance,omitempty"`
 	Headers               map[string]any              `json:"headers"`
 	Events                []RequestAuditEventSkeleton `json:"events"`
 	Attempts              []RequestAuditAttempt       `json:"attempts,omitempty"`
@@ -233,22 +227,6 @@ func BuildRequestAuditRecord(in RequestAuditInput) *RequestAuditRecord {
 		FingerprintSalt:       requestAuditFingerprintSalt(in.Fingerprint),
 		Metadata:              SanitizeRequestAuditMetadata(in.Metadata),
 	}
-}
-
-func shouldAttachRequestAudit(in RequestAuditInput) bool {
-	if in.NotCapturedReason != "" {
-		return true
-	}
-	if in.PartialReason != "" {
-		return true
-	}
-	if in.ClientDisconnect {
-		return true
-	}
-	if len(in.Attempts) > 0 || len(in.SSEEvents) > 0 {
-		return true
-	}
-	return len(SanitizeRequestAuditHeaders(in.Headers)) > 0
 }
 
 // requestAuditCaptureReason 返回落库的原因码：未采集优先，其次是局部采集的不完整原因。
@@ -497,6 +475,9 @@ func SanitizeRequestAuditRecord(rec *RequestAuditRecord) *RequestAuditRecord {
 		return nil
 	}
 	out := *rec
+	if out.ForcedProvenance != RequestAuditForcedProvenance {
+		out.ForcedProvenance = ""
+	}
 	out.FingerprintSalt = append([]byte(nil), rec.FingerprintSalt...)
 	out.Headers = SanitizeRequestAuditHeaderMap(rec.Headers)
 	out.Metadata = SanitizeRequestAuditMetadata(rec.Metadata)
@@ -658,40 +639,4 @@ func buildRequestAuditEventSkeletonsWithFingerprint(events []RequestAuditSSEEven
 		keptJSONSize = nextJSONSize
 	}
 	return out
-}
-
-// AttachRequestAuditAfterUsageLog 在已有使用记录后尽力写入审计。没有使用记录则不写。
-// 普通审计模式 fail-open：写入失败仅在使用记录已存在且主库恢复可写时尽力补记失败状态。
-func AttachRequestAuditAfterUsageLog(ctx context.Context, repo RequestAuditRepository, usageLog *UsageLog, in RequestAuditInput) error {
-	if repo == nil || usageLog == nil || usageLog.ID <= 0 {
-		return nil
-	}
-	if !shouldAttachRequestAudit(in) {
-		return nil
-	}
-	in.UsageLogID = usageLog.ID
-	in.Metadata = AddRequestAuditUsageTokens(in.Metadata, usageLog)
-	rec := BuildRequestAuditRecord(in)
-	if rec == nil {
-		return nil
-	}
-	if err := repo.CreateRequestAudit(ctx, rec); err != nil {
-		requestAuditOrdinaryWriteFailures.Add(1)
-		logger.LegacyPrintf("service.request_audit", "Request audit write failed: usage_log_id=%d code=audit_write_failed completeness=%s events=%d", rec.UsageLogID, rec.CaptureCompleteness, len(rec.Events))
-		marker := &RequestAuditRecord{
-			UsageLogID: usageLog.ID, Headers: map[string]any{},
-			CaptureCompleteness: RequestAuditCaptureWriteFailed,
-			CaptureReason:       "audit_write_failed",
-		}
-		markerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		if markerErr := repo.CreateRequestAudit(markerCtx, marker); markerErr != nil {
-			logger.LegacyPrintf("service.request_audit", "Request audit failure marker unavailable: usage_log_id=%d code=audit_write_failed", usageLog.ID)
-		}
-		return nil
-	}
-	if rec.CaptureCompleteness == RequestAuditCaptureTruncated || rec.CaptureCompleteness == RequestAuditCaptureIncomplete {
-		logger.LegacyPrintf("service.request_audit", "Request audit captured: usage_log_id=%d completeness=%s events=%d", rec.UsageLogID, rec.CaptureCompleteness, len(rec.Events))
-	}
-	return nil
 }

@@ -55,10 +55,10 @@ func TestLegacySensitiveCaptureRoutesAreNotRegistered(t *testing.T) {
 			"旧入口的直接访问必须不可达：%s %s", route.method, route.path)
 	}
 
-	// 未被顺带删除的既有入口必须仍在：长期请求审计的元数据入口，以及新 Trace 的总开关。
-	// 前者是强制审计的运维面，后者是新能力的独立门控，两者都不属于本次退役对象。
+	// 新版只保留会话限定的强制审计元数据入口和独立 Trace 总开关。
+	require.False(t, registered[http.MethodGet+" /api/v1/admin/usage/:id/request-audit"])
 	for _, kept := range []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/admin/usage/:id/request-audit"},
+		{http.MethodGet, "/api/v1/admin/usage/:id/request-audit/forced"},
 		{http.MethodGet, "/api/v1/admin/settings/request-trace"},
 		{http.MethodPut, "/api/v1/admin/settings/request-trace"},
 	} {

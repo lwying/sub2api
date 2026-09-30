@@ -26,6 +26,8 @@ const (
 	FieldCaptureCompleteness = "capture_completeness"
 	// FieldCaptureReason holds the string denoting the capture_reason field in the database.
 	FieldCaptureReason = "capture_reason"
+	// FieldForcedProvenance holds the string denoting the forced_provenance field in the database.
+	FieldForcedProvenance = "forced_provenance"
 	// FieldRequestFingerprint holds the string denoting the request_fingerprint field in the database.
 	FieldRequestFingerprint = "request_fingerprint"
 	// FieldFingerprintKeyVersion holds the string denoting the fingerprint_key_version field in the database.
@@ -58,6 +60,7 @@ var Columns = []string{
 	FieldAttempts,
 	FieldCaptureCompleteness,
 	FieldCaptureReason,
+	FieldForcedProvenance,
 	FieldRequestFingerprint,
 	FieldFingerprintKeyVersion,
 	FieldFingerprintSalt,
@@ -115,6 +118,11 @@ func ByCaptureCompleteness(opts ...sql.OrderTermOption) OrderOption {
 // ByCaptureReason orders the results by the capture_reason field.
 func ByCaptureReason(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCaptureReason, opts...).ToFunc()
+}
+
+// ByForcedProvenance orders the results by the forced_provenance field.
+func ByForcedProvenance(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldForcedProvenance, opts...).ToFunc()
 }
 
 // ByRequestFingerprint orders the results by the request_fingerprint field.

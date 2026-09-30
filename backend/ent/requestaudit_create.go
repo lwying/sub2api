@@ -75,6 +75,20 @@ func (_c *RequestAuditCreate) SetNillableCaptureReason(v *string) *RequestAuditC
 	return _c
 }
 
+// SetForcedProvenance sets the "forced_provenance" field.
+func (_c *RequestAuditCreate) SetForcedProvenance(v string) *RequestAuditCreate {
+	_c.mutation.SetForcedProvenance(v)
+	return _c
+}
+
+// SetNillableForcedProvenance sets the "forced_provenance" field if the given value is not nil.
+func (_c *RequestAuditCreate) SetNillableForcedProvenance(v *string) *RequestAuditCreate {
+	if v != nil {
+		_c.SetForcedProvenance(*v)
+	}
+	return _c
+}
+
 // SetRequestFingerprint sets the "request_fingerprint" field.
 func (_c *RequestAuditCreate) SetRequestFingerprint(v string) *RequestAuditCreate {
 	_c.mutation.SetRequestFingerprint(v)
@@ -282,6 +296,10 @@ func (_c *RequestAuditCreate) createSpec() (*RequestAudit, *sqlgraph.CreateSpec)
 		_spec.SetField(requestaudit.FieldCaptureReason, field.TypeString, value)
 		_node.CaptureReason = value
 	}
+	if value, ok := _c.mutation.ForcedProvenance(); ok {
+		_spec.SetField(requestaudit.FieldForcedProvenance, field.TypeString, value)
+		_node.ForcedProvenance = &value
+	}
 	if value, ok := _c.mutation.RequestFingerprint(); ok {
 		_spec.SetField(requestaudit.FieldRequestFingerprint, field.TypeString, value)
 		_node.RequestFingerprint = &value
@@ -440,6 +458,24 @@ func (u *RequestAuditUpsert) SetCaptureReason(v string) *RequestAuditUpsert {
 // UpdateCaptureReason sets the "capture_reason" field to the value that was provided on create.
 func (u *RequestAuditUpsert) UpdateCaptureReason() *RequestAuditUpsert {
 	u.SetExcluded(requestaudit.FieldCaptureReason)
+	return u
+}
+
+// SetForcedProvenance sets the "forced_provenance" field.
+func (u *RequestAuditUpsert) SetForcedProvenance(v string) *RequestAuditUpsert {
+	u.Set(requestaudit.FieldForcedProvenance, v)
+	return u
+}
+
+// UpdateForcedProvenance sets the "forced_provenance" field to the value that was provided on create.
+func (u *RequestAuditUpsert) UpdateForcedProvenance() *RequestAuditUpsert {
+	u.SetExcluded(requestaudit.FieldForcedProvenance)
+	return u
+}
+
+// ClearForcedProvenance clears the value of the "forced_provenance" field.
+func (u *RequestAuditUpsert) ClearForcedProvenance() *RequestAuditUpsert {
+	u.SetNull(requestaudit.FieldForcedProvenance)
 	return u
 }
 
@@ -635,6 +671,27 @@ func (u *RequestAuditUpsertOne) SetCaptureReason(v string) *RequestAuditUpsertOn
 func (u *RequestAuditUpsertOne) UpdateCaptureReason() *RequestAuditUpsertOne {
 	return u.Update(func(s *RequestAuditUpsert) {
 		s.UpdateCaptureReason()
+	})
+}
+
+// SetForcedProvenance sets the "forced_provenance" field.
+func (u *RequestAuditUpsertOne) SetForcedProvenance(v string) *RequestAuditUpsertOne {
+	return u.Update(func(s *RequestAuditUpsert) {
+		s.SetForcedProvenance(v)
+	})
+}
+
+// UpdateForcedProvenance sets the "forced_provenance" field to the value that was provided on create.
+func (u *RequestAuditUpsertOne) UpdateForcedProvenance() *RequestAuditUpsertOne {
+	return u.Update(func(s *RequestAuditUpsert) {
+		s.UpdateForcedProvenance()
+	})
+}
+
+// ClearForcedProvenance clears the value of the "forced_provenance" field.
+func (u *RequestAuditUpsertOne) ClearForcedProvenance() *RequestAuditUpsertOne {
+	return u.Update(func(s *RequestAuditUpsert) {
+		s.ClearForcedProvenance()
 	})
 }
 
@@ -1007,6 +1064,27 @@ func (u *RequestAuditUpsertBulk) SetCaptureReason(v string) *RequestAuditUpsertB
 func (u *RequestAuditUpsertBulk) UpdateCaptureReason() *RequestAuditUpsertBulk {
 	return u.Update(func(s *RequestAuditUpsert) {
 		s.UpdateCaptureReason()
+	})
+}
+
+// SetForcedProvenance sets the "forced_provenance" field.
+func (u *RequestAuditUpsertBulk) SetForcedProvenance(v string) *RequestAuditUpsertBulk {
+	return u.Update(func(s *RequestAuditUpsert) {
+		s.SetForcedProvenance(v)
+	})
+}
+
+// UpdateForcedProvenance sets the "forced_provenance" field to the value that was provided on create.
+func (u *RequestAuditUpsertBulk) UpdateForcedProvenance() *RequestAuditUpsertBulk {
+	return u.Update(func(s *RequestAuditUpsert) {
+		s.UpdateForcedProvenance()
+	})
+}
+
+// ClearForcedProvenance clears the value of the "forced_provenance" field.
+func (u *RequestAuditUpsertBulk) ClearForcedProvenance() *RequestAuditUpsertBulk {
+	return u.Update(func(s *RequestAuditUpsert) {
+		s.ClearForcedProvenance()
 	})
 }
 

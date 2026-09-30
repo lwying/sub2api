@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,34 @@ func (s *requestTraceExportStoreStub) ListStale(context.Context, string, time.Ti
 	return nil, nil
 }
 
+// ListForSession 复制真实存储的过滤语义：管理员、会话摘要、实例三者必须同时匹配，
+// 最近创建的在前，export_id 降序作为稳定次序键，页大小有界。handler 的找回测试
+// 因此断言的是"这个会话能看到什么"，而不是一个什么都返回的替身。
+func (s *requestTraceExportStoreStub) ListForSession(_ context.Context, adminUserID int64, sessionDigest, instanceID string, limit int) ([]service.RequestTraceExportTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 || limit > service.RequestTraceExportMaxListedTasks {
+		return nil, service.ErrRequestTraceExportLimit
+	}
+	matched := make([]service.RequestTraceExportTask, 0)
+	for _, task := range s.tasks {
+		if task.AdminUserID != adminUserID || task.SessionDigest != sessionDigest || task.InstanceID != instanceID {
+			continue
+		}
+		matched = append(matched, task)
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		if !matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].CreatedAt.After(matched[j].CreatedAt)
+		}
+		return matched[i].ID > matched[j].ID
+	})
+	if len(matched) > limit {
+		matched = matched[:limit]
+	}
+	return matched, nil
+}
+
 func (s *requestTraceExportStoreStub) Claim(_ context.Context, instanceID string) (service.RequestTraceExportTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,23 +164,31 @@ func (s *requestTraceExportStoreStub) task(t *testing.T, id string) service.Requ
 type requestTraceExportSourceStub struct {
 	ids     []string
 	deleted map[string]bool
+	fails   map[string]bool // 枚举之后读取失败的 ID：与“已删除”是两类事实
 	details map[string]service.RequestTraceExportApprovedDetail
 }
 
-func (s *requestTraceExportSourceStub) NextTraceIDs(_ context.Context, _ service.RequestTraceExportFilter, after string, limit int) ([]string, error) {
-	var result []string
-	for _, id := range s.ids {
-		if id > after {
-			result = append(result, id)
-			if len(result) == limit {
+func (s *requestTraceExportSourceStub) NextTracePage(_ context.Context, _ service.RequestTraceExportFilter, after string, limit int) ([]string, string, error) {
+	start := 0
+	if after != "" {
+		for i, id := range s.ids {
+			if id == after {
+				start = i + 1
 				break
 			}
 		}
 	}
-	return result, nil
+	if start >= len(s.ids) {
+		return nil, "", nil
+	}
+	end := min(start+limit, len(s.ids))
+	return s.ids[start:end], s.ids[end-1], nil
 }
 
 func (s *requestTraceExportSourceStub) ReadApprovedDetail(_ context.Context, id string) (service.RequestTraceExportApprovedDetail, bool, error) {
+	if s.fails[id] {
+		return service.RequestTraceExportApprovedDetail{}, false, errors.New("synthetic detail read failure")
+	}
 	if s.deleted[id] {
 		return service.RequestTraceExportApprovedDetail{}, false, nil
 	}
@@ -162,6 +199,10 @@ func (s *requestTraceExportSourceStub) ReadApprovedDetail(_ context.Context, id 
 // 它用来证明会话门禁由 handler 自己执行，而不是靠 service 兜底。
 type requestTraceExportServiceStub struct {
 	calls int
+	// listLimit 记录 handler 交给 service 的页大小：handler 只解析参数，边界由
+	// service 拥有，所以这里断言的是"原样透传"，不是"handler 自己截断"。
+	listLimit int
+	listErr   error
 }
 
 func (s *requestTraceExportServiceStub) CreateTask(context.Context, service.RequestTraceExportActor, service.RequestTraceExportFilter) (service.RequestTraceExportTask, error) {
@@ -172,6 +213,15 @@ func (s *requestTraceExportServiceStub) CreateTask(context.Context, service.Requ
 func (s *requestTraceExportServiceStub) GetTask(context.Context, service.RequestTraceExportActor, string) (service.RequestTraceExportTask, error) {
 	s.calls++
 	return service.RequestTraceExportTask{}, nil
+}
+
+func (s *requestTraceExportServiceStub) ListTasks(_ context.Context, _ service.RequestTraceExportActor, _ string, limit int) ([]service.RequestTraceExportTask, string, error) {
+	s.calls++
+	s.listLimit = limit
+	if s.listErr != nil {
+		return nil, "", s.listErr
+	}
+	return nil, "", nil
 }
 
 func (s *requestTraceExportServiceStub) OpenDownload(context.Context, service.RequestTraceExportActor, string) (*os.File, service.RequestTraceExportTask, error) {
@@ -224,6 +274,16 @@ func requestTraceExportContext(method, target string, params gin.Params) (*gin.C
 	c, _ := gin.CreateTestContext(recorder)
 	c.Params = params
 	c.Request = httptest.NewRequest(method, target, nil)
+	return c, recorder
+}
+
+// requestTraceExportContextWithBody 构造带显式请求体的 POST。
+// "导出所选"的结构化范围只走请求体，handler 从 JSON body 读取有界 ID 集合。
+func requestTraceExportContextWithBody(target, body string) (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
 	return c, recorder
 }
 
@@ -409,6 +469,8 @@ func TestRequestTraceExportHandlerCreateRejectsNonMetadataFilter(t *testing.T) {
 		"?client_status=abc",
 		"?created_from=not-a-time",
 		"?created_to=2026-01-01T00:00:00Z&created_from=2026-02-01T00:00:00Z",
+		// Equal bounds are not an interval: from must be strictly before to.
+		"?created_from=2026-01-01T00:00:00Z&created_to=2026-01-01T00:00:00Z",
 		"?usage_linked=maybe",
 	}
 	for index, query := range queries {
@@ -728,4 +790,165 @@ func TestRequestTraceExportHandlerDisabledInstanceReturns503(t *testing.T) {
 	require.Equal(t, "REQUEST_TRACE_EXPORT_DISABLED", requestTraceExportReason(t, downloadRecorder))
 
 	require.Zero(t, store.createCount())
+}
+
+// "导出所选"以有界结构化请求体提交明确 Trace ID 集合：既不进 URL query，
+// 也不夹带任何元数据条件；服务端按原样保存这批成员。
+func TestRequestTraceExportHandlerCreateSelectedTraceIDsUseStructuredBody(t *testing.T) {
+	store := &requestTraceExportStoreStub{}
+	handler, _ := newRequestTraceExportTestHandler(t, store, newRequestTraceExportTestSource(), nil)
+	first := strings.Repeat("1", 32)
+	second := strings.Repeat("2", 32)
+
+	c, recorder := requestTraceExportContextWithBody(requestTraceExportRouteBase,
+		fmt.Sprintf(`{"trace_ids":["%s","%s"]}`, first, second))
+	requestTraceExportAdminSession(c, 12, "session-a")
+	handler.Create(c)
+
+	require.Equal(t, http.StatusAccepted, recorder.Code)
+	require.Equal(t, 1, store.createCount())
+
+	var payload struct {
+		Data struct {
+			ID     string `json:"id"`
+			Filter struct {
+				TraceIDs []string `json:"trace_ids"`
+			} `json:"filter"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, []string{first, second}, payload.Data.Filter.TraceIDs)
+	require.Equal(t, []string{first, second}, store.task(t, payload.Data.ID).Filter.TraceIDs)
+	requireRequestTraceExportAuditHasNoInput(t, c, first, second)
+}
+
+// 所选集合的畸形输入一律 400 invalid_filter，绝不静默截断、去重或退化成
+// 429"容量不足"；空集合也不能被当成"导出全部"。
+func TestRequestTraceExportHandlerCreateSelectedRejectsMalformedSelection(t *testing.T) {
+	store := &requestTraceExportStoreStub{}
+	handler, _ := newRequestTraceExportTestHandler(t, store, newRequestTraceExportTestSource(), nil)
+	valid := strings.Repeat("a", 32)
+
+	overBound := make([]string, 0, service.RequestTraceExportMaxSelectedIDs+1)
+	for index := 0; index <= service.RequestTraceExportMaxSelectedIDs; index++ {
+		overBound = append(overBound, `"`+fmt.Sprintf("%032x", index)+`"`)
+	}
+
+	cases := []struct{ name, target, body string }{
+		{name: "empty selection", target: requestTraceExportRouteBase, body: `{"trace_ids":[]}`},
+		{name: "null selection", target: requestTraceExportRouteBase, body: `{"trace_ids":null}`},
+		{name: "malformed id", target: requestTraceExportRouteBase, body: `{"trace_ids":["not-a-trace-id"]}`},
+		{name: "duplicate id", target: requestTraceExportRouteBase, body: fmt.Sprintf(`{"trace_ids":["%s","%s"]}`, valid, valid)},
+		{name: "selection above the bound", target: requestTraceExportRouteBase, body: `{"trace_ids":[` + strings.Join(overBound, ",") + `]}`},
+		{name: "unknown body field", target: requestTraceExportRouteBase, body: fmt.Sprintf(`{"trace_ids":["%s"],"route_family":"messages"}`, valid)},
+		{name: "metadata field smuggled into the body", target: requestTraceExportRouteBase, body: fmt.Sprintf(`{"trace_ids":["%s"],"trace_id":"%s"}`, valid, valid)},
+		{name: "query filter beside a selection", target: requestTraceExportRouteBase + "?route_family=messages", body: fmt.Sprintf(`{"trace_ids":["%s"]}`, valid)},
+		{name: "single trace query beside a selection", target: requestTraceExportRouteBase + "?trace_id=" + valid, body: fmt.Sprintf(`{"trace_ids":["%s"]}`, valid)},
+		{name: "malformed json", target: requestTraceExportRouteBase, body: `{"trace_ids":[`},
+		{name: "trailing json value", target: requestTraceExportRouteBase, body: fmt.Sprintf(`{"trace_ids":["%s"]}{}`, valid)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, recorder := requestTraceExportContextWithBody(tc.target, tc.body)
+			requestTraceExportAdminSession(c, 12, "session-a")
+			handler.Create(c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Equal(t, "REQUEST_TRACE_EXPORT_INVALID_FILTER", requestTraceExportReason(t, recorder))
+			require.Equal(t, "failed", requestTraceExportAudit(c)["result"])
+			require.Equal(t, "request_trace_export_invalid_filter", requestTraceExportAudit(c)["error_code"])
+			requireRequestTraceExportAuditHasNoInput(t, c, valid, "not-a-trace-id")
+		})
+	}
+	require.Zero(t, store.createCount(), "a malformed selection must never reach the export service")
+}
+
+// URL 上的 CSV 形式（旧的无界 trace_ids query）不再接受：它既不是所选范围，
+// 也不能被默默忽略成"没有条件、导出全部"。
+func TestRequestTraceExportHandlerCreateRejectsTraceIDsInQuery(t *testing.T) {
+	store := &requestTraceExportStoreStub{}
+	handler, _ := newRequestTraceExportTestHandler(t, store, newRequestTraceExportTestSource(), nil)
+	valid := strings.Repeat("a", 32)
+
+	for _, query := range []string{"?trace_ids=" + valid, "?trace_ids=" + valid + "," + strings.Repeat("b", 32)} {
+		c, recorder := requestTraceExportContext(http.MethodPost, requestTraceExportRouteBase+query, nil)
+		requestTraceExportAdminSession(c, 12, "session-a")
+		handler.Create(c)
+		require.Equal(t, http.StatusBadRequest, recorder.Code)
+		require.Equal(t, "REQUEST_TRACE_EXPORT_INVALID_FILTER", requestTraceExportReason(t, recorder))
+	}
+	require.Zero(t, store.createCount())
+}
+
+// 显式给出但为空白（`?route_family=` 或 `%20`）的条件必须拒绝：把它当成"没给"
+// 会让调用方以为筛了一项，导出却变成全部。
+func TestRequestTraceExportHandlerCreateRejectsBlankQueryFilterValues(t *testing.T) {
+	store := &requestTraceExportStoreStub{}
+	handler, _ := newRequestTraceExportTestHandler(t, store, newRequestTraceExportTestSource(), nil)
+
+	for _, query := range []string{
+		"?trace_id=%20",
+		"?route_family=%20",
+		"?client_status=%20",
+		"?usage_linked=%20",
+		"?created_from=%20",
+		"?created_to=",
+		"?usage_log_id=",
+		"?account_id=%20",
+		"?group_id=%20",
+		"?group_unknown=%20",
+		"?requested_model=%20",
+		"?model_unknown=%20",
+		"?platform=%20",
+		"?platform_unknown=%20",
+	} {
+		t.Run(query, func(t *testing.T) {
+			c, recorder := requestTraceExportContext(http.MethodPost, requestTraceExportRouteBase+query, nil)
+			requestTraceExportAdminSession(c, 12, "session-a")
+			handler.Create(c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Equal(t, "REQUEST_TRACE_EXPORT_INVALID_FILTER", requestTraceExportReason(t, recorder))
+		})
+	}
+	require.Zero(t, store.createCount())
+}
+
+// 任务视图必须带上分类型的跳过计数：管理员要能分辨"读取失败"与"记录消失"
+// 各多少条，而不是只看到一个聚合数和一个首个原因。计数值只允许封闭原因码。
+func TestRequestTraceExportHandlerTaskViewCarriesTypedSkipCounts(t *testing.T) {
+	store := &requestTraceExportStoreStub{}
+	ids := []string{
+		"00000000000000000000000000000001",
+		"00000000000000000000000000000002",
+		"00000000000000000000000000000003",
+		"00000000000000000000000000000004",
+		"00000000000000000000000000000005",
+	}
+	source := &requestTraceExportSourceStub{
+		ids:     ids,
+		details: map[string]service.RequestTraceExportApprovedDetail{},
+		fails:   map[string]bool{ids[0]: true, ids[1]: true},
+		deleted: map[string]bool{ids[2]: true, ids[3]: true, ids[4]: true},
+	}
+	handler, svc := newRequestTraceExportTestHandler(t, store, source, nil)
+	id := createRequestTraceExportTask(t, handler)
+
+	completed, err := svc.RunOnce(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(5), completed.RowsSkipped)
+	require.Equal(t, service.RequestTraceExportSkipCounts{"read_failed": 2, "source_gone": 3}, completed.SkippedByReason)
+
+	owner, recorder := requestTraceExportContext(http.MethodGet, requestTraceExportRouteBase+"/"+id, gin.Params{{Key: "id", Value: id}})
+	requestTraceExportAdminSession(owner, 12, "session-a")
+	handler.Get(owner)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	body := recorder.Body.String()
+	require.Contains(t, body, `"rows_skipped":5`)
+	require.Contains(t, body, `"skipped_by_reason":{"read_failed":2,"source_gone":3}`)
+	require.Contains(t, body, `"truncated":true`)
+	// 响应里只有封闭原因码与计数，绝不外泄原始错误串、路径或正文。
+	require.NotContains(t, body, "synthetic detail read failure")
+	require.NotContains(t, body, "sub2api-request-trace-export-")
 }

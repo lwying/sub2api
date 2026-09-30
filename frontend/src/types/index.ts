@@ -1823,6 +1823,9 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+  request_trace_id?: string | null
+  request_trace_available?: boolean
+  request_audit_forced_available?: boolean
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
   upstream_response_model?: string | null

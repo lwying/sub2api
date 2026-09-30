@@ -5,10 +5,13 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
@@ -632,6 +635,63 @@ func TestUserVisibleAccountRepository_AdminAccountIDsKeepSoftDeletedAssignments(
 	account, err := repo.GetVisibleAccount(ctx, user.ID, notAssigned.ID)
 	require.NoError(t, err)
 	require.Nil(t, account)
+}
+
+// TestUserVisibleAccountRepository_UpdateReportsStaleAccountIDs 覆盖真实 SQL 路径上的
+// 「明确失败项」：某个待授权账号在保存前被删除（soft delete）时，整批授权都不落库，
+// 但错误必须点名具体不可用的 id——服务端只返回有界的数字 id，不含账号名称或凭据；
+// 管理员据此移除或替换该项后再保存。保持可读的既有分配不算失败项。
+func TestUserVisibleAccountRepository_UpdateReportsStaleAccountIDs(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUserVisibleAccountRepository(client)
+
+	user := mustCreateUserWithUniqueEmail(t, client, "")
+	kept := mustCreateAccount(t, client, &service.Account{Name: "report-kept"})
+	stale := mustCreateAccount(t, client, &service.Account{Name: "report-stale"})
+	absent := stale.ID + 999999
+	t.Cleanup(func() {
+		_, _ = integrationDB.Exec(`DELETE FROM user_visible_accounts WHERE user_id = $1`, user.ID)
+		_, _ = integrationDB.Exec(`DELETE FROM accounts WHERE id = ANY($1)`, pq.Array([]int64{kept.ID, stale.ID}))
+		_, _ = integrationDB.Exec(`DELETE FROM users WHERE id = $1`, user.ID)
+	})
+
+	// 用户此时只有 kept：能力开关保持关闭，作为「失败不得留下部分变更」的基线。
+	enabled := true
+	initial := []int64{kept.ID}
+	require.NoError(t, repo.UpdateAccountView(ctx, user.ID, nil, &initial, nil))
+
+	// stale 在管理员勾选后被软删除：不再是可用的新增项。
+	require.NoError(t, client.Account.DeleteOneID(stale.ID).Exec(ctx))
+
+	// 一次保存里既有可保留的既有分配、又有两个不可用的新增项：
+	// 整批回滚，错误里点名 stale 与不存在的 id。
+	wanted := []int64{kept.ID, stale.ID, absent}
+	err := repo.UpdateAccountView(ctx, user.ID, &enabled, &wanted, nil)
+	require.ErrorIs(t, err, service.ErrUnknownVisibleAccount)
+
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "UNKNOWN_ACCOUNT", appErr.Reason, "既有错误码契约不变")
+	require.Equal(t, "2", appErr.Metadata["invalid_account_count"])
+	reported := strings.Split(appErr.Metadata["invalid_account_ids"], ",")
+	require.ElementsMatch(t,
+		[]string{strconv.FormatInt(stale.ID, 10), strconv.FormatInt(absent, 10)},
+		reported, "必须点名具体失效的 id，且只包含它们")
+	// 可保留的既有分配（kept 仍可读）不是失败项。
+	require.NotContains(t, reported, strconv.FormatInt(kept.ID, 10))
+
+	// 整批不落库：既有分配与能力开关都保持原状。
+	require.Equal(t, initial, storedVisibleAssignmentIDs(t, ctx, user.ID),
+		"失败的更新不得留下部分变更")
+	flag, err := repo.GetStoredAccountViewEnabled(ctx, user.ID)
+	require.NoError(t, err)
+	require.False(t, flag, "failed update must not flip the capability flag")
+
+	// 移除失效项后同一批内容可以保存成功。
+	require.NoError(t, repo.UpdateAccountView(ctx, user.ID, &enabled, &initial, nil))
+	flag, err = repo.GetStoredAccountViewEnabled(ctx, user.ID)
+	require.NoError(t, err)
+	require.True(t, flag)
 }
 
 // TestUserVisibleAccountRepository_StatusTrimMatchesServiceVisibility 验证 SQL 谓词与

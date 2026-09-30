@@ -71,6 +71,11 @@ func (h *UserHandler) GetAccountView(c *gin.Context) {
 
 // UpdateAccountView 更新某用户的账号查看能力与分配集合。
 // PUT /api/v1/admin/users/:id/account-view
+//
+// 整批原子：任一选中账号被删除或校验失败时，能力开关与分配都不落库。失败响应由
+// response.ErrorFrom 透出服务错误的元数据，因此 400 UNKNOWN_ACCOUNT 里带有
+// metadata.invalid_account_ids（有界的数字 id），管理员界面据此指出具体失败项并
+// 保留草稿供修正；响应只含 id，不含账号名称或凭据。
 func (h *UserHandler) UpdateAccountView(c *gin.Context) {
 	userID, ok := parseAdminAccountViewUserID(c)
 	if !ok {

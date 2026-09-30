@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -34,7 +36,7 @@ func NewRequestTraceRepository(db *sql.DB) service.RequestTraceRepository {
 
 var _ service.RequestTraceRepository = (*requestTraceRepository)(nil)
 
-const requestTraceEnvelopeColumns = `id, trace_id, route_family, inbound_endpoint, capture_state, client_status, usage_log_id, created_at, completed_at, cleanup_after, group_id, requested_model`
+const requestTraceEnvelopeColumns = `id, trace_id, route_family, inbound_endpoint, capture_state, client_status, usage_log_id, created_at, completed_at, cleanup_after, group_id, requested_model, observed_platforms, user_id, api_key_id`
 
 func scanRequestTraceEnvelope(row interface{ Scan(...any) error }) (service.RequestTrace, error) {
 	var trace service.RequestTrace
@@ -44,8 +46,10 @@ func scanRequestTraceEnvelope(row interface{ Scan(...any) error }) (service.Requ
 	var traceCleanupAfter time.Time
 	var groupID sql.NullInt64
 	var requestedModel sql.NullString
+	var observedPlatforms []byte
+	var userID, apiKeyID sql.NullInt64
 	err := row.Scan(&trace.ID, &trace.TraceID, &family, &trace.InboundEndpoint, &state, &trace.ClientStatus,
-		&usageID, &trace.CreatedAt, &completedAt, &traceCleanupAfter, &groupID, &requestedModel)
+		&usageID, &trace.CreatedAt, &completedAt, &traceCleanupAfter, &groupID, &requestedModel, &observedPlatforms, &userID, &apiKeyID)
 	if err != nil {
 		return service.RequestTrace{}, err
 	}
@@ -66,7 +70,37 @@ func scanRequestTraceEnvelope(row interface{ Scan(...any) error }) (service.Requ
 		trace.GroupID = &value
 	}
 	trace.RequestedModel = requestedModel.String
+	if userID.Valid {
+		value := userID.Int64
+		trace.UserID = &value
+	}
+	if apiKeyID.Valid {
+		value := apiKeyID.Int64
+		trace.APIKeyID = &value
+	}
+	// 平台历史同样只披露已观察事实：NULL 保持 nil（未知），非 NULL 必须真的是
+	// 去重、有界、token 合法的数组，否则视为损坏行而不是尽力解释。
+	if len(observedPlatforms) > 0 {
+		var platforms []string
+		if err := json.Unmarshal(observedPlatforms, &platforms); err != nil || !service.ValidRequestTraceObservedPlatforms(platforms) {
+			return service.RequestTrace{}, service.ErrRequestTraceInvalidRecord
+		}
+		trace.ObservedPlatforms = platforms
+	}
 	return trace, nil
+}
+
+// requestTraceObservedPlatformsParam 把信封上的平台历史编码成 JSONB 绑定参数：
+// nil（未知）写 SQL NULL；绝不写空数组冒充"已观察但为空"（270 的 CHECK 同样拒绝）。
+func requestTraceObservedPlatformsParam(platforms []string) (any, error) {
+	if platforms == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(platforms)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
 
 func requestTraceFamilyValid(family service.RequestTraceRouteFamily) bool {
@@ -102,6 +136,13 @@ func (r *requestTraceRepository) CreateRequestTrace(ctx context.Context, trace s
 		trace.CaptureState != service.RequestTracePartial && trace.CaptureState != service.RequestTraceWriteFailed {
 		return service.RequestTrace{}, service.ErrRequestTraceInvalidRecord
 	}
+	// 平台历史必须是"已归一化的请求时事实"：nil 表示未知，非 nil 必须去重、有界、token 合法。
+	// 未归一化的输入在这里 fail-closed，绝不写进信封后被读成另一种事实。
+	if !service.ValidRequestTraceObservedPlatforms(trace.ObservedPlatforms) ||
+		(trace.UserID != nil && *trace.UserID <= 0) || (trace.APIKeyID != nil && *trace.APIKeyID <= 0) ||
+		(trace.UserID == nil) != (trace.APIKeyID == nil) {
+		return service.RequestTrace{}, service.ErrRequestTraceInvalidRecord
+	}
 	createdAt := trace.CreatedAt.UTC()
 	if trace.CreatedAt.IsZero() {
 		createdAt = time.Now().UTC()
@@ -110,13 +151,17 @@ func (r *requestTraceRepository) CreateRequestTrace(ctx context.Context, trace s
 	if trace.CompletedAt != nil {
 		completedAt = trace.CompletedAt.UTC()
 	}
+	observedPlatforms, err := requestTraceObservedPlatformsParam(trace.ObservedPlatforms)
+	if err != nil {
+		return service.RequestTrace{}, err
+	}
 	const query = `
-		INSERT INTO request_traces (trace_id, route_family, inbound_endpoint, capture_state, client_status, created_at, completed_at, cleanup_after, group_id, requested_model)
-		VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $6::timestamptz + INTERVAL '30 days', $8, $9)
+		INSERT INTO request_traces (trace_id, route_family, inbound_endpoint, capture_state, client_status, created_at, completed_at, cleanup_after, group_id, requested_model, observed_platforms, user_id, api_key_id)
+		VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $6::timestamptz + INTERVAL '30 days', $8, $9, $10, $11, $12)
 		ON CONFLICT (trace_id) DO NOTHING
 		RETURNING ` + requestTraceEnvelopeColumns
 	stored, err := scanRequestTraceEnvelopeForQuery(ctx, r.q, query, trace.TraceID, trace.RouteFamily, trace.InboundEndpoint,
-		trace.CaptureState, trace.ClientStatus, createdAt, completedAt, trace.GroupID, nullIfEmptyTraceModel(trace.RequestedModel))
+		trace.CaptureState, trace.ClientStatus, createdAt, completedAt, trace.GroupID, nullIfEmptyTraceModel(trace.RequestedModel), observedPlatforms, trace.UserID, trace.APIKeyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		const existing = `SELECT ` + requestTraceEnvelopeColumns + ` FROM request_traces WHERE trace_id = $1`
 		return scanRequestTraceEnvelopeForQuery(ctx, r.q, existing, trace.TraceID)
@@ -365,7 +410,18 @@ func (r *requestTraceRepository) GetRequestTrace(ctx context.Context, traceID st
 		stage.Decision = projection.decision
 		detail.Stages = append(detail.Stages, stage)
 	}
-	return detail, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	labels := []service.RequestTrace{detail.RequestTrace}
+	if err := hydrateRequestTraceLabels(ctx, r.q, labels); err != nil {
+		return nil, err
+	}
+	detail.RequestTrace = labels[0]
+	return detail, nil
 }
 
 func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter service.RequestTraceListFilter) ([]service.RequestTrace, int64, error) {
@@ -381,87 +437,18 @@ func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter s
 	if filter.PageSize > 100 {
 		filter.PageSize = 100
 	}
-	if filter.TraceID != "" && !traceIDShape.MatchString(filter.TraceID) {
-		return nil, 0, service.ErrRequestTraceInvalidRecord
-	}
-	if filter.RouteFamily != "" && !requestTraceFamilyValid(filter.RouteFamily) {
-		return nil, 0, service.ErrRequestTraceInvalidRecord
-	}
-	if filter.ClientStatus != nil && (*filter.ClientStatus < 0 || *filter.ClientStatus > 599) {
-		return nil, 0, service.ErrRequestTraceInvalidRecord
-	}
-	if filter.UsageLogID != nil && *filter.UsageLogID <= 0 {
-		return nil, 0, service.ErrRequestTraceInvalidRecord
-	}
-	if filter.AccountID != nil && *filter.AccountID <= 0 {
-		return nil, 0, service.ErrRequestTraceInvalidRecord
-	}
-	// 账号检索只认 wire_attempt 阶段的类型化事实：stage 过滤把匹配范围钉在真实
-	// 上游尝试上，JSONB 包含判断用绑定参数而非把 ID 拼进语句。列表投影保持
-	// requestTraceEnvelopeColumns，绝不会 SELECT 出 metadata，因此检索条件不会
-	// 变成把阶段 JSONB 回传给管理端。
-	const where = `($1 = '' OR trace_id = $1)
-		AND ($2 = '' OR route_family = $2)
-		AND ($3::integer IS NULL OR client_status = $3)
-		AND ($4::timestamptz IS NULL OR created_at >= $4)
-		AND ($5::timestamptz IS NULL OR created_at < $5)
-		AND ($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)
-		AND ($7::bigint IS NULL OR usage_log_id = $7)
-		AND ($8::bigint IS NULL OR EXISTS (
-			SELECT 1 FROM request_trace_stages s
-			WHERE s.trace_id = request_traces.id
-			  AND s.stage = 'wire_attempt'
-			  AND s.metadata @> jsonb_build_object('account_id', $8::bigint)
-		))
-		AND ($9::bigint IS NULL OR group_id = $9)
-		AND ($10::boolean IS NULL OR (group_id IS NULL) = $10)
-		AND ($11::text IS NULL OR lower(requested_model) = lower($11))
-		AND ($12::boolean IS NULL OR (requested_model IS NULL) = $12)
-		AND ($13::text IS NULL OR EXISTS (
-			SELECT 1 FROM request_trace_stages s2
-			WHERE s2.trace_id = request_traces.id
-			  AND s2.stage = 'wire_attempt'
-			  AND s2.metadata @> jsonb_build_object('platform', $13::text)
-		))
-		AND ($14::boolean IS NULL OR (NOT EXISTS (
-			SELECT 1 FROM request_trace_stages s3
-			WHERE s3.trace_id = request_traces.id
-			  AND s3.stage = 'wire_attempt'
-			  AND s3.metadata ? 'platform'
-		)) = $14)`
-	var from, to any
-	if !filter.CreatedFrom.IsZero() {
-		from = filter.CreatedFrom
-	}
-	if !filter.CreatedTo.IsZero() {
-		to = filter.CreatedTo
-	}
-	var usageLinked any
-	if filter.UsageLinked != nil {
-		usageLinked = *filter.UsageLinked
-	}
-	var groupUnknown, modelUnknown, platformUnknown any
-	if filter.GroupUnknown != nil {
-		groupUnknown = *filter.GroupUnknown
-	}
-	if filter.ModelUnknown != nil {
-		modelUnknown = *filter.ModelUnknown
-	}
-	if filter.PlatformUnknown != nil {
-		platformUnknown = *filter.PlatformUnknown
-	}
-	args := []any{
-		filter.TraceID, filter.RouteFamily, filter.ClientStatus, from, to, usageLinked,
-		filter.UsageLogID, filter.AccountID, filter.GroupID, groupUnknown,
-		nullIfEmptyTraceModel(filter.RequestedModel), modelUnknown,
-		nullIfEmptyTraceModel(filter.Platform), platformUnknown,
-	}
-	var count int64
-	if err := scanSingleRow(ctx, r.q, `SELECT COUNT(*) FROM request_traces WHERE `+where, args, &count); err != nil {
+	if err := validateRequestTraceFilter(filter); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.QueryContext(ctx, `SELECT `+requestTraceEnvelopeColumns+` FROM request_traces WHERE `+where+
-		` ORDER BY created_at DESC, id DESC LIMIT $15 OFFSET $16`, append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)...)
+	args := requestTraceListFilterArgs(filter)
+	var count int64
+	if !filter.SkipCount {
+		if err := scanSingleRow(ctx, r.q, `SELECT COUNT(*) FROM request_traces WHERE `+requestTraceFilterWhere, args, &count); err != nil {
+			return nil, 0, err
+		}
+	}
+	rows, err := r.q.QueryContext(ctx, `SELECT `+requestTraceEnvelopeColumns+` FROM request_traces WHERE `+requestTraceFilterWhere+
+		` ORDER BY created_at DESC, id DESC LIMIT $20 OFFSET $21`, append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -474,7 +461,83 @@ func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter s
 		}
 		list = append(list, trace)
 	}
-	return list, count, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	if err := hydrateRequestTraceLabels(ctx, r.q, list); err != nil {
+		return nil, 0, err
+	}
+	return list, count, nil
+}
+
+// Resolve only current labels for the small returned page. The stable ID remains
+// on the envelope even if a user is soft-deleted or a key was removed entirely.
+func hydrateRequestTraceLabels(ctx context.Context, q sqlQueryer, traces []service.RequestTrace) error {
+	if len(traces) == 0 {
+		return nil
+	}
+	userIDs, keyIDs := make([]int64, 0, len(traces)), make([]int64, 0, len(traces))
+	users, keys := map[int64]string{}, map[int64]string{}
+	for _, trace := range traces {
+		if trace.UserID != nil {
+			userIDs = append(userIDs, *trace.UserID)
+		}
+		if trace.APIKeyID != nil {
+			keyIDs = append(keyIDs, *trace.APIKeyID)
+		}
+	}
+	if len(userIDs) > 0 {
+		rows, err := q.QueryContext(ctx, `SELECT id, email FROM users WHERE id = ANY($1)`, pq.Array(userIDs))
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			var email string
+			if err := rows.Scan(&id, &email); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			users[id] = email
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if len(keyIDs) > 0 {
+		rows, err := q.QueryContext(ctx, `SELECT id, name FROM api_keys WHERE id = ANY($1)`, pq.Array(keyIDs))
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			var name string
+			if err := rows.Scan(&id, &name); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			keys[id] = name
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	for i := range traces {
+		if traces[i].UserID != nil {
+			traces[i].UserEmail = users[*traces[i].UserID]
+		}
+		if traces[i].APIKeyID != nil {
+			traces[i].APIKeyName = keys[*traces[i].APIKeyID]
+		}
+	}
+	return nil
 }
 
 func (r *requestTraceRepository) FinalizeRequestTraceCapture(ctx context.Context, traceID string, state service.RequestTraceCaptureState) error {

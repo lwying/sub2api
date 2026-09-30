@@ -70,6 +70,11 @@ func CaptureReason(v string) predicate.RequestAudit {
 	return predicate.RequestAudit(sql.FieldEQ(FieldCaptureReason, v))
 }
 
+// ForcedProvenance applies equality check predicate on the "forced_provenance" field. It's identical to ForcedProvenanceEQ.
+func ForcedProvenance(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldEQ(FieldForcedProvenance, v))
+}
+
 // RequestFingerprint applies equality check predicate on the "request_fingerprint" field. It's identical to RequestFingerprintEQ.
 func RequestFingerprint(v string) predicate.RequestAudit {
 	return predicate.RequestAudit(sql.FieldEQ(FieldRequestFingerprint, v))
@@ -238,6 +243,81 @@ func CaptureReasonEqualFold(v string) predicate.RequestAudit {
 // CaptureReasonContainsFold applies the ContainsFold predicate on the "capture_reason" field.
 func CaptureReasonContainsFold(v string) predicate.RequestAudit {
 	return predicate.RequestAudit(sql.FieldContainsFold(FieldCaptureReason, v))
+}
+
+// ForcedProvenanceEQ applies the EQ predicate on the "forced_provenance" field.
+func ForcedProvenanceEQ(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldEQ(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceNEQ applies the NEQ predicate on the "forced_provenance" field.
+func ForcedProvenanceNEQ(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldNEQ(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceIn applies the In predicate on the "forced_provenance" field.
+func ForcedProvenanceIn(vs ...string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldIn(FieldForcedProvenance, vs...))
+}
+
+// ForcedProvenanceNotIn applies the NotIn predicate on the "forced_provenance" field.
+func ForcedProvenanceNotIn(vs ...string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldNotIn(FieldForcedProvenance, vs...))
+}
+
+// ForcedProvenanceGT applies the GT predicate on the "forced_provenance" field.
+func ForcedProvenanceGT(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldGT(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceGTE applies the GTE predicate on the "forced_provenance" field.
+func ForcedProvenanceGTE(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldGTE(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceLT applies the LT predicate on the "forced_provenance" field.
+func ForcedProvenanceLT(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldLT(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceLTE applies the LTE predicate on the "forced_provenance" field.
+func ForcedProvenanceLTE(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldLTE(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceContains applies the Contains predicate on the "forced_provenance" field.
+func ForcedProvenanceContains(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldContains(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceHasPrefix applies the HasPrefix predicate on the "forced_provenance" field.
+func ForcedProvenanceHasPrefix(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldHasPrefix(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceHasSuffix applies the HasSuffix predicate on the "forced_provenance" field.
+func ForcedProvenanceHasSuffix(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldHasSuffix(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceIsNil applies the IsNil predicate on the "forced_provenance" field.
+func ForcedProvenanceIsNil() predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldIsNull(FieldForcedProvenance))
+}
+
+// ForcedProvenanceNotNil applies the NotNil predicate on the "forced_provenance" field.
+func ForcedProvenanceNotNil() predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldNotNull(FieldForcedProvenance))
+}
+
+// ForcedProvenanceEqualFold applies the EqualFold predicate on the "forced_provenance" field.
+func ForcedProvenanceEqualFold(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldEqualFold(FieldForcedProvenance, v))
+}
+
+// ForcedProvenanceContainsFold applies the ContainsFold predicate on the "forced_provenance" field.
+func ForcedProvenanceContainsFold(v string) predicate.RequestAudit {
+	return predicate.RequestAudit(sql.FieldContainsFold(FieldForcedProvenance, v))
 }
 
 // RequestFingerprintEQ applies the EQ predicate on the "request_fingerprint" field.

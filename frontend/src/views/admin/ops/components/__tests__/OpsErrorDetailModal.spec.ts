@@ -75,8 +75,12 @@ describe('OpsErrorDetailModal', () => {
     })
     await flushPromises()
 
-    const link = wrapper.get('[data-testid="ops-error-trace-link"]')
-    expect(link.attributes('href')).toBe('/admin/request-traces?trace_id=' + 'a'.repeat(32))
+    await wrapper.get('[data-testid="ops-error-trace-link"]').trigger('click')
+    expect(wrapper.get('[data-testid="ops-error-trace-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ops-error-trace-link"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="ops-error-trace-back"]').trigger('click')
+    expect(wrapper.find('[data-testid="ops-error-trace-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ops-error-trace-link"]').exists()).toBe(true)
   })
 
   it('never links to a Trace that is gone, and never falls back to the client request id', async () => {

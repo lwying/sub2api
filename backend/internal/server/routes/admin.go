@@ -734,7 +734,7 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
-		usage.GET("/:id/request-audit", h.Admin.Usage.GetRequestAudit)
+		usage.GET("/:id/request-audit/forced", h.Admin.Usage.GetForcedRequestAudit)
 	}
 }
 
@@ -747,6 +747,10 @@ func registerRequestTraceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	// resolves it first, and "status" can never be a 32-hex trace id.
 	traces.GET("/status", h.Admin.RequestTraceStatus.Get)
 	traces.POST("/exports", h.Admin.RequestTraceExport.Create)
+	// Session-scoped recall (ticket09): the same static segment as /exports/:id,
+	// registered alongside it on purpose — gin resolves the exact path first, so
+	// listing can never be mistaken for reading one task by id.
+	traces.GET("/exports", h.Admin.RequestTraceExport.List)
 	traces.GET("/exports/:id", h.Admin.RequestTraceExport.Get)
 	traces.GET("/exports/:id/download", h.Admin.RequestTraceExport.Download)
 	traces.GET("/:trace_id", h.Admin.RequestTrace.Get)

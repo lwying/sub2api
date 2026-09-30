@@ -102,6 +102,11 @@ func ApplyLegacyRequestFields(requestType RequestType, fallbackStream bool, fall
 }
 
 type UsageLog struct {
+	// Admin-only read projections. These are never derived from a caller-provided request ID.
+	RequestTraceID              *string
+	RequestTraceAvailable       bool
+	RequestAuditForcedAvailable bool
+
 	ID        int64
 	UserID    int64
 	APIKeyID  int64

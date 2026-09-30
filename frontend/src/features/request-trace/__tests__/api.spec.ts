@@ -10,7 +10,6 @@ const scope = {
   models: ['claude-sonnet-4-5'],
   platform_scope: 'exclude',
   platforms: ['antigravity'],
-  platform_exclude_unknown: true,
 }
 
 const status = {

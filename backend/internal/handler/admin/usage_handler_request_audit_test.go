@@ -34,18 +34,52 @@ func (s *requestAuditLookupStub) GetByUsageLogID(_ context.Context, usageLogID i
 	return s.rec, nil
 }
 
+func TestAdminUsageForcedAuditRequiresSessionAndMarkedEvidence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name       string
+		authMethod string
+		provenance string
+		wantStatus int
+	}{
+		{name: "admin session with forced evidence", authMethod: service.AuditAuthMethodJWT, provenance: "forced", wantStatus: http.StatusOK},
+		{name: "admin API key", authMethod: "admin_api_key", provenance: "forced", wantStatus: http.StatusForbidden},
+		{name: "historical unknown origin", authMethod: service.AuditAuthMethodJWT, wantStatus: http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) { c.Set("auth_method", tc.authMethod); c.Next() })
+			h := NewUsageHandler(nil, nil, nil, nil, &requestAuditLookupStub{rec: &service.RequestAuditRecord{
+				UsageLogID: 7, ForcedProvenance: tc.provenance,
+			}})
+			r.GET("/admin/usage/:id/request-audit/forced", h.GetForcedRequestAudit)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
+			r.ServeHTTP(w, req)
+			require.Equal(t, tc.wantStatus, w.Code)
+			if tc.wantStatus == http.StatusOK {
+				require.Equal(t, "no-store, private", w.Header().Get("Cache-Control"))
+			}
+		})
+	}
+}
+
 func setupRequestAuditRouter(repo service.RequestAuditRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("auth_method", service.AuditAuthMethodJWT); c.Next() })
+	if stub, ok := repo.(*requestAuditLookupStub); ok && stub.rec != nil {
+		stub.rec.ForcedProvenance = service.RequestAuditForcedProvenance
+	}
 	h := NewUsageHandler(nil, nil, nil, nil, repo)
-	r.GET("/admin/usage/:id/request-audit", h.GetRequestAudit)
+	r.GET("/admin/usage/:id/request-audit/forced", h.GetForcedRequestAudit)
 	return r
 }
 
 func TestAdminUsageGetRequestAuditNotFound(t *testing.T) {
 	router := setupRequestAuditRouter(&requestAuditLookupStub{})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -61,7 +95,7 @@ func TestAdminUsageGetRequestAuditReturnsSanitizedHeaders(t *testing.T) {
 		},
 	})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -96,7 +130,7 @@ func TestAdminUsageGetRequestAuditReturnsEventSkeletonWithoutDelta(t *testing.T)
 		},
 	})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -134,7 +168,7 @@ func TestAdminUsageGetRequestAuditReturnsNotCapturedReason(t *testing.T) {
 		},
 	})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -161,7 +195,7 @@ func TestAdminUsageGetRequestAuditReturnsCaptureCompleteness(t *testing.T) {
 		},
 	})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -207,7 +241,7 @@ func TestAdminUsageGetRequestAuditSanitizesHistoricalRecordFromRepository(t *tes
 	}
 	router := setupRequestAuditRouter(&requestAuditLookupStub{rec: rec})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -248,7 +282,7 @@ func TestAdminUsageGetRequestAuditReturnsAttempts(t *testing.T) {
 		},
 	})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -298,7 +332,7 @@ func TestAdminUsageGetRequestAuditReturnsSanitizedProtocolFields(t *testing.T) {
 		},
 	})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/admin/usage/7/request-audit/forced", nil)
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 

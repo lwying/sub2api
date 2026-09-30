@@ -6153,16 +6153,6 @@
             </div>
           </div>
 
-          <RequestTraceOperatorSettings
-            :status="requestTraceStatus"
-            :loading="requestTraceLoading"
-            @updated="requestTraceStatus = $event"
-          />
-
-          <!-- Export risk acknowledgement and task caps: separate from the capture
-               gate, and read/written by the panel itself. -->
-          <RequestTraceExportSettings />
-
           <GatewayMockSettings
             :status="gatewayMockStatus"
             :loading="gatewayMockLoading"
@@ -9222,10 +9212,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import RequestTraceOperatorSettings from '@/features/request-trace/RequestTraceOperatorSettings.vue'
-import RequestTraceExportSettings from '@/features/request-trace/RequestTraceExportSettings.vue'
-import { getOperatorSettings as getRequestTraceOperatorSettings } from '@/features/request-trace/api'
-import type { RequestTraceOperatorStatus } from '@/features/request-trace/types'
 import GatewayMockSettings from '@/features/gateway-mock/GatewayMockSettings.vue'
 import GatewayMockEventsPanel from '@/features/gateway-mock/GatewayMockEventsPanel.vue'
 import { getOperatorSettings as getGatewayMockOperatorSettings } from '@/features/gateway-mock/api'
@@ -9318,19 +9304,6 @@ import {
 } from "./codexFingerprintSignals";
 
 const { t, locale } = useI18n();
-const requestTraceStatus = ref<RequestTraceOperatorStatus | null>(null)
-const requestTraceLoading = ref(true)
-
-async function loadRequestTraceOperatorSettings() {
-  requestTraceLoading.value = true
-  try {
-    requestTraceStatus.value = await getRequestTraceOperatorSettings()
-  } catch {
-    requestTraceStatus.value = null
-  } finally {
-    requestTraceLoading.value = false
-  }
-}
 const gatewayMockStatus = ref<GatewayMockOperatorStatus | null>(null)
 const gatewayMockLoading = ref(true)
 
@@ -13267,7 +13240,6 @@ onMounted(() => {
   loadRateLimit429CooldownSettings();
   loadRateLimit429AccountLimit();
   loadKeyBillingSnapshotSettings();
-  loadRequestTraceOperatorSettings();
   loadGatewayMockOperatorSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();

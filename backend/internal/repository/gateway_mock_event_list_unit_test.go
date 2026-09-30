@@ -32,11 +32,11 @@ func TestGatewayMockEventListIsBoundedAndProjectsOnlyStoredFacts(t *testing.T) {
 		WithArgs(service.GatewayMockEventMaxPageSize, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"occurred_at", "rule_id", "rule_version", "protocol", "model",
-			"api_key_id", "user_id", "group_id", "account_id", "client_ip", "trace_id", "cleanup_after",
+			"api_key_id", "user_id", "group_id", "account_id", "client_ip", "trace_id",
 		}).AddRow(
 			occurred, "gmr_0123456789abcdef", "2026-09-30T03:00:00Z", "messages", "claude-sonnet-4-5",
 			int64(7), int64(3), int64(2), int64(11), "203.0.113.7",
-			"0123456789abcdef0123456789abcdef", occurred.AddDate(0, 0, 90),
+			"0123456789abcdef0123456789abcdef",
 		))
 
 	repo := NewGatewayMockEventRepo(db)
@@ -52,9 +52,10 @@ func TestGatewayMockEventListIsBoundedAndProjectsOnlyStoredFacts(t *testing.T) {
 	require.True(t, records[0].OccurredAt.Equal(occurred))
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	// 投影不得点名配置内容：关键词与回复正文根本没有落库列可读。
+	// 投影不得点名配置内容：关键词与回复正文根本没有落库列可读；legacy 的清理期限
+	// 列也不读——它是内部估算，不该出现在任何对外投影里。
 	for _, statement := range []string{gatewayMockEventListColumns, gatewayMockEventListSQL} {
-		for _, forbidden := range []string{"keyword", "reply", "request_digest"} {
+		for _, forbidden := range []string{"keyword", "reply", "request_digest", "cleanup_after"} {
 			require.NotContains(t, statement, forbidden, "the list must not read %q", forbidden)
 		}
 	}

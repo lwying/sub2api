@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, requested_reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, upstream_request_id, session_id, native_compaction_v2, created_at"
@@ -190,6 +191,11 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 	if err := r.hydrateUsageLogAssociations(ctx, logs); err != nil {
 		return nil, nil, err
 	}
+	if filters.IncludeAdminDiagnostics {
+		if err := r.hydrateAdminUsageDiagnosticLinks(ctx, logs); err != nil {
+			return nil, nil, err
+		}
+	}
 	return logs, page, nil
 }
 
@@ -354,6 +360,50 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 		}
 	}
 	return nil
+}
+
+// Admin list diagnostics are hydrated by usage IDs in one query. Forced origin
+// must be positively proven by a new audit row or a linked forced reservation;
+// a historical audit row has unknown origin and must never light the affordance.
+func (r *usageLogRepository) hydrateAdminUsageDiagnosticLinks(ctx context.Context, logs []service.UsageLog) error {
+	if len(logs) == 0 || r.sql == nil {
+		return nil
+	}
+	ids := make([]int64, len(logs))
+	positions := make(map[int64]int, len(logs))
+	for i := range logs {
+		ids[i] = logs[i].ID
+		positions[logs[i].ID] = i
+	}
+	rows, err := r.sql.QueryContext(ctx, `SELECT u.id, t.trace_id,
+		(a.forced_provenance = 'forced' OR EXISTS (
+			SELECT 1 FROM request_audit_reservations ar
+			WHERE ar.usage_log_id = u.id AND ar.forced IS TRUE)) AS forced_available
+		FROM usage_logs u
+		LEFT JOIN request_traces t ON t.usage_log_id = u.id
+		LEFT JOIN request_audits a ON a.usage_log_id = u.id
+		WHERE u.id = ANY($1)`, pq.Array(ids))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var traceID sql.NullString
+		var forced sql.NullBool
+		if err := rows.Scan(&id, &traceID, &forced); err != nil {
+			return err
+		}
+		if i, ok := positions[id]; ok {
+			if traceID.Valid && traceID.String != "" {
+				value := traceID.String
+				logs[i].RequestTraceID = &value
+				logs[i].RequestTraceAvailable = true
+			}
+			logs[i].RequestAuditForcedAvailable = forced.Valid && forced.Bool
+		}
+	}
+	return rows.Err()
 }
 
 type usageLogIDs struct {

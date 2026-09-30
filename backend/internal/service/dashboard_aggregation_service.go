@@ -55,16 +55,13 @@ type DashboardAggregationRepository interface {
 // GatewayMockEventCleaner 清理已过期的下游测试请求 mock 最小事件。
 // 该存储没有 usage 外键，因此不能依附 usage 删除，必须由保留清理显式扫掉；
 // 这里直接复用使用记录保留策略当次算出的期限，不另设一套保留配置。
+// 使用记录清理被停用时不调用本清理：事件期限动态跟随该策略，关闭即不自动清理。
 //
 // 用函数而非仓库接口：service 不能导入 repository（会成环），而清理只需这一个动作。
 type GatewayMockEventCleaner func(ctx context.Context, cutoff time.Time, limit int) (int64, error)
 
 // gatewayMockEventCleanupBatch 是单轮清理的批大小上限，与其它清理任务保持同一量级。
 const gatewayMockEventCleanupBatch = 500
-
-// gatewayMockEventRetentionFloorDays 是使用记录保留策略被停用时的兜底期限。
-// 停用 usage 清理意味着"永久保留"，但 mock 事件没有正文价值，不应无限积累。
-const gatewayMockEventRetentionFloorDays = 730
 
 // DashboardAggregationService 负责定时聚合与回填。
 type DashboardAggregationService struct {
@@ -427,14 +424,11 @@ func (s *DashboardAggregationService) maybeCleanupRetention(ctx context.Context,
 	if usageDays > 0 {
 		// mock 事件没有 usage 外键，随不了 usage 删除，必须在同一轮保留清理里显式扫掉。
 		// 直接复用本轮的 usageCutoff，天然继承"读取失败即跳过、绝不缩短窗口"的语义。
+		// 使用记录清理被停用（0 天 = 永久保留）时不得改用任何兜底期限：该事件期限必须
+		// 动态跟随当前使用记录清理策略，否则会与"关闭 usage 清理即不自动清理事件"的
+		// 已确认行为冲突；此处的取舍须在运营界面披露。
 		if err := s.cleanupGatewayMockEvents(ctx, usageCutoff); err != nil {
 			logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] mock 事件保留清理失败: %v", err)
-		}
-	} else if s.gatewayMockEventCleaner != nil {
-		// 使用记录清理被停用（永久保留）不代表事件也应无限积累：按兜底期限清理。
-		floorCutoff := now.AddDate(0, 0, -gatewayMockEventRetentionFloorDays)
-		if err := s.cleanupGatewayMockEvents(ctx, floorCutoff); err != nil {
-			logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] mock 事件兜底清理失败: %v", err)
 		}
 	}
 	if aggErr == nil && usageErr == nil && dedupErr == nil {

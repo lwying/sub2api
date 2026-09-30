@@ -619,12 +619,6 @@ func (s *GatewayService) billingDeps() *billingDeps {
 	}
 }
 
-func attachRequestAuditBestEffort(ctx context.Context, repo RequestAuditRepository, usageLog *UsageLog, input RequestAuditInput) {
-	auditCtx, cancel := detachedBillingContext(ctx)
-	defer cancel()
-	_ = AttachRequestAuditAfterUsageLog(auditCtx, repo, usageLog, input)
-}
-
 func finalizeRequestAuditBestEffort(
 	ctx context.Context,
 	auditRepo RequestAuditRepository,
@@ -634,7 +628,8 @@ func finalizeRequestAuditBestEffort(
 	input RequestAuditInput,
 ) {
 	if logicalKey == "" {
-		attachRequestAuditBestEffort(ctx, auditRepo, usageLog, input)
+		// Without a forced reservation, usage is the durable metering fact;
+		// ordinary protocol-only request audits are no longer collected.
 		return
 	}
 	forcedRepo, ok := auditRepo.(RequestAuditReservationRepository)

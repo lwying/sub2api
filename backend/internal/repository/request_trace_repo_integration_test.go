@@ -35,6 +35,8 @@ func newRequestTraceTestTx(t *testing.T) *sql.Tx {
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `
 CREATE TABLE usage_logs (id BIGINT PRIMARY KEY);
+CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT);
+CREATE TABLE api_keys (id BIGINT PRIMARY KEY, name TEXT);
 CREATE TABLE request_traces (
     id BIGSERIAL PRIMARY KEY,
     trace_id TEXT NOT NULL UNIQUE,
@@ -48,7 +50,11 @@ CREATE TABLE request_traces (
     cleanup_after TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
     -- 与 265 之后的信封一致：请求时分组与客户端模型都是可空的"未观察到"事实。
     group_id BIGINT,
-    requested_model TEXT
+    requested_model TEXT,
+    -- 与 270 之后的信封一致：实际选中平台历史（去重、有界），NULL 表示从未选到账号。
+    observed_platforms JSONB,
+    user_id BIGINT,
+    api_key_id BIGINT
 );
 CREATE TABLE request_trace_stages (
     id BIGSERIAL PRIMARY KEY,
@@ -525,4 +531,52 @@ func traceStageFactsCanonicalBytes(t *testing.T, tx *sql.Tx, metadata string) in
 	var size int
 	require.NoError(t, scanSingleRow(context.Background(), tx, `SELECT octet_length(($1::jsonb)::text)`, []any{metadata}, &size))
 	return size
+}
+
+// 270 的真实迁移文本必须能在集成 harness 里重放，并且它的数据库侧护栏要拒绝
+// **混入的非法元素**：单条 `@? '$[*] ? (@ like_regex ...)'` 只证明"存在某个匹配元素"，
+// 一个合法元素后面跟着非法元素会整体通过，这正是不能用单条 CHECK 表达式表达的原因。
+//
+// 这里在 270 之前的表形状上重放真实迁移文件（含幂等重放），再逐条验证：
+//   - NULL（未知）与去重后的合法 token 被接受；
+//   - 空数组、混合非法元素、重复、非字符串、非数组、JSON null、超量、超长 token 被拒绝。
+func TestRequestTraceObservedPlatformsMigrationRejectsMixedAndDuplicateTokens(t *testing.T) {
+	ctx := context.Background()
+	tx := newRequestTraceTestTx(t)
+	// 模拟 270 之前的表：先去掉这一列。
+	_, err := tx.ExecContext(ctx, `ALTER TABLE request_traces DROP COLUMN IF EXISTS observed_platforms`)
+	require.NoError(t, err)
+
+	apply := func() {
+		t.Helper()
+		content, readErr := migrations.FS.ReadFile("270_request_trace_observed_platforms.sql")
+		require.NoError(t, readErr)
+		_, execErr := tx.ExecContext(ctx, string(content))
+		require.NoError(t, execErr, "replaying migration 270 must succeed")
+	}
+	apply()
+	apply() // 幂等：灾备重放不得因对象已存在失败
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO request_traces (trace_id, route_family, inbound_endpoint, observed_platforms) VALUES
+		('000000000000000000000000000000a1', 'messages', '/v1/messages', NULL),
+		('000000000000000000000000000000a2', 'messages', '/v1/messages', '["anthropic","opencode_go"]'::jsonb)`)
+	require.NoError(t, err, "NULL（未知）与去重后的合法平台必须被接受")
+
+	invalid := []string{
+		`[]`,                            // 空数组不能冒充"已观察但为空"
+		`["anthropic","invalid space"]`, // 混合：第一个合法、第二个非法
+		`["anthropic","anthropic"]`,     // 重复必须被拒绝
+		`["anthropic",1]`,               // 非字符串元素
+		`["anthropic",null]`,
+		`{"anthropic":true}`, // 非数组
+		`null`,               // JSON null 不是 SQL NULL
+		`["p1","p2","p3","p4","p5","p6","p7","p8","p9","p10","p11","p12","p13","p14","p15","p16","p17"]`,
+		`["` + strings.Repeat("a", 129) + `"]`, // 单个 token 超过 128 字节
+	}
+	for _, platforms := range invalid {
+		expectPostgresError(t, tx, expectedPostgresCheckFailure,
+			`INSERT INTO request_traces (trace_id, route_family, inbound_endpoint, observed_platforms)
+			 VALUES ('000000000000000000000000000000b0', 'messages', '/v1/messages', $1::jsonb)`,
+			platforms)
+	}
 }

@@ -40082,6 +40082,7 @@ type RequestAuditMutation struct {
 	appendattempts             []map[string]interface{}
 	capture_completeness       *string
 	capture_reason             *string
+	forced_provenance          *string
 	request_fingerprint        *string
 	fingerprint_key_version    *int
 	addfingerprint_key_version *int
@@ -40440,6 +40441,55 @@ func (m *RequestAuditMutation) ResetCaptureReason() {
 	m.capture_reason = nil
 }
 
+// SetForcedProvenance sets the "forced_provenance" field.
+func (m *RequestAuditMutation) SetForcedProvenance(s string) {
+	m.forced_provenance = &s
+}
+
+// ForcedProvenance returns the value of the "forced_provenance" field in the mutation.
+func (m *RequestAuditMutation) ForcedProvenance() (r string, exists bool) {
+	v := m.forced_provenance
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldForcedProvenance returns the old "forced_provenance" field's value of the RequestAudit entity.
+// If the RequestAudit object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RequestAuditMutation) OldForcedProvenance(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldForcedProvenance is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldForcedProvenance requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldForcedProvenance: %w", err)
+	}
+	return oldValue.ForcedProvenance, nil
+}
+
+// ClearForcedProvenance clears the value of the "forced_provenance" field.
+func (m *RequestAuditMutation) ClearForcedProvenance() {
+	m.forced_provenance = nil
+	m.clearedFields[requestaudit.FieldForcedProvenance] = struct{}{}
+}
+
+// ForcedProvenanceCleared returns if the "forced_provenance" field was cleared in this mutation.
+func (m *RequestAuditMutation) ForcedProvenanceCleared() bool {
+	_, ok := m.clearedFields[requestaudit.FieldForcedProvenance]
+	return ok
+}
+
+// ResetForcedProvenance resets all changes to the "forced_provenance" field.
+func (m *RequestAuditMutation) ResetForcedProvenance() {
+	m.forced_provenance = nil
+	delete(m.clearedFields, requestaudit.FieldForcedProvenance)
+}
+
 // SetRequestFingerprint sets the "request_fingerprint" field.
 func (m *RequestAuditMutation) SetRequestFingerprint(s string) {
 	m.request_fingerprint = &s
@@ -40727,7 +40777,7 @@ func (m *RequestAuditMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RequestAuditMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 12)
 	if m.usage_log != nil {
 		fields = append(fields, requestaudit.FieldUsageLogID)
 	}
@@ -40745,6 +40795,9 @@ func (m *RequestAuditMutation) Fields() []string {
 	}
 	if m.capture_reason != nil {
 		fields = append(fields, requestaudit.FieldCaptureReason)
+	}
+	if m.forced_provenance != nil {
+		fields = append(fields, requestaudit.FieldForcedProvenance)
 	}
 	if m.request_fingerprint != nil {
 		fields = append(fields, requestaudit.FieldRequestFingerprint)
@@ -40781,6 +40834,8 @@ func (m *RequestAuditMutation) Field(name string) (ent.Value, bool) {
 		return m.CaptureCompleteness()
 	case requestaudit.FieldCaptureReason:
 		return m.CaptureReason()
+	case requestaudit.FieldForcedProvenance:
+		return m.ForcedProvenance()
 	case requestaudit.FieldRequestFingerprint:
 		return m.RequestFingerprint()
 	case requestaudit.FieldFingerprintKeyVersion:
@@ -40812,6 +40867,8 @@ func (m *RequestAuditMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldCaptureCompleteness(ctx)
 	case requestaudit.FieldCaptureReason:
 		return m.OldCaptureReason(ctx)
+	case requestaudit.FieldForcedProvenance:
+		return m.OldForcedProvenance(ctx)
 	case requestaudit.FieldRequestFingerprint:
 		return m.OldRequestFingerprint(ctx)
 	case requestaudit.FieldFingerprintKeyVersion:
@@ -40872,6 +40929,13 @@ func (m *RequestAuditMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCaptureReason(v)
+		return nil
+	case requestaudit.FieldForcedProvenance:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetForcedProvenance(v)
 		return nil
 	case requestaudit.FieldRequestFingerprint:
 		v, ok := value.(string)
@@ -40953,6 +41017,9 @@ func (m *RequestAuditMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *RequestAuditMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(requestaudit.FieldForcedProvenance) {
+		fields = append(fields, requestaudit.FieldForcedProvenance)
+	}
 	if m.FieldCleared(requestaudit.FieldRequestFingerprint) {
 		fields = append(fields, requestaudit.FieldRequestFingerprint)
 	}
@@ -40973,6 +41040,9 @@ func (m *RequestAuditMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *RequestAuditMutation) ClearField(name string) error {
 	switch name {
+	case requestaudit.FieldForcedProvenance:
+		m.ClearForcedProvenance()
+		return nil
 	case requestaudit.FieldRequestFingerprint:
 		m.ClearRequestFingerprint()
 		return nil
@@ -41004,6 +41074,9 @@ func (m *RequestAuditMutation) ResetField(name string) error {
 		return nil
 	case requestaudit.FieldCaptureReason:
 		m.ResetCaptureReason()
+		return nil
+	case requestaudit.FieldForcedProvenance:
+		m.ResetForcedProvenance()
 		return nil
 	case requestaudit.FieldRequestFingerprint:
 		m.ResetRequestFingerprint()

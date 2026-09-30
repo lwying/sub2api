@@ -136,12 +136,11 @@ func requireOpenAIPassthroughAuditCompleteness(
 ) {
 	t.Helper()
 	repo := &stubRequestAuditRepo{}
-	require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: usageLogID},
-		RequestAuditInput{
-			SSEEvents:        result.sseEvents,
-			ClientDisconnect: result.clientDisconnect,
-			StreamIncomplete: result.streamIncomplete,
-		}))
+	recordAuditProjectionForTest(repo, RequestAuditInput{
+		SSEEvents:        result.sseEvents,
+		ClientDisconnect: result.clientDisconnect,
+		StreamIncomplete: result.streamIncomplete,
+	})
 	require.NotNil(t, repo.created)
 	require.Equal(t, want, repo.created.CaptureCompleteness)
 	require.NotEmpty(t, repo.created.Events)

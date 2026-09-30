@@ -1118,11 +1118,11 @@ func TestForwardAsRawChatCompletions_RequestAuditMarksIncompleteStreams(t *testi
 			}
 
 			repo := &stubRequestAuditRepo{}
-			require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, RequestAuditInput{
+			recordAuditProjectionForTest(repo, RequestAuditInput{
 				SSEEvents:        requestAuditSSEEventsFromOpenAIResult(result),
 				ClientDisconnect: result.ClientDisconnect,
 				StreamIncomplete: result.StreamIncomplete,
-			}))
+			})
 			require.NotNil(t, repo.created)
 			require.Equal(t, tt.wantCompleteness, repo.created.CaptureCompleteness)
 			require.Len(t, repo.created.Events, tt.wantEvents)

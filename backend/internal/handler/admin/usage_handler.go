@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -45,8 +46,17 @@ func NewUsageHandler(
 	}
 }
 
-// GetRequestAudit returns protocol metadata attached to a usage log. It never includes model body.
-func (h *UsageHandler) GetRequestAudit(c *gin.Context) {
+var errForcedAuditSessionRequired = infraerrors.Forbidden("REQUEST_AUDIT_ADMIN_SESSION_REQUIRED", "an admin login session is required to read forced request audit metadata")
+
+// GetForcedRequestAudit returns only verified forced-audit metadata, never model body.
+func (h *UsageHandler) GetForcedRequestAudit(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		response.ErrorFrom(c, errForcedAuditSessionRequired)
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		response.BadRequest(c, "Invalid id")
@@ -61,7 +71,7 @@ func (h *UsageHandler) GetRequestAudit(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, "Failed to get request audit")
 		return
 	}
-	if rec == nil {
+	if rec == nil || rec.ForcedProvenance != service.RequestAuditForcedProvenance {
 		response.NotFound(c, "Request audit not found")
 		return
 	}
@@ -243,23 +253,24 @@ func (h *UsageHandler) List(c *gin.Context) {
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 	}
 	filters := usagestats.UsageLogFilters{
-		UsageLogID:            usageLogID,
-		UserID:                userID,
-		APIKeyID:              apiKeyID,
-		AccountID:             accountID,
-		GroupID:               groupID,
-		RequestID:             requestID,
-		Model:                 model,
-		ModelFilterSource:     usagestats.ModelSourceRequested,
-		RequestType:           requestType,
-		Stream:                stream,
-		NativeCompactionV2:    nativeCompactionV2,
-		BillingType:           billingType,
-		BillingMode:           billingMode,
-		UpstreamModelMismatch: upstreamModelMismatch,
-		StartTime:             startTime,
-		EndTime:               endTime,
-		ExactTotal:            exactTotal,
+		UsageLogID:              usageLogID,
+		UserID:                  userID,
+		APIKeyID:                apiKeyID,
+		AccountID:               accountID,
+		GroupID:                 groupID,
+		RequestID:               requestID,
+		Model:                   model,
+		ModelFilterSource:       usagestats.ModelSourceRequested,
+		RequestType:             requestType,
+		Stream:                  stream,
+		NativeCompactionV2:      nativeCompactionV2,
+		BillingType:             billingType,
+		BillingMode:             billingMode,
+		UpstreamModelMismatch:   upstreamModelMismatch,
+		StartTime:               startTime,
+		EndTime:                 endTime,
+		ExactTotal:              exactTotal,
+		IncludeAdminDiagnostics: c.GetString("auth_method") == service.AuditAuthMethodJWT,
 	}
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
@@ -270,7 +281,13 @@ func (h *UsageHandler) List(c *gin.Context) {
 
 	out := make([]dto.AdminUsageLog, 0, len(records))
 	for i := range records {
-		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
+		row := dto.UsageLogFromServiceAdmin(&records[i])
+		if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+			row.RequestTraceID = nil
+			row.RequestTraceAvailable = false
+			row.RequestAuditForcedAvailable = false
+		}
+		out = append(out, *row)
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
 }

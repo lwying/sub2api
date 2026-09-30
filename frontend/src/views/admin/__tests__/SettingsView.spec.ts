@@ -594,15 +594,15 @@ it("shows a separate, default-off Trace risk gate in gateway settings", async ()
     plaintext_capture_support_reason: 'supported',
     // 采集范围与开关同一条记录；缺省为“全部”，与旧行为一致。
     all_groups: true, group_ids: [], model_scope: 'all', models: [],
-    platform_scope: 'all', platforms: [], platform_exclude_unknown: false,
+    platform_scope: 'all', platforms: [],
   });
   getSettings.mockResolvedValue({ ...baseSettingsResponse });
   const wrapper = mountView();
   await flushPromises();
   await openGatewayTab(wrapper);
 
-  expect(wrapper.find('[data-testid="request-trace-settings"]').exists()).toBe(true);
-  expect(wrapper.get('[data-testid="request-trace-capture-state"]').attributes('data-state')).toBe('off');
+  expect(wrapper.find('[data-testid="request-trace-settings"]').exists()).toBe(false);
+  expect(wrapper.find('[data-testid="request-audit-force-settings"]').exists()).toBe(true);
 });
 
 it("shows the downstream test mock as default-off and reads no hit list in the settings tab", async () => {
@@ -612,7 +612,7 @@ it("shows the downstream test mock as default-off and reads no hit list in the s
     risk_acknowledgement_current: false, plaintext_capture_supported: true,
     plaintext_capture_support_reason: 'supported',
     all_groups: true, group_ids: [], model_scope: 'all', models: [],
-    platform_scope: 'all', platforms: [], platform_exclude_unknown: false,
+    platform_scope: 'all', platforms: [],
   });
   getGatewayMockOperatorSettings.mockResolvedValue({
     enabled: false,

@@ -3,7 +3,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -301,10 +300,10 @@ func TestHandleCCConversionResponsesMarkIncompleteStreamsInAudit(t *testing.T) {
 			require.True(t, result.StreamIncomplete, "usage-owned request audit must not be marked complete")
 
 			repo := &stubRequestAuditRepo{}
-			require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, RequestAuditInput{
+			recordAuditProjectionForTest(repo, RequestAuditInput{
 				SSEEvents:        requestAuditSSEEventsFromResult(result),
 				StreamIncomplete: result.StreamIncomplete,
-			}))
+			})
 			require.NotNil(t, repo.created)
 			require.Equal(t, RequestAuditCaptureIncomplete, repo.created.CaptureCompleteness)
 			encoded, marshalErr := json.Marshal(repo.created)

@@ -511,6 +511,18 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 账号槽位/等待计数需要在超时或断开时安全回收
 			accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
+			// 下游测试请求：分组平台是 Gemini 时，本入口承接的仍然是下游的 Anthropic
+			// Messages 协议，mock 判定只看下游协议，不因选中的账号平台不同而漏拦。
+			// 命中即归还账号槽位后返回，不发上游、不写使用记录、不构造 wire 尝试；
+			// 旧预热拦截在更早位置已经优先处理。
+			markGatewayMockStream(c, reqStream)
+			if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, reqModel, account.ID, body) {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
+
 			// 转发请求 - 根据账号平台分流
 			var result *service.ForwardResult
 			requestCtx := c.Request.Context()

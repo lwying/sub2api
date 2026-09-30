@@ -26,7 +26,7 @@
         :default-sort-order="defaultSortOrder"
         clickable-rows
         @sort="(key, order) => $emit('sort', key, order)"
-        @rowClick="(row) => $emit('openRequestAudit', row.id)"
+        @rowClick="(row) => $emit('openUsageDetail', row)"
       >
         <template #cell-user="{ row }">
           <div class="text-sm">
@@ -614,7 +614,7 @@ const emit = defineEmits<{
   userClick: [userID: number, email?: string]
   sort: [key: string, order: 'asc' | 'desc']
   ipGeoBatchFailed: []
-  openRequestAudit: [usageLogID: number]
+  openUsageDetail: [usage: AdminUsageLog]
 }>()
 const { t } = useI18n()
 const appStore = useAppStore()

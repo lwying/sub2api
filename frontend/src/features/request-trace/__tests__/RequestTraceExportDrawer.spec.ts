@@ -108,6 +108,47 @@ describe('admin Request Trace export task drawer', () => {
       .toBe('admin.requestTrace.export.reason.limit_rows')
   })
 
+  it('shows a completed task whose manifest is gone as file lost, not as incomplete', async () => {
+    // The server could not read the manifest, so nothing is known about what this
+    // export delivered — and the server also refuses the download. The truncation
+    // sentence is about which part of the *source* was never seen, which is a
+    // different claim, so it must not stand in for the missing file.
+    const wrapper = await mountLoaded(completed({
+      truncated: true, incomplete_reason: 'manifest_lost', downloadable: false, shard_count: 0,
+    }))
+
+    expect(wrapper.get('[data-testid="request-trace-export-task"]').attributes('data-state')).toBe('file_lost')
+    expect(wrapper.get('[data-testid="request-trace-export-state"]').text()).toBe('admin.requestTrace.export.state.file_lost')
+    expect(wrapper.get('[data-testid="request-trace-export-file-lost"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="request-trace-export-incomplete"]').exists()).toBe(false)
+    // Nothing to download: the shard list lives in the manifest that is gone.
+    expect(wrapper.get('[data-testid="request-trace-export-manifest"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('breaks the skipped total down by reason instead of hiding the two facts behind one number', async () => {
+    const wrapper = await mountLoaded(completed({
+      truncated: true, incomplete_reason: 'read_failed', rows_skipped: 5, shard_count: 1,
+      skipped_by_reason: { read_failed: 2, source_gone: 3 },
+    }))
+
+    // The aggregate stays the authoritative total; the breakdown is its parts.
+    expect(wrapper.get('[data-testid="request-trace-export-skipped"]').text()).toBe('5')
+    const readFailed = wrapper.get('[data-testid="request-trace-export-skipped-reason-read_failed"]')
+    const sourceGone = wrapper.get('[data-testid="request-trace-export-skipped-reason-source_gone"]')
+    expect(readFailed.attributes('data-reason')).toBe('read_failed')
+    expect(readFailed.text()).toBe('admin.requestTrace.export.reason.read_failed: 2')
+    expect(sourceGone.text()).toBe('admin.requestTrace.export.reason.source_gone: 3')
+    // A typed breakdown is not a smaller success: the task is still incomplete.
+    expect(wrapper.get('[data-testid="request-trace-export-task"]').attributes('data-state')).toBe('incomplete')
+  })
+
+  it('shows no per-reason breakdown when the task skipped nothing', async () => {
+    const wrapper = await mountLoaded(completed({ rows_skipped: 0, skipped_by_reason: { read_failed: 0, source_gone: 0 } }))
+
+    expect(wrapper.find('[data-testid="request-trace-export-skipped-by-reason"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="request-trace-export-skipped"]').text()).toBe('0')
+  })
+
   it('labels an incomplete task whose reason this version does not know, and still calls it incomplete', async () => {
     const wrapper = await mountLoaded(completed({ truncated: true, incomplete_reason: 'some_new_reason' }))
 

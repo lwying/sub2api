@@ -852,7 +852,4 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 		CreatedAt:        record.CreatedAt,
 	}
 	writeUsageLogBestEffort(context.Background(), s.usageLogRepo, usageLog, "service.openai_live")
-	attachRequestAuditBestEffort(context.Background(), s.requestAuditRepo, usageLog, RequestAuditInput{
-		NotCapturedReason: RequestAuditNotCapturedReasonPhase1Uncovered,
-	})
 }

@@ -10,6 +10,7 @@
       </button>
     </div>
     <p class="mt-2 text-xs text-gray-500 dark:text-dark-300" data-testid="gateway-mock-events-absent-note">{{ t('admin.gatewayMock.events.absentNote') }}</p>
+    <p class="mt-1 text-xs text-gray-500 dark:text-dark-300" data-testid="gateway-mock-events-retention-note">{{ t('admin.gatewayMock.events.retentionNote') }}</p>
 
     <template v-if="rows.length">
       <div class="mt-4 overflow-x-auto">
@@ -45,7 +46,7 @@
               <td class="px-3 py-2 font-mono text-xs" data-testid="gateway-mock-events-account">{{ observedID(row.account_id) }}</td>
               <td class="px-3 py-2 font-mono text-xs" data-testid="gateway-mock-events-client-ip">{{ observed(row.client_ip) }}</td>
               <td class="px-3 py-2 font-mono text-xs" data-testid="gateway-mock-events-trace">{{ observed(row.trace_id) }}</td>
-              <td class="whitespace-nowrap px-3 py-2 text-xs" data-testid="gateway-mock-events-cleanup">{{ formatTime(row.cleanup_after) }}</td>
+              <td class="whitespace-nowrap px-3 py-2 text-xs" data-testid="gateway-mock-events-cleanup">{{ t('admin.gatewayMock.events.noDeadline') }}</td>
             </tr>
           </tbody>
         </table>
@@ -102,7 +103,12 @@ function observedID(value: number): string {
   return value > 0 ? `#${value}` : absent.value
 }
 
-/** The parser already refuses an unreadable time; this only formats what it kept. */
+/**
+ * The parser already refuses an unreadable time; this only formats what it kept.
+ * The cleanup cell never calls this: the server does not disclose a deadline at
+ * all (the stored one is an internal estimate), so that cell says so in words
+ * instead of rendering a date that would read as the real cleanup time.
+ */
 function formatTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? absent.value : date.toLocaleString()

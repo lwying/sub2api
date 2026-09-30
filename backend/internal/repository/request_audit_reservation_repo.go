@@ -62,6 +62,7 @@ func (r *requestAuditRepository) FinalizeReservation(ctx context.Context, logica
 		if ent.IsNotFound(err) {
 			final := *rec
 			final.UsageLogID = usageLogID
+			final.ForcedProvenance = service.RequestAuditForcedProvenance
 			final.CaptureCompleteness = service.RequestAuditCaptureIncomplete
 			if final.CaptureReason == "" {
 				final.CaptureReason = "missing_reservation"
@@ -73,6 +74,10 @@ func (r *requestAuditRepository) FinalizeReservation(ctx context.Context, logica
 		}
 		final := *rec
 		final.UsageLogID = usageLogID
+		final.ForcedProvenance = ""
+		if row.Forced {
+			final.ForcedProvenance = service.RequestAuditForcedProvenance
+		}
 		if len(final.Headers) == 0 {
 			final.Headers = row.Headers
 		}

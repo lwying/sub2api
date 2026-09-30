@@ -348,6 +348,7 @@ export default {
         loading: '加载中…',
         requestId: '请求 ID',
         viewRequestTrace: '查看请求 Trace',
+        backToError: '返回错误详情',
         time: '时间',
         phase: '阶段',
         status: '状态码',

@@ -76,11 +76,11 @@ describe('retired legacy capture surfaces', () => {
     expect(sidebar).not.toContain(LEGACY_ROUTE_PATH)
   })
 
-  it('keeps the metadata-only request audit readable', () => {
-    // The forced-audit ops entry survives retirement: it never carried model body.
-    expect(typeof adminUsageAPI.getRequestAudit).toBe('function')
-    const drawer = source('components/admin/usage/UsageRequestAuditDrawer.vue')
-    expect(drawer).toContain('request-audit-capture-status')
+  it('keeps only the session-gated forced audit metadata read', () => {
+    expect(typeof adminUsageAPI.getForcedRequestAudit).toBe('function')
+    expect(adminUsageAPI).not.toHaveProperty('getRequestAudit')
+    const detail = source('components/admin/usage/UsageDetailModal.vue')
+    expect(detail).toContain('request_audit_forced_available')
   })
 
   it('removes the value-detail reads and reveals from the usage API', () => {
@@ -93,16 +93,17 @@ describe('retired legacy capture surfaces', () => {
     expect(settingsAPI).not.toHaveProperty('updateRequestAuditValueDetailOperatorSettings')
   })
 
-  it('removes the value-detail reveal control from the usage audit drawer', () => {
-    const drawer = source('components/admin/usage/UsageRequestAuditDrawer.vue')
-    expect(drawer).not.toContain('request-audit-value-detail')
-    expect(drawer).not.toContain('revealRequestAuditValueDetail')
+  it('removes the value-detail reveal control from the new usage detail', () => {
+    const detail = source('components/admin/usage/UsageDetailModal.vue')
+    expect(detail).not.toContain('request-audit-value-detail')
+    expect(detail).not.toContain('revealRequestAuditValueDetail')
   })
 
   it('removes the value-detail panel from settings while keeping the Trace gate', () => {
     const settingsView = source('views/admin/SettingsView.vue')
     expect(settingsView).not.toContain('requestAuditValueDetail')
-    expect(settingsView).toContain('RequestTraceOperatorSettings')
+    expect(settingsView).not.toContain('RequestTraceOperatorSettings')
+    expect(source('features/request-trace/RequestTraceSettingsDialog.vue')).toContain('RequestTraceOperatorSettings')
   })
 })
 
