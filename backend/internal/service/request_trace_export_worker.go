@@ -22,7 +22,12 @@ const (
 	// re-checks a disabled capability. The expiry sweep keeps following
 	// CleanupEvery, so this only bounds the re-check while no new task can
 	// appear.
-	RequestTraceExportWorkerDisabledInterval = 5 * time.Minute
+	//
+	// It is deliberately short: "disabled" now means a deployment prerequisite
+	// (single-instance declaration) is missing, and an operator who fixes that on
+	// a running instance must not wait minutes for their queued exports to be
+	// picked up. The disabled tick itself claims nothing, so this cadence is cheap.
+	RequestTraceExportWorkerDisabledInterval = 30 * time.Second
 	// RequestTraceExportWorkerErrorBackoff is the wait after a failed call so a
 	// broken store cannot turn into a hot loop.
 	RequestTraceExportWorkerErrorBackoff = time.Minute

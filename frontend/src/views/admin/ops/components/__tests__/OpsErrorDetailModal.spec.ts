@@ -27,11 +27,88 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// 组件传的 to 一定是 { path, query }；stub 把它渲染成可断言的 href，
+// 不依赖真实路由挂载。
+const RouterLinkStub = {
+  props: ['to'],
+  computed: {
+    href(this: { to: { path: string; query?: Record<string, string> } }) {
+      const query = new URLSearchParams(Object.entries(this.to.query || {}).map(([key, value]) => [key, String(value)]))
+      return query.size > 0 ? `${this.to.path}?${query.toString()}` : this.to.path
+    }
+  },
+  template: '<a :href="href"><slot /></a>'
+}
+
 describe('OpsErrorDetailModal', () => {
   beforeEach(() => {
     mocks.getRequestErrorDetail.mockReset()
     mocks.listRequestErrorUpstreamErrors.mockReset()
     mocks.listRequestErrorUpstreamErrors.mockResolvedValue({ items: [] })
+  })
+
+  it('links to the request Trace only when the server says it is still readable', async () => {
+    mocks.getRequestErrorDetail.mockResolvedValue({
+      id: 1,
+      created_at: '2026-08-19T00:00:00Z',
+      phase: 'request',
+      type: 'upstream_error',
+      error_owner: 'provider',
+      error_source: 'gateway',
+      severity: 'P1',
+      status_code: 502,
+      platform: 'openai',
+      model: 'gpt-5.6',
+      resolved: false,
+      request_id: 'rid-1',
+      request_trace_id: 'a'.repeat(32),
+      request_trace_available: true,
+      message: 'boom',
+      account_name: 'account',
+      group_name: 'group',
+      is_business_limited: false
+    })
+
+    const wrapper = shallowMount(OpsErrorDetailModal, {
+      props: { show: true, errorId: 1, errorType: 'request' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, Icon: true, RouterLink: RouterLinkStub } }
+    })
+    await flushPromises()
+
+    const link = wrapper.get('[data-testid="ops-error-trace-link"]')
+    expect(link.attributes('href')).toBe('/admin/request-traces?trace_id=' + 'a'.repeat(32))
+  })
+
+  it('never links to a Trace that is gone, and never falls back to the client request id', async () => {
+    mocks.getRequestErrorDetail.mockResolvedValue({
+      id: 2,
+      created_at: '2026-08-19T00:00:00Z',
+      phase: 'request',
+      type: 'upstream_error',
+      error_owner: 'provider',
+      error_source: 'gateway',
+      severity: 'P1',
+      status_code: 502,
+      platform: 'openai',
+      model: 'gpt-5.6',
+      resolved: false,
+      request_id: 'rid-can-be-reused',
+      request_trace_id: 'b'.repeat(32),
+      request_trace_available: false,
+      message: 'boom',
+      account_name: 'account',
+      group_name: 'group',
+      is_business_limited: false
+    })
+
+    const wrapper = shallowMount(OpsErrorDetailModal, {
+      props: { show: true, errorId: 2, errorType: 'request' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, Icon: true, RouterLink: RouterLinkStub } }
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ops-error-trace-link"]').exists()).toBe(false)
+    expect(wrapper.html()).not.toContain('rid-can-be-reused'.repeat(1) + '&')
   })
 
   it('prioritizes upstream root cause and deduplicates diagnostic payloads', async () => {

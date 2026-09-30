@@ -55,7 +55,7 @@ func TestRequestTraceCaptureDoesNotReadBodyIfGateClosed(t *testing.T) {
 	r := gin.New()
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return false }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(false) }, repo, queue), func(c *gin.Context) {
 		c.Status(http.StatusUnauthorized)
 	})
 	body := &unreadableTraceBody{}
@@ -87,7 +87,7 @@ func TestRequestTraceCaptureDoesNotTouchUncoveredRoutes(t *testing.T) {
 	r := gin.New()
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
-	r.POST("/v1/messages/count_tokens", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages/count_tokens", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Status(http.StatusUnauthorized)
 	})
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil))
@@ -100,7 +100,7 @@ func TestRequestTraceCapturePersistsAuthRejectionWithoutBodyRead(t *testing.T) {
 	r := gin.New()
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "rejected"})
 	})
 	body := &unreadableTraceBody{}

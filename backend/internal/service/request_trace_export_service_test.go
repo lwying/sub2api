@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -164,14 +165,15 @@ func TestRequestTraceExportCleanupManyNonregularEntriesDoNotStarveValidExpiry(t 
 	store := &traceExportStoreStub{tasks: make(map[string]RequestTraceExportTask)}
 	for i := 0; i < 33; i++ {
 		id := fmt.Sprintf("%032x", i)
-		store.tasks[id] = RequestTraceExportTask{ID: id, Status: RequestTraceExportCompleted, Filename: exportFileBase(id), DownloadUntil: &until}
-		require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(id)), 0700))
+		store.tasks[id] = RequestTraceExportTask{ID: id, Status: RequestTraceExportCompleted, Filename: exportManifestBase(id), DownloadUntil: &until}
+		require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(id)), 0700))
 	}
 	goodID := fmt.Sprintf("%032x", 33)
-	goodPath := filepath.Join(dir, exportFileBase(goodID))
+	goodPath := filepath.Join(dir, exportManifestBase(goodID))
 	require.NoError(t, os.WriteFile(goodPath, []byte("synthetic"), 0600))
-	store.tasks[goodID] = RequestTraceExportTask{ID: goodID, Status: RequestTraceExportCompleted, Filename: exportFileBase(goodID), DownloadUntil: &until}
+	store.tasks[goodID] = RequestTraceExportTask{ID: goodID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(goodID), DownloadUntil: &until}
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 	cleaned, err := svc.CleanupExpired(context.Background(), 1)
 	require.NoError(t, err)
@@ -191,14 +193,15 @@ func TestRequestTraceExportCleanupWalksPastManyNonregularEntriesAcrossSweeps(t *
 	store := &traceExportStoreStub{tasks: make(map[string]RequestTraceExportTask)}
 	for i := 0; i < nonregular; i++ {
 		id := fmt.Sprintf("%032x", i)
-		store.tasks[id] = RequestTraceExportTask{ID: id, Status: RequestTraceExportCompleted, Filename: exportFileBase(id), DownloadUntil: &until}
-		require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(id)), 0700))
+		store.tasks[id] = RequestTraceExportTask{ID: id, Status: RequestTraceExportCompleted, Filename: exportManifestBase(id), DownloadUntil: &until}
+		require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(id)), 0700))
 	}
 	validID := fmt.Sprintf("%032x", nonregular-1)
-	validPath := filepath.Join(dir, exportFileBase(validID))
+	validPath := filepath.Join(dir, exportManifestBase(validID))
 	require.NoError(t, os.Remove(validPath))
 	require.NoError(t, os.WriteFile(validPath, []byte("synthetic"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 
 	// One page holds only the unremovable head: nothing is deletable yet, and the
@@ -217,7 +220,7 @@ func TestRequestTraceExportCleanupWalksPastManyNonregularEntriesAcrossSweeps(t *
 	// Once the tail is consumed the cursor wraps to the head, so a head row that
 	// becomes deletable is not stranded behind the cursor.
 	headID := fmt.Sprintf("%032x", 0)
-	headPath := filepath.Join(dir, exportFileBase(headID))
+	headPath := filepath.Join(dir, exportManifestBase(headID))
 	require.NoError(t, os.Remove(headPath))
 	require.NoError(t, os.WriteFile(headPath, []byte("synthetic"), 0600))
 	cleaned, err = svc.CleanupExpired(context.Background(), 1)
@@ -227,7 +230,7 @@ func TestRequestTraceExportCleanupWalksPastManyNonregularEntriesAcrossSweeps(t *
 
 	// Nonregular entries and their task rows are never touched.
 	keptID := fmt.Sprintf("%032x", 1)
-	require.DirExists(t, filepath.Join(dir, exportFileBase(keptID)))
+	require.DirExists(t, filepath.Join(dir, exportManifestBase(keptID)))
 	_, err = store.Get(context.Background(), keptID)
 	require.NoError(t, err)
 
@@ -251,12 +254,13 @@ func TestRequestTraceExportCleanupCursorWrapsToRevisitSkippedEntries(t *testing.
 	until := now.Add(-time.Hour)
 	headID, tailID := strings.Repeat("0", 32), strings.Repeat("1", 32)
 	store := &traceExportStoreStub{tasks: map[string]RequestTraceExportTask{
-		headID: {ID: headID, Status: RequestTraceExportCompleted, Filename: exportFileBase(headID), DownloadUntil: &until},
-		tailID: {ID: tailID, Status: RequestTraceExportCompleted, Filename: exportFileBase(tailID), DownloadUntil: &until},
+		headID: {ID: headID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(headID), DownloadUntil: &until},
+		tailID: {ID: tailID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(tailID), DownloadUntil: &until},
 	}}
-	require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(headID)), 0700))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(tailID)), 0700))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(headID)), 0700))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(tailID)), 0700))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 
 	cleaned, err := svc.CleanupExpired(context.Background(), 1)
@@ -264,14 +268,14 @@ func TestRequestTraceExportCleanupCursorWrapsToRevisitSkippedEntries(t *testing.
 	require.Equal(t, int64(0), cleaned)
 	require.Empty(t, svc.cleanupCursor, "a fully consumed sweep must wrap back to the head")
 
-	headPath := filepath.Join(dir, exportFileBase(headID))
+	headPath := filepath.Join(dir, exportManifestBase(headID))
 	require.NoError(t, os.Remove(headPath))
 	require.NoError(t, os.WriteFile(headPath, []byte("synthetic"), 0600))
 	cleaned, err = svc.CleanupExpired(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cleaned)
 	require.NoFileExists(t, headPath)
-	require.DirExists(t, filepath.Join(dir, exportFileBase(tailID)), "nonregular entry is never removed")
+	require.DirExists(t, filepath.Join(dir, exportManifestBase(tailID)), "nonregular entry is never removed")
 }
 
 // A sweep that stops at its deletion budget has not reached the tail, so it must
@@ -284,16 +288,17 @@ func TestRequestTraceExportCleanupShortPagesResumeWithoutResettingCursor(t *test
 	until := now.Add(-time.Hour)
 	dirID, firstID, secondID := strings.Repeat("0", 32), strings.Repeat("1", 32), strings.Repeat("2", 32)
 	store := &traceExportStoreStub{tasks: map[string]RequestTraceExportTask{
-		dirID:    {ID: dirID, Status: RequestTraceExportCompleted, Filename: exportFileBase(dirID), DownloadUntil: &until},
-		firstID:  {ID: firstID, Status: RequestTraceExportCompleted, Filename: exportFileBase(firstID), DownloadUntil: &until},
-		secondID: {ID: secondID, Status: RequestTraceExportCompleted, Filename: exportFileBase(secondID), DownloadUntil: &until},
+		dirID:    {ID: dirID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(dirID), DownloadUntil: &until},
+		firstID:  {ID: firstID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(firstID), DownloadUntil: &until},
+		secondID: {ID: secondID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(secondID), DownloadUntil: &until},
 	}}
-	require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(dirID)), 0700))
-	firstPath := filepath.Join(dir, exportFileBase(firstID))
-	secondPath := filepath.Join(dir, exportFileBase(secondID))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(dirID)), 0700))
+	firstPath := filepath.Join(dir, exportManifestBase(firstID))
+	secondPath := filepath.Join(dir, exportManifestBase(secondID))
 	require.NoError(t, os.WriteFile(firstPath, []byte("synthetic"), 0600))
 	require.NoError(t, os.WriteFile(secondPath, []byte("synthetic"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 
 	cleaned, err := svc.CleanupExpired(context.Background(), 1)
@@ -306,7 +311,7 @@ func TestRequestTraceExportCleanupShortPagesResumeWithoutResettingCursor(t *test
 	require.Equal(t, int64(1), cleaned)
 	require.NoFileExists(t, firstPath)
 	require.NoFileExists(t, secondPath)
-	require.DirExists(t, filepath.Join(dir, exportFileBase(dirID)), "nonregular entry is never removed")
+	require.DirExists(t, filepath.Join(dir, exportManifestBase(dirID)), "nonregular entry is never removed")
 }
 
 // A store error partway through a sweep must not wedge cleanup: the sweep stays
@@ -319,16 +324,17 @@ func TestRequestTraceExportCleanupRetriesAfterStoreErrorWithoutWedging(t *testin
 	firstID, secondID := strings.Repeat("1", 32), strings.Repeat("2", 32)
 	store := &traceExportStoreStub{
 		tasks: map[string]RequestTraceExportTask{
-			firstID:  {ID: firstID, Status: RequestTraceExportCompleted, Filename: exportFileBase(firstID), DownloadUntil: &until},
-			secondID: {ID: secondID, Status: RequestTraceExportCompleted, Filename: exportFileBase(secondID), DownloadUntil: &until},
+			firstID:  {ID: firstID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(firstID), DownloadUntil: &until},
+			secondID: {ID: secondID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(secondID), DownloadUntil: &until},
 		},
 		deleteFails: map[string]int{firstID: 1},
 	}
-	firstPath := filepath.Join(dir, exportFileBase(firstID))
-	secondPath := filepath.Join(dir, exportFileBase(secondID))
+	firstPath := filepath.Join(dir, exportManifestBase(firstID))
+	secondPath := filepath.Join(dir, exportManifestBase(secondID))
 	require.NoError(t, os.WriteFile(firstPath, []byte("synthetic"), 0600))
 	require.NoError(t, os.WriteFile(secondPath, []byte("synthetic"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 
 	cleaned, err := svc.CleanupExpired(context.Background(), 1)
@@ -356,13 +362,14 @@ func TestRequestTraceExportCleanupNonregularFirstDoesNotStarveExpiredPages(t *te
 	idBad, idGood := strings.Repeat("0", 32), strings.Repeat("1", 32)
 	until := now.Add(-time.Hour)
 	store := &traceExportStoreStub{tasks: map[string]RequestTraceExportTask{
-		idBad: {ID: idBad, Status: RequestTraceExportCompleted, Filename: exportFileBase(idBad), DownloadUntil: &until},
-		idGood: {ID: idGood, Status: RequestTraceExportCompleted, Filename: exportFileBase(idGood), DownloadUntil: &until},
+		idBad:  {ID: idBad, Status: RequestTraceExportCompleted, Filename: exportManifestBase(idBad), DownloadUntil: &until},
+		idGood: {ID: idGood, Status: RequestTraceExportCompleted, Filename: exportManifestBase(idGood), DownloadUntil: &until},
 	}}
-	require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(idBad)), 0700))
-	pathGood := filepath.Join(dir, exportFileBase(idGood))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(idBad)), 0700))
+	pathGood := filepath.Join(dir, exportManifestBase(idGood))
 	require.NoError(t, os.WriteFile(pathGood, []byte("synthetic"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 	cleaned, err := svc.CleanupExpired(context.Background(), 1)
 	require.NoError(t, err)
@@ -377,13 +384,14 @@ func TestRequestTraceExportCleanupSkipsNonregularEntriesWithoutBlockingOthers(t 
 	goodID := strings.Repeat("b", 32)
 	until := now.Add(-time.Hour)
 	store := &traceExportStoreStub{tasks: map[string]RequestTraceExportTask{
-		badID: {ID: badID, Status: RequestTraceExportCompleted, Filename: exportFileBase(badID), DownloadUntil: &until},
-		goodID: {ID: goodID, Status: RequestTraceExportCompleted, Filename: exportFileBase(goodID), DownloadUntil: &until},
+		badID:  {ID: badID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(badID), DownloadUntil: &until},
+		goodID: {ID: goodID, Status: RequestTraceExportCompleted, Filename: exportManifestBase(goodID), DownloadUntil: &until},
 	}}
-	require.NoError(t, os.Mkdir(filepath.Join(dir, exportFileBase(badID)), 0700))
-	goodPath := filepath.Join(dir, exportFileBase(goodID))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, exportManifestBase(badID)), 0700))
+	goodPath := filepath.Join(dir, exportManifestBase(goodID))
 	require.NoError(t, os.WriteFile(goodPath, []byte("synthetic export"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 	count, err := svc.CleanupExpired(context.Background(), 10)
 	require.NoError(t, err)
@@ -392,7 +400,7 @@ func TestRequestTraceExportCleanupSkipsNonregularEntriesWithoutBlockingOthers(t 
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = store.Get(context.Background(), goodID)
 	require.ErrorIs(t, err, ErrRequestTraceExportNotFound)
-	require.DirExists(t, filepath.Join(dir, exportFileBase(badID)), "nonregular entry is never removed")
+	require.DirExists(t, filepath.Join(dir, exportManifestBase(badID)), "nonregular entry is never removed")
 }
 
 func TestRequestTraceExportCleanupSweepsAfterSwitchIsDisabled(t *testing.T) {
@@ -401,11 +409,12 @@ func TestRequestTraceExportCleanupSweepsAfterSwitchIsDisabled(t *testing.T) {
 	until := now.Add(-time.Hour)
 	dir := t.TempDir()
 	store := &traceExportStoreStub{tasks: map[string]RequestTraceExportTask{id: {
-		ID: id, Status: RequestTraceExportCompleted, Filename: exportFileBase(id), DownloadUntil: &until,
+		ID: id, Status: RequestTraceExportCompleted, Filename: exportManifestBase(id), DownloadUntil: &until,
 	}}}
-	path := filepath.Join(dir, exportFileBase(id))
+	path := filepath.Join(dir, exportManifestBase(id))
 	require.NoError(t, os.WriteFile(path, []byte("synthetic"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 	count, err := svc.CleanupExpired(context.Background(), 10)
 	require.NoError(t, err)
@@ -420,6 +429,7 @@ func TestRequestTraceExportCleanupRemovesExpiredFailedRow(t *testing.T) {
 		ID: id, Status: RequestTraceExportFailed, CreatedAt: now.Add(-8 * 24 * time.Hour),
 	}}}
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{SingleInstanceDeclared: true, InstanceID: "instance-one", TempDir: t.TempDir()})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	svc.now = func() time.Time { return now }
 	count, err := svc.CleanupExpired(context.Background(), 10)
 	require.NoError(t, err)
@@ -434,11 +444,12 @@ func TestRequestTraceExportCleanupRequiresSingleInstanceDeclaration(t *testing.T
 	id := strings.Repeat("c", 32)
 	until := now.Add(-time.Hour)
 	store := &traceExportStoreStub{tasks: map[string]RequestTraceExportTask{id: {
-		ID: id, Status: RequestTraceExportCompleted, Filename: exportFileBase(id), DownloadUntil: &until,
+		ID: id, Status: RequestTraceExportCompleted, Filename: exportManifestBase(id), DownloadUntil: &until,
 	}}}
-	path := filepath.Join(dir, exportFileBase(id))
+	path := filepath.Join(dir, exportManifestBase(id))
 	require.NoError(t, os.WriteFile(path, []byte("synthetic export"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{InstanceID: "instance-one", TempDir: dir})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	_, err := svc.CleanupExpired(context.Background(), 10)
 	require.ErrorIs(t, err, ErrRequestTraceExportDisabled)
 	require.FileExists(t, path)
@@ -447,9 +458,11 @@ func TestRequestTraceExportCleanupRequiresSingleInstanceDeclaration(t *testing.T
 func TestRequestTraceExportRestartReapsPendingTaskWithoutFile(t *testing.T) {
 	store := &traceExportStoreStub{}
 	old := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, InstanceID: "old", TempDir: t.TempDir()})
+	old.SetAcknowledgementSatisfiedForTest(true)
 	task, err := old.CreateTask(context.Background(), RequestTraceExportActor{AdminUserID: 1, SessionID: "synthetic-session"}, RequestTraceExportFilter{})
 	require.NoError(t, err)
 	newProcess := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, InstanceID: "new", TempDir: t.TempDir()})
+	newProcess.SetAcknowledgementSatisfiedForTest(true)
 	newProcess.now = func() time.Time { return task.CreatedAt.Add(11 * time.Minute) }
 	count, err := newProcess.CleanupExpired(context.Background(), 10)
 	require.NoError(t, err)
@@ -461,6 +474,7 @@ func TestRequestTraceExportRestartReapsPendingTaskWithoutFile(t *testing.T) {
 
 func TestRequestTraceExportRejectsUnverifiedSingleInstanceAndAbsentAdminSession(t *testing.T) {
 	svc := NewRequestTraceExportService(&traceExportStoreStub{}, &traceExportSourceStub{}, RequestTraceExportOptions{TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	_, err := svc.CreateTask(context.Background(), RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}, RequestTraceExportFilter{})
 	require.ErrorIs(t, err, ErrRequestTraceExportDisabled)
 	svc = NewRequestTraceExportService(&traceExportStoreStub{}, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
@@ -472,6 +486,7 @@ func TestRequestTraceExportCompletesAndDeniesOtherAdminSession(t *testing.T) {
 	store := &traceExportStoreStub{}
 	source := &traceExportSourceStub{ids: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, deleted: map[string]bool{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": true}, details: map[string]RequestTraceExportApprovedDetail{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Stages: []RequestTraceExportApprovedStage{{Ordinal: 1, Stage: "client_entry", State: "redaction_unverified", PayloadText: "synthetic_prompt", RedactionUnverified: true}}}}}
 	svc := NewRequestTraceExportService(store, source, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "admin-session"}
 	task, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -482,19 +497,65 @@ func TestRequestTraceExportCompletesAndDeniesOtherAdminSession(t *testing.T) {
 	require.Equal(t, int64(1), updated.RowsSkipped)
 	_, _, err = svc.OpenDownload(context.Background(), RequestTraceExportActor{AdminUserID: 12, SessionID: "other-session"}, task.ID)
 	require.ErrorIs(t, err, ErrRequestTraceExportForbidden)
-	file, result, err := svc.OpenDownload(context.Background(), actor, task.ID)
+	manifestFile, result, err := svc.OpenDownload(context.Background(), actor, task.ID)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = file.Close() })
-	content, err := os.ReadFile(file.Name())
+	t.Cleanup(func() { _ = manifestFile.Close() })
+	manifestContent, err := os.ReadFile(manifestFile.Name())
 	require.NoError(t, err)
-	require.Contains(t, string(content), "synthetic_prompt")
-	require.Contains(t, string(content), `"redaction_unverified":true`)
+	var manifest RequestTraceExportManifest
+	require.NoError(t, json.Unmarshal(manifestContent, &manifest))
+	require.Equal(t, task.ID, manifest.TaskID)
+	require.Equal(t, int64(1), manifest.Rows)
+	require.Equal(t, int64(1), manifest.Skipped, "a source that disappeared after enumeration is counted, not hidden")
+	require.False(t, manifest.Complete, "a vanished source makes the result explicitly incomplete")
+	require.Equal(t, RequestTraceExportIncompleteSourceGone, manifest.Reason)
+	require.NotEmpty(t, manifest.Shards)
 	require.Equal(t, int64(1), result.RowsExported)
+	// 清单必须能回答"每一片有多少条"：否则下载方无法核对交付内容。
+	var manifestRows int64
+	for _, shard := range manifest.Shards {
+		require.NotZero(t, shard.Bytes, "a written shard must report its real size")
+		manifestRows += shard.Rows
+	}
+	require.Equal(t, manifest.Rows, manifestRows, "per-shard rows must add up to the manifest total")
+
+	shardFile, _, shardTask, err := svc.OpenShardDownload(context.Background(), actor, task.ID, 1)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = shardFile.Close() })
+	shardContent, err := os.ReadFile(shardFile.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(shardContent), "synthetic_prompt")
+	require.Contains(t, string(shardContent), `"redaction_unverified":true`)
+	require.Equal(t, task.ID, shardTask.ID)
+}
+
+// 分片序号必须落在本次任务真正生成的分片里：越界或跨任务枚举一律拒绝，
+// 不能借它读目录里的别的文件。
+func TestRequestTraceExportShardDownloadRejectsUnlistedOrdinal(t *testing.T) {
+	store := &traceExportStoreStub{}
+	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	source := &traceExportSourceStub{ids: []string{id}, details: map[string]RequestTraceExportApprovedDetail{id: {TraceID: id}}}
+	svc := NewRequestTraceExportService(store, source, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
+	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
+	task, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
+	require.NoError(t, err)
+	_, err = svc.RunOnce(context.Background())
+	require.NoError(t, err)
+
+	_, _, _, err = svc.OpenShardDownload(context.Background(), actor, task.ID, 0)
+	require.ErrorIs(t, err, ErrRequestTraceInvalidRecord, "an out-of-range shard index is an invalid parameter, not a capacity limit")
+	_, _, _, err = svc.OpenShardDownload(context.Background(), actor, task.ID, 2)
+	require.ErrorIs(t, err, ErrRequestTraceInvalidRecord)
+	// 换一个会话也不能借任务 ID 读到分片。
+	_, _, _, err = svc.OpenShardDownload(context.Background(), RequestTraceExportActor{AdminUserID: 12, SessionID: "other"}, task.ID, 1)
+	require.ErrorIs(t, err, ErrRequestTraceExportForbidden)
 }
 
 func TestRequestTraceExportMissingFileAndExpiredDownload(t *testing.T) {
 	store := &traceExportStoreStub{}
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
 	task, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -517,6 +578,7 @@ func TestRequestTraceExportMissingFileAndExpiredDownload(t *testing.T) {
 func TestRequestTraceExportCannotExtendDownloadWindowPastSevenDays(t *testing.T) {
 	store := &traceExportStoreStub{}
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
 	task, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -539,10 +601,13 @@ func TestRequestTraceExportAfterRestartReplacesOnlyItsOwnAbandonedPartial(t *tes
 	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	task := RequestTraceExportTask{ID: id, Status: RequestTraceExportPending, InstanceID: "instance-one", CreatedAt: time.Now()}
 	store.tasks[id] = task
-	partial := filepath.Join(dir, exportFileBase(id))
+	// 上一次进程中断时留下的第一个分片：重启后同一任务必须把它替换掉，
+	// 否则会把别人的旧内容当成这次导出的一部分交付。
+	partial := filepath.Join(dir, exportShardBase(id, 1))
 	require.NoError(t, os.WriteFile(partial, []byte("abandoned_prompt"), 0600))
 	source := &traceExportSourceStub{ids: []string{id}, details: map[string]RequestTraceExportApprovedDetail{id: {TraceID: id, Stages: []RequestTraceExportApprovedStage{}}}}
 	svc := NewRequestTraceExportService(store, source, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: dir, InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	_, err := svc.RunOnce(context.Background())
 	require.NoError(t, err)
 	content, err := os.ReadFile(partial)
@@ -561,6 +626,7 @@ func TestRequestTraceExportRestartCleansStaleOtherInstanceWithoutFollowingTaskPa
 	unrelated := filepath.Join(dir, "other-file")
 	require.NoError(t, os.WriteFile(unrelated, []byte("keep"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: dir, InstanceID: "new-instance"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	count, err := svc.CleanupExpired(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
@@ -581,6 +647,7 @@ func TestRequestTraceExportCleansAbandonedPartialOnlyWithinOwnDirectory(t *testi
 	unrelated := filepath.Join(dir, "leave-this-file")
 	require.NoError(t, os.WriteFile(unrelated, []byte("safe"), 0600))
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: dir, InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	count, err := svc.CleanupExpired(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
@@ -600,6 +667,7 @@ func TestRequestTraceExportRefusesSymlinkInsteadOfDownloadingOtherFile(t *testin
 	dir := t.TempDir()
 	store := &traceExportStoreStub{}
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: dir, InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
 	task, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -617,6 +685,7 @@ func TestRequestTraceExportRefusesSymlinkInsteadOfDownloadingOtherFile(t *testin
 func TestRequestTraceExportAdmitsAtMostOnePendingTaskPerInstance(t *testing.T) {
 	store := &traceExportStoreStub{}
 	svc := NewRequestTraceExportService(store, &traceExportSourceStub{}, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
 	_, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -629,6 +698,7 @@ func TestRequestTraceExportRejectsUnboundedApprovedDetail(t *testing.T) {
 	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	source := &traceExportSourceStub{ids: []string{id}, details: map[string]RequestTraceExportApprovedDetail{id: {TraceID: id, Stages: []RequestTraceExportApprovedStage{{Ordinal: 1, Stage: "client_entry", State: "stored", PayloadText: strings.Repeat("x", 1<<20+1)}}}}}
 	svc := NewRequestTraceExportService(store, source, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one"})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
 	_, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -637,17 +707,32 @@ func TestRequestTraceExportRejectsUnboundedApprovedDetail(t *testing.T) {
 	require.Equal(t, RequestTraceExportFailed, updated.Status)
 }
 
-func TestRequestTraceExportFailureRemovesPartialFile(t *testing.T) {
+// 达到整任务上限不再丢弃一切：已完成的分片照常交付，但清单必须标明不完整。
+func TestRequestTraceExportLimitDeliversPartialAsIncomplete(t *testing.T) {
+	dir := t.TempDir()
 	store := &traceExportStoreStub{}
 	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	source := &traceExportSourceStub{ids: []string{id}, details: map[string]RequestTraceExportApprovedDetail{id: {TraceID: id, Stages: []RequestTraceExportApprovedStage{{Ordinal: 1, Stage: "client_entry", State: "stored", PayloadText: strings.Repeat("x", 100)}}}}}
-	svc := NewRequestTraceExportService(store, source, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: t.TempDir(), InstanceID: "instance-one", MaxBytes: 64})
+	svc := NewRequestTraceExportService(store, source, RequestTraceExportOptions{Enabled: true, SingleInstanceDeclared: true, TempDir: dir, InstanceID: "instance-one", MaxBytes: 64})
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	actor := RequestTraceExportActor{AdminUserID: 12, SessionID: "session"}
 	task, err := svc.CreateTask(context.Background(), actor, RequestTraceExportFilter{})
 	require.NoError(t, err)
+
 	updated, err := svc.RunOnce(context.Background())
-	require.ErrorIs(t, err, ErrRequestTraceExportLimit)
-	require.Equal(t, RequestTraceExportFailed, updated.Status)
-	_, statErr := os.Stat(svc.ExportPath(task.ID))
-	require.True(t, errors.Is(statErr, os.ErrNotExist))
+	require.NoError(t, err, "hitting the task bound is a delivered partial result, not a failure")
+	require.Equal(t, RequestTraceExportCompleted, updated.Status)
+	require.True(t, updated.Truncated)
+	require.Equal(t, int64(0), updated.RowsExported, "a row that would exceed the task bound is not written")
+
+	file, _, err := svc.OpenDownload(context.Background(), actor, task.ID)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+	content, err := os.ReadFile(file.Name())
+	require.NoError(t, err)
+	var manifest RequestTraceExportManifest
+	require.NoError(t, json.Unmarshal(content, &manifest))
+	require.False(t, manifest.Complete)
+	require.Equal(t, RequestTraceExportIncompleteLimitBytes, manifest.Reason)
+	require.NotEmpty(t, manifest.Shards, "an empty but real shard still ships with the manifest")
 }

@@ -3,6 +3,7 @@ import {
   normalizeRequestTraceDetail,
   normalizeRequestTraceOperatorStatus,
   normalizeRequestTraceStageDecision,
+  normalizeRequestTraceSummary,
   normalizeRequestTraceStageFacts,
   requestTraceCaptureStates,
   requestTraceDecisionKinds,
@@ -25,6 +26,13 @@ const status = {
   risk_acknowledgement_current: false,
   plaintext_capture_supported: false,
   plaintext_capture_support_reason: 'unsupported_missing_ownership_foreign_key',
+  all_groups: false,
+  group_ids: [4, 7],
+  model_scope: 'include',
+  models: ['claude-sonnet-4-5'],
+  platform_scope: 'exclude',
+  platforms: ['antigravity'],
+  platform_exclude_unknown: true,
   risk_acknowledgement: {
     version: 'v2026.09.27', admin_user_id: 9, accepted_at: '2026-09-28T00:00:00Z',
     ip_address: '192.0.2.1', user_agent: 'CANARY_AGENT', phrase: 'CANARY_PHRASE',
@@ -43,6 +51,28 @@ describe('operator status boundary', () => {
 
   it('rejects unknown deployment verdicts rather than falsely claiming capture is off', () => {
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, plaintext_capture_support_reason: 'unsupported_new_unknown' })).toThrow()
+  })
+
+  it('keeps the stored capture scope verbatim', () => {
+    const normalized = normalizeRequestTraceOperatorStatus(status)
+    expect(normalized).toMatchObject({
+      all_groups: false, group_ids: [4, 7], model_scope: 'include', models: ['claude-sonnet-4-5'],
+      platform_scope: 'exclude', platforms: ['antigravity'], platform_exclude_unknown: true,
+    })
+  })
+
+  it('refuses a scope it cannot state honestly instead of showing a permissive one', () => {
+    // A missing scope is not an empty (= "capture everything") scope.
+    const { all_groups: _allGroups, ...withoutGroups } = status
+    expect(() => normalizeRequestTraceOperatorStatus(withoutGroups)).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, model_scope: 'some' })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, platform_scope: '' })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: [4, 0] })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: ['4'] })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, models: ['claude', ''] })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, platforms: 'antigravity' })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, platform_exclude_unknown: 'yes' })).toThrow()
+    expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: new Array(1001).fill(1) })).toThrow()
   })
 })
 
@@ -75,6 +105,45 @@ function traceDetail(stage: Record<string, unknown> = {}) {
     }],
   }
 }
+
+describe('request-time fact boundary', () => {
+  function summaryRecord(fields: Record<string, unknown>) {
+    return {
+      trace_id: 'a'.repeat(32), route_family: 'messages', inbound_endpoint: '/v1/messages',
+      created_at: '2026-09-28T00:00:00Z', completed_at: null, client_status: 200,
+      capture_state: 'partial', usage_log_id: null, cleanup_after: null, ...fields,
+    }
+  }
+
+  it('keeps the observed request-time facts and the mapping-independent client model', () => {
+    // `requested_model` is what the client asked for; a mapped outbound model is
+    // a different fact and is never substituted for it here.
+    expect(normalizeRequestTraceSummary(summaryRecord({
+      group_id: 7, requested_model: 'claude-sonnet-4-5',
+    }))).toMatchObject({ group_id: 7, requested_model: 'claude-sonnet-4-5' })
+  })
+
+  it('reports an unobserved fact as unknown instead of an empty or zero value', () => {
+    // Absent and the wire's own empty string both mean "not observed".
+    const missing = normalizeRequestTraceDetail(traceDetail())
+    expect(missing.group_id).toBeNull()
+    expect(missing.requested_model).toBeNull()
+    const empty = normalizeRequestTraceDetail(traceDetail({ group_id: null, requested_model: '' }))
+    expect(empty.group_id).toBeNull()
+    expect(empty.requested_model).toBeNull()
+  })
+
+  it('refuses a fact that cannot be an observed fact', () => {
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ group_id: 0 }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ group_id: -4 }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ group_id: '7' }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ requested_model: 7 }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ requested_model: 'x'.repeat(257) }))).toThrow()
+    // Unsafe text is not a fact this client will render.
+    const unsafeModel = ['first', String.fromCharCode(10), 'second'].join('')
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ requested_model: unsafeModel }))).toThrow()
+  })
+})
 
 describe('stage facts boundary', () => {
   it('normalizes typed redacted facts and keeps credential placeholders verbatim', () => {

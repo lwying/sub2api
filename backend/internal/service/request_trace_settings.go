@@ -32,6 +32,18 @@ var (
 type RequestTraceSettings struct {
 	Enabled          bool `json:"enabled"`
 	RiskAcknowledged bool `json:"risk_acknowledged"`
+
+	// 采集范围：只决定后续请求是否进入采集，不追溯改变已存 Trace。
+	// 分组按下游 API Key 所属分组匹配；模型按**客户端请求的**模型匹配（不是出站映射结果）；
+	// 平台按首次可确定的实际选中上游账号平台匹配。
+	AllGroups     bool     `json:"all_groups"`
+	GroupIDs      []int64  `json:"group_ids,omitempty"`
+	ModelScope    string   `json:"model_scope,omitempty"` // all | include | exclude
+	Models        []string `json:"models,omitempty"`
+	PlatformScope string   `json:"platform_scope,omitempty"` // all | include | exclude
+	Platforms     []string `json:"platforms,omitempty"`
+	// 注：平台无法确定的请求（鉴权前拒绝、未选到账号）在“仅指定/排除指定”下一律不采集，
+	// 因此这里不需要单独的“是否排除未知”开关；只有“所有平台”才覆盖未知。
 }
 
 type RequestTraceRiskAcknowledgement struct {
@@ -66,10 +78,28 @@ type RequestTraceOperatorStatus struct {
 	CaptureAllowed                bool                                 `json:"capture_allowed"`
 	PlaintextCaptureSupported     bool                                 `json:"plaintext_capture_supported"`
 	PlaintextCaptureSupportReason string                               `json:"plaintext_capture_support_reason"`
+
+	// 采集范围：管理端据此回显当前生效条件（与开关同一条记录）。
+	AllGroups     bool     `json:"all_groups"`
+	GroupIDs      []int64  `json:"group_ids"`
+	ModelScope    string   `json:"model_scope"`
+	Models        []string `json:"models"`
+	PlatformScope string   `json:"platform_scope"`
+	Platforms     []string `json:"platforms"`
 }
 
 type RequestTraceOperatorUpdateInput struct {
-	Enabled     bool
+	Enabled bool
+
+	// ScopeProvided 为真时按本次提交替换采集范围；否则保留既有范围。
+	ScopeProvided bool
+	AllGroups     bool
+	GroupIDs      []int64
+	ModelScope    string
+	Models        []string
+	PlatformScope string
+	Platforms     []string
+
 	Language    string
 	Phrase      string
 	AdminUserID int64
@@ -77,8 +107,182 @@ type RequestTraceOperatorUpdateInput struct {
 	UserAgent   string
 }
 
+// 采集范围里的模型/平台过滤类型，沿用内容审计的既有取值语义。
+const (
+	RequestTraceScopeAll     = "all"
+	RequestTraceScopeInclude = "include"
+	RequestTraceScopeExclude = "exclude"
+)
+
+// RequestTraceScopeFacts 是判断一条逻辑请求是否落在采集范围内所需的事实。
+// 值为零值表示该事实**尚未确定**（例如鉴权前被拒时只知道请求体未读）。
+type RequestTraceScopeFacts struct {
+	// GroupID 是下游 API Key 所属分组；nil 表示无法确定。
+	GroupID *int64
+	// RequestedModel 是客户端请求的模型名；空表示无法确定。
+	RequestedModel string
+	// Platforms 是本次逻辑请求实际选中过的上游账号平台（去重）；空表示无法确定。
+	Platforms []string
+}
+
 type RequestTraceGate struct {
 	CaptureAllowed bool
+	// Scope 是本次求值用的采集范围；调用方在请求结束时用它复核实际观察到的事实。
+	Scope RequestTraceSettings
+}
+
+// InGroupScope 报告分组是否落在采集范围内。
+// “全部分组”覆盖无法确定分组的请求；指定分组时无法确定即不采集。
+func (s RequestTraceSettings) InGroupScope(groupID *int64) bool {
+	if s.AllGroups {
+		return true
+	}
+	if groupID == nil {
+		return false
+	}
+	for _, id := range s.GroupIDs {
+		if id == *groupID {
+			return true
+		}
+	}
+	return false
+}
+
+// InModelScope 报告客户端请求模型是否落在采集范围内。
+// 沿用内容审计口径：仅“所有模型”覆盖无法确定模型名的请求；
+// 仅指定/排除指定都必须先拿到有效模型名，且不做归一化以外的猜测。
+func (s RequestTraceSettings) InModelScope(model string) bool {
+	switch s.ModelScope {
+	case RequestTraceScopeInclude:
+		return model != "" && gatewayMockModelListContains(s.Models, model)
+	case RequestTraceScopeExclude:
+		return model != "" && !gatewayMockModelListContains(s.Models, model)
+	default:
+		return true
+	}
+}
+
+// InPlatformScope 报告实际选中过的上游账号平台是否落在采集范围内。
+//
+// 首次可确定的实际账号平台决定整条逻辑请求的结论（见 Trace 采集范围定义）：
+// 只有第一个平台参与判定，后来重试切到别的平台不改变结论。因此这里的入参
+// 只包含首个平台，多元素时按"任一被排除即整条不采"从严处理。
+//
+// “仅指定”与“排除指定”都**必须**先拿到平台事实：排除是指定值时，无法确定的
+// 请求不能被当成"没在排除列表里"而放行，否则排除形同虚设。
+func (s RequestTraceSettings) InPlatformScope(platforms []string) bool {
+	switch s.PlatformScope {
+	case RequestTraceScopeInclude:
+		for _, platform := range platforms {
+			if gatewayMockModelListContains(s.Platforms, platform) {
+				return true
+			}
+		}
+		return false
+	case RequestTraceScopeExclude:
+		if len(platforms) == 0 {
+			return false
+		}
+		for _, platform := range platforms {
+			if gatewayMockModelListContains(s.Platforms, platform) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+// InScope 报告给定事实是否整体落在采集范围内。
+func (s RequestTraceSettings) InScope(facts RequestTraceScopeFacts) bool {
+	return s.InGroupScope(facts.GroupID) &&
+		s.InModelScope(facts.RequestedModel) &&
+		s.InPlatformScope(facts.Platforms)
+}
+
+// gatewayMockModelListContains 做去首尾空白、不区分大小写的相等比较。
+func gatewayMockModelListContains(values []string, target string) bool {
+	normalized := NormalizeGatewayMockKeyword(target)
+	if normalized == "" {
+		return false
+	}
+	for _, value := range values {
+		if NormalizeGatewayMockKeyword(value) == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeRequestTraceSettings 归一化范围字段：过滤类型落回封闭取值，
+// 列表去空白去重；模型/平台列表不做大小写改写，比较时再归一。
+func NormalizeRequestTraceSettings(settings RequestTraceSettings) RequestTraceSettings {
+	settings.ModelScope = normalizeRequestTraceScope(settings.ModelScope)
+	settings.PlatformScope = normalizeRequestTraceScope(settings.PlatformScope)
+	if settings.ModelScope == RequestTraceScopeAll {
+		settings.Models = nil
+	} else {
+		settings.Models = normalizeRequestTraceScopeList(settings.Models)
+	}
+	if settings.PlatformScope == RequestTraceScopeAll {
+		settings.Platforms = nil
+	} else {
+		settings.Platforms = normalizeRequestTraceScopeList(settings.Platforms)
+	}
+	settings.GroupIDs = normalizeRequestTraceGroupIDs(settings.GroupIDs)
+	if settings.AllGroups {
+		settings.GroupIDs = nil
+	}
+	return settings
+}
+
+// normalizeRequestTraceScope 把取值收敛到封闭集合。
+// 大小写与首尾空白不参与判定：手写或导入的 "Include" 不应被静默降级成 "all"
+// ——那会把一次限制悄悄变成"采集全部"。
+func normalizeRequestTraceScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case RequestTraceScopeInclude:
+		return RequestTraceScopeInclude
+	case RequestTraceScopeExclude:
+		return RequestTraceScopeExclude
+	default:
+		return RequestTraceScopeAll
+	}
+}
+
+func normalizeRequestTraceScopeList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		key := strings.ToLower(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func normalizeRequestTraceGroupIDs(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 // RequestTraceSupportProbe must verify the trace table itself and its cascading usage FK.
@@ -137,7 +341,7 @@ func (s *SettingService) readRequestTraceSettings(ctx context.Context) (RequestT
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 		return RequestTraceSettings{}, nil
 	}
-	return stored, nil
+	return NormalizeRequestTraceSettings(stored), nil
 }
 
 func (s *SettingService) readRequestTraceAcknowledgement(ctx context.Context) (*RequestTraceRiskAcknowledgement, error) {
@@ -228,7 +432,9 @@ func (s *SettingService) requestTraceGateUncached(ctx context.Context) RequestTr
 	if err != nil || ack == nil || !ack.CoversCurrentStatement() {
 		return RequestTraceGate{}
 	}
-	return RequestTraceGate{CaptureAllowed: s.requestTraceSupport(ctx).Supported}
+	// 范围随门控一起冻结：一次逻辑请求内的所有判断都使用同一份范围快照，
+	// 避免执行中修改配置导致同一条请求前后结论不一致。
+	return RequestTraceGate{CaptureAllowed: s.requestTraceSupport(ctx).Supported, Scope: stored}
 }
 
 func (s *SettingService) GetRequestTraceOperatorStatus(ctx context.Context) (RequestTraceOperatorStatus, error) {
@@ -247,6 +453,12 @@ func (s *SettingService) GetRequestTraceOperatorStatus(ctx context.Context) (Req
 	}
 	status.Enabled = stored.Enabled
 	status.RiskAcknowledged = stored.RiskAcknowledged
+	status.AllGroups = stored.AllGroups
+	status.GroupIDs = stored.GroupIDs
+	status.ModelScope = stored.ModelScope
+	status.Models = stored.Models
+	status.PlatformScope = stored.PlatformScope
+	status.Platforms = stored.Platforms
 	if ack != nil {
 		status.RiskAcknowledgement = &RequestTraceRiskAcknowledgementView{Version: ack.Version, Phrase: ack.Phrase, AdminUserID: ack.AdminUserID, AcceptedAt: ack.AcceptedAt}
 		status.RiskAcknowledgementCurrent = ack.CoversCurrentStatement()
@@ -263,7 +475,26 @@ func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context,
 		return RequestTraceOperatorStatus{}, ErrRequestTraceSettingsUnavailable
 	}
 	updates := map[string]string{}
-	stored := RequestTraceSettings{Enabled: input.Enabled}
+	// 范围与开关同存一条记录：未提交范围字段时保留既有范围，避免关闭/开启动作顺手清空范围。
+	previous, _ := s.readRequestTraceSettings(ctx)
+	stored := RequestTraceSettings{
+		Enabled:       input.Enabled,
+		AllGroups:     previous.AllGroups,
+		GroupIDs:      previous.GroupIDs,
+		ModelScope:    previous.ModelScope,
+		Models:        previous.Models,
+		PlatformScope: previous.PlatformScope,
+		Platforms:     previous.Platforms,
+	}
+	if input.ScopeProvided {
+		stored.AllGroups = input.AllGroups
+		stored.GroupIDs = input.GroupIDs
+		stored.ModelScope = input.ModelScope
+		stored.Models = input.Models
+		stored.PlatformScope = input.PlatformScope
+		stored.Platforms = input.Platforms
+	}
+	stored = NormalizeRequestTraceSettings(stored)
 	if input.Enabled {
 		if input.AdminUserID <= 0 {
 			return RequestTraceOperatorStatus{}, ErrRequestTraceOperatorIdentityRequired
@@ -316,6 +547,13 @@ func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context,
 			RiskPhraseEN: RequestTraceRiskAcknowledgementPhraseEN,
 			RiskPhraseZH: RequestTraceRiskAcknowledgementPhraseZH,
 		}
+		// 紧急关闭路径也要回显当前范围，避免管理端误以为范围被清空。
+		status.AllGroups = stored.AllGroups
+		status.GroupIDs = stored.GroupIDs
+		status.ModelScope = stored.ModelScope
+		status.Models = stored.Models
+		status.PlatformScope = stored.PlatformScope
+		status.Platforms = stored.Platforms
 		status.PlaintextCaptureSupportReason = PlaintextCaptureSupportReasonProbeUnavailable
 		if cached, ok := s.requestTraceSupportCache.Load().(*cachedPlaintextCaptureSupport); ok && cached != nil {
 			status.PlaintextCaptureSupported = cached.support.Supported

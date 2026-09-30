@@ -103,6 +103,59 @@ func (h *RequestTraceHandler) List(c *gin.Context) {
 		value := id
 		*entry.out = &value
 	}
+	// 分组：具体 ID 与"未知"互斥；两者同时出现视为非法筛选而不是任意匹配。
+	rawGroupID := c.Query("group_id")
+	rawGroupUnknown := c.Query("group_unknown")
+	if rawGroupID != "" && rawGroupUnknown != "" {
+		response.ErrorFrom(c, errRequestTraceInvalidFilter)
+		return
+	}
+	if rawGroupID != "" {
+		id, err := strconv.ParseInt(rawGroupID, 10, 64)
+		if err != nil || id <= 0 {
+			response.ErrorFrom(c, errRequestTraceInvalidFilter)
+			return
+		}
+		value := id
+		filter.GroupID = &value
+	} else if rawGroupUnknown != "" {
+		unknown, err := strconv.ParseBool(rawGroupUnknown)
+		if err != nil {
+			response.ErrorFrom(c, errRequestTraceInvalidFilter)
+			return
+		}
+		filter.GroupUnknown = &unknown
+	}
+	// 客户端请求模型：具体名称与"未知"同样互斥。
+	filter.RequestedModel = strings.TrimSpace(c.Query("requested_model"))
+	rawModelUnknown := c.Query("model_unknown")
+	if filter.RequestedModel != "" && rawModelUnknown != "" {
+		response.ErrorFrom(c, errRequestTraceInvalidFilter)
+		return
+	}
+	if rawModelUnknown != "" {
+		unknown, err := strconv.ParseBool(rawModelUnknown)
+		if err != nil {
+			response.ErrorFrom(c, errRequestTraceInvalidFilter)
+			return
+		}
+		filter.ModelUnknown = &unknown
+	}
+	// 平台：按任一真实上游尝试选中的账号平台，"未知"表示没有任何平台事实。
+	filter.Platform = strings.TrimSpace(c.Query("platform"))
+	rawPlatformUnknown := c.Query("platform_unknown")
+	if filter.Platform != "" && rawPlatformUnknown != "" {
+		response.ErrorFrom(c, errRequestTraceInvalidFilter)
+		return
+	}
+	if rawPlatformUnknown != "" {
+		unknown, err := strconv.ParseBool(rawPlatformUnknown)
+		if err != nil {
+			response.ErrorFrom(c, errRequestTraceInvalidFilter)
+			return
+		}
+		filter.PlatformUnknown = &unknown
+	}
 	if page < 1 || page > 100000 || pageSize <= 0 {
 		response.ErrorFrom(c, errRequestTraceInvalidFilter)
 		return

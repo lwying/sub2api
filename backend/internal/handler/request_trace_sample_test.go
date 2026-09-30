@@ -220,7 +220,7 @@ func runRequestTraceSample(t *testing.T, userID string) requestTraceSampleRun {
 
 	r := gin.New()
 	r.POST("/v1/messages",
-		RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue),
+		RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue),
 		func(c *gin.Context) {
 			c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, group))
 			keyGroupID := requestTraceSampleGroupID

@@ -122,6 +122,11 @@ type OpsInsertErrorLogInput struct {
 	// 有效(未删除)key 报错时快照的 key 脱敏前缀(前 8 位)。
 	// 落库快照而非读时 JOIN:key 之后被删(key 列被 tombstone 覆盖)仍保留当时前缀。
 	APIKeyPrefix string
+
+	// RequestTraceID 是本请求的服务端 Trace ID，用于从错误详情直达请求 Trace。
+	// 它只能来自网关生成的服务端标识，绝不接受客户端可重复的请求 ID；
+	// 空值表示该次错误与 Trace 没有可靠关联（例如上线前的历史行）。
+	RequestTraceID string
 }
 
 type OpsInsertSystemMetricsInput struct {

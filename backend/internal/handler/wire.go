@@ -35,6 +35,7 @@ func ProvideAdminHandlers(
 	requestTraceHandler *admin.RequestTraceHandler,
 	requestTraceExportHandler *admin.RequestTraceExportHandler,
 	requestTraceStatusHandler *admin.RequestTraceStatusHandler,
+	gatewayMockEventHandler *admin.GatewayMockEventHandler,
 	userAttributeHandler *admin.UserAttributeHandler,
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
@@ -89,6 +90,7 @@ func ProvideAdminHandlers(
 		RequestTrace:           requestTraceHandler,
 		RequestTraceExport:     requestTraceExportHandler,
 		RequestTraceStatus:     requestTraceStatusHandler,
+		GatewayMockEvent:       gatewayMockEventHandler,
 		UserAttribute:          userAttributeHandler,
 		ErrorPassthrough:       errorPassthroughHandler,
 		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
@@ -126,6 +128,7 @@ func ProvideGatewayHandler(
 	coordinator *securityaudit.Coordinator,
 	keyBillingSnapshot *service.KeyBillingSnapshotService,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
+	gatewayMockEventStore func() service.GatewayMockEventStore,
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
@@ -133,6 +136,10 @@ func ProvideGatewayHandler(
 	h.securityAuditCoordinator = coordinator
 	h.claude429Cooldown = service.NewClaude429CooldownGate(settingService, gatewayService.Claude429CooldownStore())
 	h.SetKeyBillingSnapshotService(keyBillingSnapshot)
+	// 最小 mock 事件存储：未接线时不记录，但 mock 回复本身照常工作。
+	if gatewayMockEventStore != nil {
+		h.SetGatewayMockEventStore(gatewayMockEventStore())
+	}
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	// 值明细采集接缝（默认关闭）：绑定阶段用它决定是否复制值快照，
 	// 审计行落库后由它写入。未注入时一个字节的值都不会被采集。
@@ -155,16 +162,25 @@ func ProvideOpenAIGatewayHandler(
 	requestAuditRepo service.RequestAuditRepository,
 	requestAuditFingerprinter service.RequestAuditFingerprinter,
 	compositeResolver *service.CompositeRouteResolver,
+	settingService *service.SettingService,
+	gatewayMockEventStore func() service.GatewayMockEventStore,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
 	gatewayService.SetRequestAuditRepository(requestAuditRepo)
 	gatewayService.SetRequestAuditFingerprinter(requestAuditFingerprinter)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
+	// 下游测试请求 mock 与 Trace 采集范围都只从 settingService 读取；漏注入会让
+	// OpenAI 侧三个入口静默变成空操作（行为随分组平台而异）。
+	h.SetSettingService(settingService)
 	h.claude429Cooldown = service.NewClaude429CooldownGate(gatewayService.Claude429CooldownSettings(), gatewayService.Claude429CooldownStore())
 	h.compositeResolver = compositeResolver
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
+	// 最小 mock 事件存储：未接线时不记录，但 mock 回复本身照常工作。
+	if gatewayMockEventStore != nil {
+		h.SetGatewayMockEventStore(gatewayMockEventStore())
+	}
 	return h
 }
 
@@ -268,6 +284,14 @@ func ProvideRequestTraceStatusHandler(svc *service.RequestTraceOpsStatusService)
 	return admin.NewRequestTraceStatusHandler(svc)
 }
 
+// ProvideGatewayMockEventHandler exposes only the minimal mock hit events: rule id
+// and version, protocol, model, the ids held at the time, client IP, Trace id and
+// the cleanup deadline. No configured keyword and no reply text can be read back,
+// because neither is ever stored.
+func ProvideGatewayMockEventHandler(reader service.GatewayMockEventReader) *admin.GatewayMockEventHandler {
+	return admin.NewGatewayMockEventHandler(reader)
+}
+
 // ProvideAdminUsageHandler 构造使用记录处理器。
 //
 // 票据 10 已退役值明细的读取／揭示接缝，因此这里不再注入任何值明细依赖。
@@ -331,6 +355,7 @@ var ProviderSet = wire.NewSet(
 	ProvideRequestTraceHandler,
 	ProvideRequestTraceExportHandler,
 	ProvideRequestTraceStatusHandler,
+	ProvideGatewayMockEventHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

@@ -47,12 +47,18 @@ var (
 	// 410：任务存在且属于当前会话，但文件已过期或已从本机临时目录丢失。
 	errRequestTraceExportExpired  = infraerrors.New(http.StatusGone, "REQUEST_TRACE_EXPORT_DOWNLOAD_EXPIRED", "request trace export download window has ended")
 	errRequestTraceExportFileLost = infraerrors.New(http.StatusGone, "REQUEST_TRACE_EXPORT_FILE_LOST", "request trace export file is no longer available")
+	// 400：明文导出需要管理员接受当前版本的导出风险声明，缺确认不是"服务暂时不可用"。
+	errRequestTraceExportRiskAckRequired = infraerrors.BadRequest("REQUEST_TRACE_EXPORT_RISK_ACK_REQUIRED", "creating a plaintext export requires the written export risk acknowledgement")
+	// 409：任务尚未产出可下载的文件。它与 410"已过期"是不同事实，轮询方据此决定重试。
+	errRequestTraceExportNotReady = infraerrors.Conflict("REQUEST_TRACE_EXPORT_NOT_READY", "request trace export has not produced a downloadable file yet")
 )
 
 type requestTraceExportService interface {
 	CreateTask(ctx context.Context, actor service.RequestTraceExportActor, filter service.RequestTraceExportFilter) (service.RequestTraceExportTask, error)
 	GetTask(ctx context.Context, actor service.RequestTraceExportActor, id string) (service.RequestTraceExportTask, error)
 	OpenDownload(ctx context.Context, actor service.RequestTraceExportActor, id string) (*os.File, service.RequestTraceExportTask, error)
+	// OpenShardDownload 打开本次导出的第 ordinal 个分片（从 1 开始）。
+	OpenShardDownload(ctx context.Context, actor service.RequestTraceExportActor, id string, ordinal int) (*os.File, service.RequestTraceExportShard, service.RequestTraceExportTask, error)
 }
 
 type RequestTraceExportHandler struct {
@@ -77,6 +83,12 @@ type requestTraceExportTaskView struct {
 	CompletedAt   *time.Time                       `json:"completed_at,omitempty"`
 	DownloadUntil *time.Time                       `json:"download_until,omitempty"`
 	Downloadable  bool                             `json:"downloadable"`
+	// ShardCount 是本次导出实际生成的分片数；客户端按序号逐个下载。
+	ShardCount int `json:"shard_count"`
+	// Truncated / IncompleteReason 说明结果是否完整。管理端必须如实呈现，
+	// 不能把不完整的导出当作全量结果。
+	Truncated        bool   `json:"truncated"`
+	IncompleteReason string `json:"incomplete_reason,omitempty"`
 }
 
 func newRequestTraceExportTaskView(task service.RequestTraceExportTask, now time.Time) requestTraceExportTaskView {
@@ -92,6 +104,9 @@ func newRequestTraceExportTaskView(task service.RequestTraceExportTask, now time
 		DownloadUntil: task.DownloadUntil,
 		Downloadable: task.Status == service.RequestTraceExportCompleted &&
 			task.CompletedAt != nil && task.DownloadUntil != nil && now.Before(*task.DownloadUntil),
+		ShardCount:       len(task.Shards),
+		Truncated:        task.Truncated,
+		IncompleteReason: task.IncompleteReason,
 	}
 }
 
@@ -161,7 +176,24 @@ func (h *RequestTraceExportHandler) Download(c *gin.Context) {
 		setRequestTraceExportAudit(c, "failed", "request_trace_export_unavailable", nil)
 		return
 	}
-	file, task, err := h.service.OpenDownload(c.Request.Context(), actor, requestTraceExportTaskID(c))
+	// 无 part 参数时下载清单（这次导出的范围与完整性说明）；带 part 时下载对应分片。
+	// 两者都按任务 ID 与创建会话校验，序号越界一律拒绝。
+	var file *os.File
+	var task service.RequestTraceExportTask
+	var err error
+	rawPart := strings.TrimSpace(c.Query("part"))
+	if rawPart == "" {
+		file, task, err = h.service.OpenDownload(c.Request.Context(), actor, requestTraceExportTaskID(c))
+	} else {
+		ordinal, convErr := strconv.Atoi(rawPart)
+		if convErr != nil {
+			// 非法序号是筛选/参数错误（400），不是"容量达到上限"。
+			response.ErrorFrom(c, errRequestTraceExportInvalidFilter)
+			setRequestTraceExportAudit(c, "failed", "request_trace_export_invalid_shard", nil)
+			return
+		}
+		file, _, task, err = h.service.OpenShardDownload(c.Request.Context(), actor, requestTraceExportTaskID(c), ordinal)
+	}
 	if err != nil {
 		appErr := requestTraceExportError(err)
 		response.ErrorFrom(c, appErr)
@@ -170,10 +202,18 @@ func (h *RequestTraceExportHandler) Download(c *gin.Context) {
 	}
 	defer func() { _ = file.Close() }()
 
-	c.Header("Content-Type", "application/x-ndjson")
+	// 清单是 JSON，分片是 JSONL：按真实交付物给出正确的 Content-Type。
+	// file 为 nil 只可能出现在未接线的测试替身上，此处不做任何解引用。
+	contentType := "application/x-ndjson"
+	if file != nil && strings.HasSuffix(file.Name(), ".json") {
+		contentType = "application/json"
+	}
+	c.Header("Content-Type", contentType)
 	c.Header("Content-Disposition", "attachment; filename=\""+requestTraceExportDownloadFilename(file)+"\"")
-	if info, statErr := file.Stat(); statErr == nil && info.Mode().IsRegular() && info.Size() >= 0 {
-		c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
+	if file != nil {
+		if info, statErr := file.Stat(); statErr == nil && info.Mode().IsRegular() && info.Size() >= 0 {
+			c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
+		}
 	}
 	c.Status(http.StatusOK)
 	if streamErr := service.ConsumeExport(c.Writer, file); streamErr != nil {
@@ -251,6 +291,84 @@ func parseRequestTraceExportFilter(c *gin.Context) (service.RequestTraceExportFi
 	if filter.CreatedFrom != nil && filter.CreatedTo != nil && !filter.CreatedFrom.Before(*filter.CreatedTo) {
 		return service.RequestTraceExportFilter{}, false
 	}
+	// 可选检索 ID：出现时必须是正整数，非法值直接拒绝而不是退化成"导出全部"。
+	for _, entry := range []struct {
+		key string
+		out **int64
+	}{{"usage_log_id", &filter.UsageLogID}, {"account_id", &filter.AccountID}} {
+		raw := strings.TrimSpace(c.Query(entry.key))
+		if raw == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			return service.RequestTraceExportFilter{}, false
+		}
+		value := id
+		*entry.out = &value
+	}
+	// 分组：具体 ID 与"未知"互斥。
+	rawGroupID := strings.TrimSpace(c.Query("group_id"))
+	rawGroupUnknown := strings.TrimSpace(c.Query("group_unknown"))
+	if rawGroupID != "" && rawGroupUnknown != "" {
+		return service.RequestTraceExportFilter{}, false
+	}
+	if rawGroupID != "" {
+		id, err := strconv.ParseInt(rawGroupID, 10, 64)
+		if err != nil || id <= 0 {
+			return service.RequestTraceExportFilter{}, false
+		}
+		value := id
+		filter.GroupID = &value
+	} else if rawGroupUnknown != "" {
+		unknown, err := strconv.ParseBool(rawGroupUnknown)
+		if err != nil {
+			return service.RequestTraceExportFilter{}, false
+		}
+		filter.GroupUnknown = &unknown
+	}
+	// 客户端请求模型：具体名称与"未知"互斥。
+	filter.RequestedModel = strings.TrimSpace(c.Query("requested_model"))
+	rawModelUnknown := strings.TrimSpace(c.Query("model_unknown"))
+	if filter.RequestedModel != "" && rawModelUnknown != "" {
+		return service.RequestTraceExportFilter{}, false
+	}
+	if rawModelUnknown != "" {
+		unknown, err := strconv.ParseBool(rawModelUnknown)
+		if err != nil {
+			return service.RequestTraceExportFilter{}, false
+		}
+		filter.ModelUnknown = &unknown
+	}
+	// 上游账号平台：具体名称与"未知"互斥。
+	filter.Platform = strings.TrimSpace(c.Query("platform"))
+	rawPlatformUnknown := strings.TrimSpace(c.Query("platform_unknown"))
+	if filter.Platform != "" && rawPlatformUnknown != "" {
+		return service.RequestTraceExportFilter{}, false
+	}
+	if rawPlatformUnknown != "" {
+		unknown, err := strconv.ParseBool(rawPlatformUnknown)
+		if err != nil {
+			return service.RequestTraceExportFilter{}, false
+		}
+		filter.PlatformUnknown = &unknown
+	}
+	// 导出所选：有界的明确 Trace ID 集合，逗号分隔；与其它条件互斥。
+	if raw := strings.TrimSpace(c.Query("trace_ids")); raw != "" {
+		parts := strings.Split(raw, ",")
+		if len(parts) > service.RequestTraceExportMaxSelectedIDs {
+			return service.RequestTraceExportFilter{}, false
+		}
+		ids := make([]string, 0, len(parts))
+		for _, part := range parts {
+			id := strings.TrimSpace(part)
+			if !requestTraceExportIDPattern.MatchString(id) {
+				return service.RequestTraceExportFilter{}, false
+			}
+			ids = append(ids, id)
+		}
+		filter.TraceIDs = ids
+	}
 	return filter, true
 }
 
@@ -279,12 +397,23 @@ func requestTraceExportError(err error) *infraerrors.ApplicationError {
 		return errRequestTraceExportForbidden
 	case errors.Is(err, service.ErrRequestTraceExportNotFound):
 		return errRequestTraceExportNotFound
+	case errors.Is(err, service.ErrRequestTraceExportNotReady):
+		// 409：任务还没好，重试即可。报成 410"已过期"会让轮询中的任务看起来像已失败。
+		return errRequestTraceExportNotReady
 	case errors.Is(err, service.ErrRequestTraceExportGone):
 		return errRequestTraceExportExpired
 	case errors.Is(err, service.ErrRequestTraceExportFileLost):
 		return errRequestTraceExportFileLost
 	case errors.Is(err, service.ErrRequestTraceExportLimit):
 		return errRequestTraceExportLimit
+	case errors.Is(err, service.ErrRequestTraceExportRiskAcknowledgementRequired):
+		// 未确认是调用方必须先解决的 400，不能折叠成 503——否则界面无法告诉管理员
+		// "去读声明并确认"，只会显示一句"暂时不可用"。
+		return errRequestTraceExportRiskAckRequired
+	case errors.Is(err, service.ErrRequestTraceInvalidRecord):
+		// 非法参数（例如越界的分片序号）必须先于其它分支判定：它是调用方的问题，
+		// 不是容量或服务状态。
+		return errRequestTraceExportInvalidFilter
 	case errors.Is(err, service.ErrRequestTraceExportUnavailable):
 		return errRequestTraceExportUnavailable
 	default:

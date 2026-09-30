@@ -49,6 +49,18 @@ type OpenAIGatewayHandler struct {
 	maxAccountSwitches         int
 	claude429Cooldown          *service.Claude429CooldownGate
 	cfg                        *config.Config
+	// settingService 读取「下游测试请求 mock」等管理员设置。为 nil 时该能力按关闭处理；
+	// 用 SetSettingService 注入，避免改动既有构造函数签名。
+	settingService *service.SettingService
+	// gatewayMockEvents 记录下游测试请求 mock 的最小命中事件；未注入时不记录。
+	gatewayMockEvents service.GatewayMockEventStore
+}
+
+// SetSettingService 注入管理员设置来源。未注入时下游测试请求 mock 一律按关闭处理。
+func (h *OpenAIGatewayHandler) SetSettingService(settingService *service.SettingService) {
+	if h != nil {
+		h.settingService = settingService
+	}
 }
 
 type openAIWSTurnChannelMappingSnapshot struct {
@@ -479,6 +491,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	markRequestTraceRequestedModel(c, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -776,6 +789,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		markRequestTraceSelectedPlatform(c, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if slotResult == openAISlotAcquireProfitVetoed {
@@ -789,6 +803,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		if slotResult != openAISlotAcquireOK {
 			return
+		}
+
+		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
+		// compact 保活可能已经写出字节并提交 200，那时再写 JSON mock 会污染响应，
+		// 因此只在响应尚未提交时接管。
+		if !service.IsResponseCommitted(c) {
+			markGatewayMockStream(c, reqStream)
+			if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolResponses, reqModel, account.ID, body) {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
 		}
 
 		// Forward request
@@ -1291,6 +1318,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	markRequestTraceRequestedModel(c, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -1443,10 +1471,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		markRequestTraceRequestedModel(c, reqModel)
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		markRequestTraceSelectedPlatform(c, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if slotResult == openAISlotAcquireProfitVetoed {
@@ -1459,6 +1489,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
+			return
+		}
+
+		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
+		markGatewayMockStream(c, reqStream)
+		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, reqModel, account.ID, body) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
 			return
 		}
 
@@ -2934,6 +2973,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// Account selection starts a fresh upstream attempt. Clear any model
 		// captured by the previous failover account before credential lookup.
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		markRequestTraceSelectedPlatform(c, account.Platform)
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
 		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.websocket_bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))

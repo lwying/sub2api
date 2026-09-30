@@ -179,6 +179,11 @@ func (s *requestTraceExportServiceStub) OpenDownload(context.Context, service.Re
 	return nil, service.RequestTraceExportTask{}, nil
 }
 
+func (s *requestTraceExportServiceStub) OpenShardDownload(context.Context, service.RequestTraceExportActor, string, int) (*os.File, service.RequestTraceExportShard, service.RequestTraceExportTask, error) {
+	s.calls++
+	return nil, service.RequestTraceExportShard{}, service.RequestTraceExportTask{}, nil
+}
+
 func newRequestTraceExportTestSource() *requestTraceExportSourceStub {
 	return &requestTraceExportSourceStub{
 		ids:     []string{requestTraceExportTestID, requestTraceExportOtherID},
@@ -208,6 +213,8 @@ func newRequestTraceExportTestHandler(t *testing.T, store *requestTraceExportSto
 		mutate(&options)
 	}
 	svc := service.NewRequestTraceExportService(store, source, options)
+	// 夹具显式声明"管理员已接受当前版本的导出风险声明"；未确认时创建任务按设计被拒。
+	svc.SetAcknowledgementSatisfiedForTest(true)
 	return NewRequestTraceExportHandler(svc), svc
 }
 
@@ -523,13 +530,36 @@ func TestRequestTraceExportHandlerDownloadStreamsOnlyForOwningSession(t *testing
 	require.Equal(t, "no-store, private", ownerRecorder.Header().Get("Cache-Control"))
 	require.Contains(t, ownerRecorder.Header().Get("Content-Disposition"), "attachment;")
 	require.NotContains(t, ownerRecorder.Header().Get("Content-Disposition"), requestTraceExportCanary)
-	require.Equal(t, "application/x-ndjson", ownerRecorder.Header().Get("Content-Type"))
-	body := ownerRecorder.Body.String()
-	require.Contains(t, body, requestTraceExportCanary)
-	require.NotContains(t, body, "http://")
-	require.NotContains(t, body, "https://")
+	// 无 part 参数下载的是清单：它是 JSON，说明这次导出的范围与完整性。
+	require.Equal(t, "application/json", ownerRecorder.Header().Get("Content-Type"))
+	manifestBody := ownerRecorder.Body.String()
+	require.Contains(t, manifestBody, `"shards"`)
+	require.Contains(t, manifestBody, `"complete"`)
+	require.NotContains(t, manifestBody, "http://")
+	require.NotContains(t, manifestBody, "https://")
+	require.NotContains(t, manifestBody, requestTraceExportCanary)
 	require.Equal(t, "success", requestTraceExportAudit(owner)["result"])
 	require.Equal(t, http.StatusOK, requestTraceExportAudit(owner)["http_status"])
+
+	// 带 part 参数下载的是分片：JSONL，逐行是允许披露的详情。
+	shardCtx, shardRecorder := requestTraceExportContext(http.MethodGet,
+		requestTraceExportRouteBase+"/"+id+"/download?part=1", gin.Params{{Key: "id", Value: id}})
+	requestTraceExportAdminSession(shardCtx, 12, "session-a")
+	handler.Download(shardCtx)
+	require.Equal(t, http.StatusOK, shardRecorder.Code)
+	require.Equal(t, "application/x-ndjson", shardRecorder.Header().Get("Content-Type"))
+	shardBody := shardRecorder.Body.String()
+	require.Contains(t, shardBody, requestTraceExportCanary)
+	require.NotContains(t, shardBody, "http://")
+	require.NotContains(t, shardBody, "https://")
+
+	// 越界序号不返回任何内容。
+	badCtx, badRecorder := requestTraceExportContext(http.MethodGet,
+		requestTraceExportRouteBase+"/"+id+"/download?part=9999", gin.Params{{Key: "id", Value: id}})
+	requestTraceExportAdminSession(badCtx, 12, "session-a")
+	handler.Download(badCtx)
+	require.NotEqual(t, http.StatusOK, badRecorder.Code)
+	require.NotContains(t, badRecorder.Body.String(), requestTraceExportCanary)
 
 	for _, tc := range []struct {
 		name      string
@@ -583,6 +613,30 @@ func TestRequestTraceExportHandlerDownloadReportsExpiredAndLostFileAsGone(t *tes
 	require.Equal(t, http.StatusGone, expiredRecorder.Code)
 	require.Equal(t, requestTraceExportReasonGone, requestTraceExportReason(t, expiredRecorder))
 	require.NotContains(t, expiredRecorder.Body.String(), requestTraceExportCanary)
+}
+
+// 尚未产出文件的任务返回 409 + 专用原因码，而不是 410"已过期"。
+// 这条映射是给轮询方看的：它必须能区分"还没好，重试"与"窗口已关，别再试了"。
+func TestRequestTraceExportHandlerDownloadReportsNotReadyAsConflict(t *testing.T) {
+	store := &requestTraceExportStoreStub{}
+	handler, svc := newRequestTraceExportTestHandler(t, store, newRequestTraceExportTestSource(), nil)
+	actor := service.RequestTraceExportActor{AdminUserID: 12, SessionID: "session-a"}
+
+	// 直接建一个仍处于 pending 的任务：后台尚未领取，也就还没有任何文件。
+	task, err := svc.CreateTask(context.Background(), actor, service.RequestTraceExportFilter{})
+	require.NoError(t, err)
+
+	for _, target := range []string{
+		requestTraceExportRouteBase + "/" + task.ID + "/download",
+		requestTraceExportRouteBase + "/" + task.ID + "/download?part=1",
+	} {
+		c, recorder := requestTraceExportContext(http.MethodGet, target, gin.Params{{Key: "id", Value: task.ID}})
+		requestTraceExportAdminSession(c, 12, "session-a")
+		handler.Download(c)
+		require.Equal(t, http.StatusConflict, recorder.Code)
+		require.Equal(t, "REQUEST_TRACE_EXPORT_NOT_READY", requestTraceExportReason(t, recorder))
+		require.NotContains(t, recorder.Body.String(), requestTraceExportCanary)
+	}
 }
 
 // HTTP 层自行执行会话门禁：身份不完整时既不写响应之外的任何东西，

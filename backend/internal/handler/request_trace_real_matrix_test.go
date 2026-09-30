@@ -302,7 +302,7 @@ func (e *requestTraceMatrixEnv) serve(t *testing.T, path, body string, entry gin
 
 	r := gin.New()
 	r.POST(path,
-		RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, e.repo, e.queue),
+		RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, e.repo, e.queue),
 		func(c *gin.Context) {
 			c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, group))
 			apiKey := &service.APIKey{

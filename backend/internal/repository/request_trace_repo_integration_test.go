@@ -45,7 +45,10 @@ CREATE TABLE request_traces (
     usage_log_id BIGINT UNIQUE REFERENCES usage_logs(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
-    cleanup_after TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days')
+    cleanup_after TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
+    -- 与 265 之后的信封一致：请求时分组与客户端模型都是可空的"未观察到"事实。
+    group_id BIGINT,
+    requested_model TEXT
 );
 CREATE TABLE request_trace_stages (
     id BIGSERIAL PRIMARY KEY,
@@ -216,6 +219,9 @@ func TestRequestTraceRepositoryRejectsPayloadStatusContradictions(t *testing.T) 
 const (
 	traceStageFactsMigration258 = "258_request_traces.sql"
 	traceStageFactsMigration261 = "261_request_trace_stage_facts_bounds.sql"
+	// 266 追加 platform 键：允许键集由它最终定义，因此本测试必须按 261 → 266 的
+	// 真实迁移顺序应用，否则会拿已经被后续迁移取代的旧约束去断言。
+	traceStageFactsMigrationPlatform = "266_request_trace_stage_facts_platform.sql"
 
 	traceStageFactsTable           = "request_trace_stages"
 	traceStageFactsShapeConstraint = "request_trace_stages_metadata_shape_allowed"
@@ -441,6 +447,8 @@ func applyRequestTraceStageFactsMigration(t *testing.T, tx *sql.Tx) {
 
 	_, err := tx.ExecContext(context.Background(), requestTraceStageFactsMigrationText(t, traceStageFactsMigration261))
 	require.NoError(t, err, "apply migration 261")
+	_, err = tx.ExecContext(context.Background(), requestTraceStageFactsMigrationText(t, traceStageFactsMigrationPlatform))
+	require.NoError(t, err, "apply migration 266")
 }
 
 func requestTraceStageFactsMigrationText(t *testing.T, name string) string {

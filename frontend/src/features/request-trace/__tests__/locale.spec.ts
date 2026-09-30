@@ -27,6 +27,9 @@ import {
   requestTraceDecisionOutcomes,
   requestTraceDecisionSources,
   requestTraceDecisionStage,
+  requestTraceExportDisplayStates,
+  requestTraceExportIncompleteReasons,
+  requestTraceExportRefusals,
   requestTraceStageNames,
   requestTraceStageReasons,
   requestTraceStageStates,
@@ -98,6 +101,11 @@ const closedSetLabelGroups: [string, readonly string[], string][] = [
   ['requestTrace.detail.stageLabel', requestTraceStageNames, 'unknown'],
   ['requestTrace.detail.viewLabel', requestTraceStageViews, 'unknown'],
   ['requestTrace.detail.reasonLabel', requestTraceStageReasons, 'other'],
+  // A task that stopped early, a refusal, and the reason it stopped are all
+  // closed sets: no state and no reason may render without its own wording.
+  ['requestTrace.export.state', requestTraceExportDisplayStates, 'unknown'],
+  ['requestTrace.export.refusal', requestTraceExportRefusals, 'unknown'],
+  ['requestTrace.export.reason', requestTraceExportIncompleteReasons, 'unknown'],
 ]
 
 describe('request Trace locale', () => {

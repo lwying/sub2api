@@ -4,11 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   listTraces: vi.fn(),
   getTrace: vi.fn(),
+  getTraceExportRisk: vi.fn(),
   route: { query: {} as Record<string, string> },
+  replace: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('../api', () => ({ listTraces: mocks.listTraces, getTrace: mocks.getTrace }))
-vi.mock('vue-router', () => ({ useRoute: () => mocks.route }))
+vi.mock('../api', () => ({
+  listTraces: mocks.listTraces,
+  getTrace: mocks.getTrace,
+  getTraceExportRisk: mocks.getTraceExportRisk,
+  createTraceExport: vi.fn(),
+}))
+vi.mock('vue-router', () => ({ useRoute: () => mocks.route, useRouter: () => ({ replace: mocks.replace }) }))
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
@@ -30,7 +37,8 @@ function mountView() {
       AppLayout: { template: '<div><slot /></div>' },
       Pagination: { template: '<div data-testid="trace-pagination" />' },
       RequestTraceDetailDrawer: { template: '<div data-testid="trace-detail-stub" />' },
-      RequestTraceExportPanel: { template: '<div data-testid="request-trace-export-panel-stub" />' },
+      RequestTraceExportDrawer: { template: '<div data-testid="request-trace-export-drawer-stub" />' },
+      RouterLink: { template: '<a><slot /></a>' },
     } },
   })
 }
@@ -44,7 +52,10 @@ describe('admin Request Trace lookup navigation', () => {
   beforeEach(() => {
     mocks.listTraces.mockReset()
     mocks.getTrace.mockReset()
+    mocks.getTraceExportRisk.mockReset()
+    mocks.replace.mockClear()
     mocks.listTraces.mockResolvedValue(page([trace()]))
+    mocks.getTraceExportRisk.mockResolvedValue({ acknowledged: true, version: 'v1', phrase_en: 'EN', phrase_zh: 'ZH' })
     mocks.route = { query: {} }
   })
 

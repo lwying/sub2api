@@ -8,6 +8,7 @@ import audit from './audit'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
 import { requestTraceZh } from '@/features/request-trace/locale'
+import { gatewayMockZh } from '@/features/gateway-mock/locale'
 
 export default {
   ...overview,
@@ -20,4 +21,5 @@ export default {
   ...promptAudit,
   ...plugins,
   ...requestTraceZh,
+  ...gatewayMockZh,
 }

@@ -50,7 +50,13 @@ type OpsErrorLog struct {
 
 	ClientRequestID string `json:"client_request_id"`
 	RequestID       string `json:"request_id"`
-	Message         string `json:"message"`
+	// RequestTraceID 是服务端生成的请求 Trace ID；为空表示该次错误没有可直达的 Trace。
+	// 它只用于在管理员错误详情里提供跳转，不参与任何所有权或计费判定。
+	RequestTraceID string `json:"request_trace_id,omitempty"`
+	// RequestTraceAvailable 由服务端核对"这条 Trace 现在确实还在"后置位。
+	// 前端据此决定是否显示跳转：记录了 ID 但行已被清理或从未成功落库时不得给出死链接。
+	RequestTraceAvailable bool   `json:"request_trace_available"`
+	Message               string `json:"message"`
 
 	UserID      *int64 `json:"user_id"`
 	UserEmail   string `json:"user_email"`

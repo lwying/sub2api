@@ -1225,6 +1225,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				return nil
 			}(),
 			UserAgent: c.GetHeader("User-Agent"),
+			// 服务端 Trace ID：仅用于错误详情直达 Trace，不参与任何所有权判定。
+			RequestTraceID: service.RequestTraceIDFromContext(c.Request.Context()),
 
 			ErrorPhase:        phase,
 			ErrorType:         normalizedType,
@@ -1540,6 +1542,8 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 			return nil
 		}(),
 		UserAgent: c.GetHeader("User-Agent"),
+		// 服务端 Trace ID：仅用于错误详情直达 Trace，不参与任何所有权判定。
+		RequestTraceID: service.RequestTraceIDFromContext(c.Request.Context()),
 
 		ErrorPhase:        phase,
 		ErrorType:         normalizedType,

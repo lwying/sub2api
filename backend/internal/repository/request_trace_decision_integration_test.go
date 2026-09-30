@@ -39,6 +39,10 @@ const (
 	requestTraceEnvelopeMigration = "258_request_traces.sql"
 	requestTraceFactsMigration    = "261_request_trace_stage_facts_bounds.sql"
 	requestTraceDecisionMigration = "262_request_trace_gateway_decisions.sql"
+	// 265 给信封补上分组与客户端模型事实、266 给阶段事实补上平台键：
+	// 隔离 schema 必须按生产顺序应用它们，否则仓库写出的行会被自身 schema 拒绝。
+	requestTraceScopeFactsMigration    = "265_request_trace_scope_facts.sql"
+	requestTraceStagePlatformMigration = "266_request_trace_stage_facts_platform.sql"
 
 	requestTraceStagesTable = "request_trace_stages"
 
@@ -268,7 +272,10 @@ func newMigratedRequestTraceTx(t *testing.T) *sql.Tx {
 	_, err = tx.ExecContext(ctx, "CREATE TABLE usage_logs (id BIGSERIAL PRIMARY KEY)")
 	require.NoError(t, err, "create isolated usage_logs")
 
-	for _, name := range []string{requestTraceEnvelopeMigration, requestTraceFactsMigration, requestTraceDecisionMigration} {
+	for _, name := range []string{
+		requestTraceEnvelopeMigration, requestTraceFactsMigration, requestTraceDecisionMigration,
+		requestTraceScopeFactsMigration, requestTraceStagePlatformMigration,
+	} {
 		applyRequestTraceMigrationFile(t, tx, name)
 	}
 	_, err = tx.ExecContext(ctx,

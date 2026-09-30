@@ -54,6 +54,9 @@ func (s *requestTraceExportSource) NextTraceIDs(ctx context.Context, filter serv
 	if !requestTraceExportSourcePageValid(filter, after, limit) {
 		return nil, service.ErrRequestTraceInvalidRecord
 	}
+	// 检索条件与 Trace 列表共用同一套语义：导出必须覆盖"当前查询的全部结果"，
+	// 因此列表能用的条件（分组/客户端模型/平台，含各自的"未知"）导出也要能用，
+	// 账号条件同样只匹配 wire_attempt 阶段的类型化事实。
 	const query = `
 		SELECT trace_id FROM request_traces
 		WHERE ($1 = '' OR trace_id = $1)
@@ -62,9 +65,34 @@ func (s *requestTraceExportSource) NextTraceIDs(ctx context.Context, filter serv
 			AND ($4::timestamptz IS NULL OR created_at >= $4)
 			AND ($5::timestamptz IS NULL OR created_at < $5)
 			AND ($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)
-			AND trace_id > $7
+			AND ($7::bigint IS NULL OR usage_log_id = $7)
+			AND ($8::bigint IS NULL OR EXISTS (
+				SELECT 1 FROM request_trace_stages sa
+				WHERE sa.trace_id = request_traces.id
+				  AND sa.stage = 'wire_attempt'
+				  AND sa.metadata @> jsonb_build_object('account_id', $8::bigint)
+			))
+			AND ($9::bigint IS NULL OR group_id = $9)
+			AND ($10::boolean IS NULL OR (group_id IS NULL) = $10)
+			AND ($11::text IS NULL OR lower(requested_model) = lower($11))
+			AND ($12::boolean IS NULL OR (requested_model IS NULL) = $12)
+			AND ($13::text IS NULL OR EXISTS (
+				SELECT 1 FROM request_trace_stages sp
+				WHERE sp.trace_id = request_traces.id
+				  AND sp.stage = 'wire_attempt'
+				  AND sp.metadata @> jsonb_build_object('platform', $13::text)
+			))
+			AND ($14::boolean IS NULL OR (NOT EXISTS (
+				SELECT 1 FROM request_trace_stages sp2
+				WHERE sp2.trace_id = request_traces.id
+				  AND sp2.stage = 'wire_attempt'
+				  AND sp2.metadata ? 'platform'
+			)) = $14)
+			AND ($15::text[] IS NULL OR trace_id = ANY($15::text[]))
+			AND trace_id > $16
 		ORDER BY trace_id
-		LIMIT $8`
+		LIMIT $17`
+	// 游标条件保持在最后：它只是"从上次位置继续"，不参与筛选语义。
 	var createdFrom, createdTo any
 	if filter.CreatedFrom != nil {
 		createdFrom = filter.CreatedFrom.UTC()
@@ -76,8 +104,26 @@ func (s *requestTraceExportSource) NextTraceIDs(ctx context.Context, filter serv
 	if filter.UsageLinked != nil {
 		usageLinked = *filter.UsageLinked
 	}
+	var groupUnknown, modelUnknown, platformUnknown any
+	if filter.GroupUnknown != nil {
+		groupUnknown = *filter.GroupUnknown
+	}
+	if filter.ModelUnknown != nil {
+		modelUnknown = *filter.ModelUnknown
+	}
+	if filter.PlatformUnknown != nil {
+		platformUnknown = *filter.PlatformUnknown
+	}
+	// 所选集合为空时绑定 NULL：SQL 侧把它当作"无该条件"，与"选空集合"不同，
+	// 后者由服务层在创建任务前就拒绝。
+	var selectedIDs any
+	if len(filter.TraceIDs) > 0 {
+		selectedIDs = filter.TraceIDs
+	}
 	rows, err := s.q.QueryContext(ctx, query, filter.TraceID, string(filter.RouteFamily), filter.ClientStatus,
-		createdFrom, createdTo, usageLinked, after, limit)
+		createdFrom, createdTo, usageLinked, filter.UsageLogID, filter.AccountID, filter.GroupID, groupUnknown,
+		nullIfEmptyTraceModel(filter.RequestedModel), modelUnknown, nullIfEmptyTraceModel(filter.Platform), platformUnknown,
+		selectedIDs, after, limit)
 	if err != nil {
 		return nil, err
 	}

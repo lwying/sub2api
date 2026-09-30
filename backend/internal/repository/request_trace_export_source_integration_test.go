@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS request_traces (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     cleanup_after TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+    -- 与 265 之后的信封一致：请求时分组与客户端模型可空，NULL 表示"未观察到"。
+    group_id BIGINT,
+    requested_model TEXT,
     CONSTRAINT request_traces_trace_id_shape CHECK (trace_id ~ '^[0-9a-f]{32}$'),
     CONSTRAINT request_traces_route_family_allowed CHECK (
         route_family IN ('messages', 'chat_completions', 'responses')
@@ -444,6 +447,8 @@ func TestRequestTraceExportServiceExportsRealPagesAndCountsDeletedTraces(t *test
 	exportSvc := service.NewRequestTraceExportService(store, racingSource, service.RequestTraceExportOptions{
 		Enabled: true, SingleInstanceDeclared: true, InstanceID: "integration-instance", TempDir: dir,
 	})
+	// 夹具显式声明"管理员已接受当前版本的导出风险声明"；未确认时创建任务按设计被拒。
+	exportSvc.SetAcknowledgementSatisfiedForTest(true)
 	actor := service.RequestTraceExportActor{AdminUserID: 7, SessionID: "admin-session"}
 	task, err := exportSvc.CreateTask(ctx, actor, service.RequestTraceExportFilter{})
 	require.NoError(t, err)
@@ -453,29 +458,50 @@ func TestRequestTraceExportServiceExportsRealPagesAndCountsDeletedTraces(t *test
 	require.Equal(t, int64(totalTraces-1), finished.RowsExported)
 	require.Equal(t, int64(1), finished.RowsSkipped, "the trace deleted mid-export is skipped and counted")
 
-	file, result, err := exportSvc.OpenDownload(ctx, actor, task.ID)
+	// 交付形态是"清单 + 分片"：清单说明范围与完整性，分片才是逐行详情。
+	manifestFile, result, err := exportSvc.OpenDownload(ctx, actor, task.ID)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = file.Close() })
-	content, err := os.ReadFile(file.Name())
+	t.Cleanup(func() { _ = manifestFile.Close() })
+	manifestContent, err := os.ReadFile(manifestFile.Name())
 	require.NoError(t, err)
 	require.Equal(t, int64(totalTraces-1), result.RowsExported)
 
-	lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
-	require.Len(t, lines, totalTraces-1)
-	seen := make(map[string]bool, len(lines))
+	var manifest service.RequestTraceExportManifest
+	require.NoError(t, json.Unmarshal(manifestContent, &manifest))
+	require.Equal(t, int64(totalTraces-1), manifest.Rows)
+	require.Equal(t, int64(1), manifest.Skipped)
+	require.False(t, manifest.Complete, "a trace that vanished mid-paging makes the result incomplete")
+	require.Equal(t, service.RequestTraceExportIncompleteSourceGone, manifest.Reason)
+	require.NotEmpty(t, manifest.Shards)
+
+	seen := make(map[string]bool, totalTraces-1)
 	sentinelSeen := 0
-	for _, line := range lines {
-		var detail service.RequestTraceExportApprovedDetail
-		require.NoError(t, json.Unmarshal([]byte(line), &detail))
-		require.False(t, seen[detail.TraceID], "every page must be exported exactly once")
-		seen[detail.TraceID] = true
-		require.NotEqual(t, fmt.Sprintf("%032x", 65), detail.TraceID, "a deleted trace must never be exported")
-		if len(detail.Stages) == 1 {
-			sentinelSeen++
-			require.Equal(t, exportSourceRealSentinel, detail.Stages[0].PayloadText)
+	totalLines := 0
+	for ordinal := 1; ordinal <= len(manifest.Shards); ordinal++ {
+		shardFile, _, _, shardErr := exportSvc.OpenShardDownload(ctx, actor, task.ID, ordinal)
+		require.NoError(t, shardErr)
+		shardContent, readErr := os.ReadFile(shardFile.Name())
+		_ = shardFile.Close()
+		require.NoError(t, readErr)
+		require.NotContains(t, string(shardContent), "metadata")
+		lines := strings.Split(strings.TrimSuffix(string(shardContent), "\n"), "\n")
+		if len(shardContent) == 0 {
+			lines = nil
+		}
+		totalLines += len(lines)
+		for _, line := range lines {
+			var detail service.RequestTraceExportApprovedDetail
+			require.NoError(t, json.Unmarshal([]byte(line), &detail))
+			require.False(t, seen[detail.TraceID], "every page must be exported exactly once")
+			seen[detail.TraceID] = true
+			require.NotEqual(t, fmt.Sprintf("%032x", 65), detail.TraceID, "a deleted trace must never be exported")
+			if len(detail.Stages) == 1 {
+				sentinelSeen++
+				require.Equal(t, exportSourceRealSentinel, detail.Stages[0].PayloadText)
+			}
 		}
 	}
+	require.Equal(t, totalTraces-1, totalLines)
 	require.Len(t, seen, totalTraces-1)
 	require.Equal(t, 1, sentinelSeen)
-	require.NotContains(t, string(content), "metadata")
 }

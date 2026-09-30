@@ -118,19 +118,23 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	require.Contains(t, normalized, "($4::timestamptz IS NULL OR created_at >= $4)")
 	require.Contains(t, normalized, "($5::timestamptz IS NULL OR created_at < $5)")
 	require.Contains(t, normalized, "($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)")
-	require.Contains(t, normalized, "trace_id > $7")
-	require.Contains(t, normalized, "ORDER BY trace_id LIMIT $8")
-	// Selection is metadata only: no stage table, no payload and no wildcard.
-	require.NotContains(t, normalized, "request_trace_stages")
+	require.Contains(t, normalized, "trace_id > $16")
+	require.Contains(t, normalized, "ORDER BY trace_id LIMIT $17")
+	// 筛选只用类型化事实：账号/平台只匹配 wire_attempt 阶段的 JSONB 键，
+	// 绝不 SELECT 明细正文，也没有任何通配。
+	require.Contains(t, normalized, "sa.stage = 'wire_attempt'")
+	require.Contains(t, normalized, "jsonb_build_object('account_id', $8::bigint)")
+	require.Contains(t, normalized, "sp.stage = 'wire_attempt'")
+	require.Contains(t, normalized, "jsonb_build_object('platform', $13::text)")
 	require.NotContains(t, normalized, "payload")
-	require.NotContains(t, normalized, "metadata")
 	require.NotContains(t, normalized, "SELECT *")
+	require.NotContains(t, normalized, "SELECT sa.metadata")
 	// Values are bound, never interpolated into the statement text.
 	require.NotContains(t, normalized, exportSourceTraceIDSecond)
 	require.NotContains(t, normalized, exportSourceTraceIDThird)
 	require.NotContains(t, normalized, "messages")
 
-	require.Len(t, stub.args[0], 8)
+	require.Len(t, stub.args[0], 17)
 	require.Equal(t, exportSourceTraceIDThird, stub.args[0][0])
 	require.Equal(t, string(service.RequestTraceMessages), stub.args[0][1])
 	status, ok := stub.args[0][2].(*int)
@@ -140,8 +144,18 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	require.Equal(t, from.UTC(), stub.args[0][3])
 	require.Equal(t, to.UTC(), stub.args[0][4])
 	require.Equal(t, true, stub.args[0][5])
-	require.Equal(t, exportSourceTraceIDSecond, stub.args[0][6])
-	require.Equal(t, 128, stub.args[0][7])
+	// 未给出的新条件一律绑定 NULL：它们不得退化成"匹配全部"以外的任何含义。
+	require.Nil(t, stub.args[0][6], "an absent usage_log_id must bind SQL NULL")
+	require.Nil(t, stub.args[0][7], "an absent account_id must bind SQL NULL")
+	require.Nil(t, stub.args[0][8])
+	require.Nil(t, stub.args[0][9])
+	require.Nil(t, stub.args[0][10])
+	require.Nil(t, stub.args[0][11])
+	require.Nil(t, stub.args[0][12])
+	require.Nil(t, stub.args[0][13])
+	require.Nil(t, stub.args[0][14], "an absent selected-id set must bind SQL NULL")
+	require.Equal(t, exportSourceTraceIDSecond, stub.args[0][15])
+	require.Equal(t, 128, stub.args[0][16])
 }
 
 func TestRequestTraceExportSourceNextTraceIDsOmitsAbsentFilters(t *testing.T) {
@@ -151,7 +165,7 @@ func TestRequestTraceExportSourceNextTraceIDsOmitsAbsentFilters(t *testing.T) {
 	_, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{}, "", 3)
 	require.ErrorIs(t, err, errExportSourceStubQuery)
 	require.Len(t, stub.args, 1)
-	require.Len(t, stub.args[0], 8)
+	require.Len(t, stub.args[0], 17)
 	require.Equal(t, "", stub.args[0][0])
 	require.Equal(t, "", stub.args[0][1])
 	status, ok := stub.args[0][2].(*int)
@@ -160,7 +174,12 @@ func TestRequestTraceExportSourceNextTraceIDsOmitsAbsentFilters(t *testing.T) {
 	require.Nil(t, stub.args[0][3])
 	require.Nil(t, stub.args[0][4])
 	require.Nil(t, stub.args[0][5])
-	require.Equal(t, "", stub.args[0][6])
+	// 所有可选条件缺席时必须绑定 SQL NULL，游标是其后第一个非空参数。
+	for index := 6; index <= 14; index++ {
+		require.Nil(t, stub.args[0][index], "an omitted optional filter must bind SQL NULL")
+	}
+	require.Equal(t, "", stub.args[0][15])
+	require.Equal(t, 3, stub.args[0][16])
 }
 
 func TestRequestTraceExportSourceNextTraceIDsRejectsUnboundedOrMalformedInput(t *testing.T) {
@@ -211,7 +230,7 @@ func TestRequestTraceExportSourceNextTraceIDsReturnsAscendingPageAndCapsLimit(t 
 	require.Equal(t, []string{exportSourceTraceIDFirst, exportSourceTraceIDSecond}, ids)
 	require.NoError(t, mock.ExpectationsWereMet())
 	require.Len(t, *queries, 1)
-	require.Contains(t, normalizeSQLWhitespace((*queries)[0]), "ORDER BY trace_id LIMIT $8")
+	require.Contains(t, normalizeSQLWhitespace((*queries)[0]), "ORDER BY trace_id LIMIT $17")
 }
 
 func TestRequestTraceExportSourceNextTraceIDsEmptyPageEndsIteration(t *testing.T) {

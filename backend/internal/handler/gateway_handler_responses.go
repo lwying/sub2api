@@ -82,6 +82,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	markRequestTraceRequestedModel(c, reqModel)
 	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {
@@ -283,6 +284,16 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			}
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
+
+		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
+		markRequestTraceSelectedPlatform(c, account.Platform)
+		markGatewayMockStream(c, reqStream)
+		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolResponses, reqModel, account.ID, body) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			return
+		}
 
 		// 5. Forward request
 		writerSizeBeforeForward := c.Writer.Size()

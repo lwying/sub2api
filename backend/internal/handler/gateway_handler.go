@@ -59,6 +59,8 @@ type GatewayHandler struct {
 	settingService            *service.SettingService
 	claude429Cooldown         *service.Claude429CooldownGate
 	keyBillingSnapshot        *service.KeyBillingSnapshotService
+	// gatewayMockEvents 记录下游测试请求 mock 的最小命中事件；未注入时不记录。
+	gatewayMockEvents service.GatewayMockEventStore
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -189,6 +191,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		reqStream = parsedReq.Stream
 	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
+	// 记录客户端请求的模型：Trace 采集范围按客户端模型判定，与出站映射结果无关。
+	markRequestTraceRequestedModel(c, reqModel)
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -409,6 +413,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			account := selection.Account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
+			markRequestTraceSelectedPlatform(c, account.Platform)
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
 			if account.IsInterceptWarmupEnabled() {
@@ -750,6 +755,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			account := selection.Account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
+			markRequestTraceSelectedPlatform(c, account.Platform)
 
 			// [DEBUG-STICKY] 打印账号选择结果
 			reqLog.Info("sticky.account_selected",
@@ -928,6 +934,19 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				return
 			}
 			attemptBody := attemptParsedReq.Body.Bytes()
+
+			// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
+			// 命中即不写使用记录、不构造 wire 尝试；旧预热拦截在更早位置已经优先处理。
+			markGatewayMockStream(c, reqStream)
+			if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, reqModel, account.ID, attemptBody) {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				if queueRelease != nil {
+					queueRelease()
+				}
+				return
+			}
 
 			// 转发请求 - 根据账号平台分流
 			c.Set("parsed_request", attemptParsedReq)

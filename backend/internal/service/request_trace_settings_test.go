@@ -62,10 +62,10 @@ func TestRequestTraceWrittenAcknowledgementRequiresCurrentVerbatimStatement(t *t
 	require.Positive(t, probe.calls)
 
 	ack := RequestTraceRiskAcknowledgement{
-		Version: RequestTraceRiskAcknowledgementVersion,
-		Phrase:  "not the statement",
+		Version:     RequestTraceRiskAcknowledgementVersion,
+		Phrase:      "not the statement",
 		AdminUserID: 7,
-		AcceptedAt: time.Now().UTC(),
+		AcceptedAt:  time.Now().UTC(),
 	}
 	payload, err := json.Marshal(ack)
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestRequestTraceSupportExplainsProbeFailure(t *testing.T) {
 
 func TestRequestTraceDisableSucceedsWithCorruptAcknowledgement(t *testing.T) {
 	repo := &traceSettingRepoStub{values: map[string]string{
-		SettingKeyRequestTrace: `{"enabled":true,"risk_acknowledged":true}`,
+		SettingKeyRequestTrace:                    `{"enabled":true,"risk_acknowledged":true}`,
 		SettingKeyRequestTraceRiskAcknowledgement: `this is not JSON`,
 	}}
 	svc := NewSettingService(repo, &config.Config{})

@@ -114,6 +114,9 @@ var ProviderSet = wire.NewSet(
 	NewIdempotencyRepository,
 	NewUsageCleanupRepository,
 	NewDashboardAggregationRepository,
+	NewGatewayMockEventRepo,
+	// 管理端按只读接缝读取最小 mock 事件（写入接缝由 handler 自行定义）。
+	wire.Bind(new(service.GatewayMockEventReader), new(*GatewayMockEventRepo)),
 	NewSettingRepository,
 	NewOpsRepository,
 	NewAuditLogRepository,

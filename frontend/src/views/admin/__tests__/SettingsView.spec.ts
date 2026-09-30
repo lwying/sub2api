@@ -10,6 +10,10 @@ import SettingsView from "../SettingsView.vue";
 
 const {
   getTraceOperatorSettings,
+  getGatewayMockOperatorSettings,
+  updateGatewayMockOperatorSettings,
+  seedGatewayMockPresets,
+  listGatewayMockEvents,
   getSettings,
   updateSettings,
   getWebSearchEmulationConfig,
@@ -43,6 +47,16 @@ const {
   showSuccess,
 } = vi.hoisted(() => ({
   getTraceOperatorSettings: vi.fn(),
+  // 下游测试请求 mock：默认关闭、规则为空；命中事件在读之前先给一个空页。
+  getGatewayMockOperatorSettings: vi.fn().mockResolvedValue({
+    enabled: false,
+    rules: [],
+    preset_available: true,
+    preset_created: 0,
+  }),
+  updateGatewayMockOperatorSettings: vi.fn(),
+  seedGatewayMockPresets: vi.fn(),
+  listGatewayMockEvents: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 }),
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
   getWebSearchEmulationConfig: vi.fn(),
@@ -92,6 +106,13 @@ const {
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
 vi.mock('@/features/request-trace/api', () => ({ getOperatorSettings: getTraceOperatorSettings }));
+
+vi.mock('@/features/gateway-mock/api', () => ({
+  getOperatorSettings: getGatewayMockOperatorSettings,
+  updateOperatorSettings: updateGatewayMockOperatorSettings,
+  seedPresets: seedGatewayMockPresets,
+  listEvents: listGatewayMockEvents,
+}));
 
 vi.mock("@/api", () => ({
   adminAPI: {
@@ -571,6 +592,9 @@ it("shows a separate, default-off Trace risk gate in gateway settings", async ()
     risk_phrase_en: 'Trace risk EN', risk_phrase_zh: 'Trace risk ZH',
     risk_acknowledgement_current: false, plaintext_capture_supported: true,
     plaintext_capture_support_reason: 'supported',
+    // 采集范围与开关同一条记录；缺省为“全部”，与旧行为一致。
+    all_groups: true, group_ids: [], model_scope: 'all', models: [],
+    platform_scope: 'all', platforms: [], platform_exclude_unknown: false,
   });
   getSettings.mockResolvedValue({ ...baseSettingsResponse });
   const wrapper = mountView();
@@ -579,6 +603,34 @@ it("shows a separate, default-off Trace risk gate in gateway settings", async ()
 
   expect(wrapper.find('[data-testid="request-trace-settings"]').exists()).toBe(true);
   expect(wrapper.get('[data-testid="request-trace-capture-state"]').attributes('data-state')).toBe('off');
+});
+
+it("shows the downstream test mock as default-off and reads no hit list in the settings tab", async () => {
+  getTraceOperatorSettings.mockResolvedValue({
+    enabled: false, capture_allowed: false, risk_version: 'v2026.09.28',
+    risk_phrase_en: 'Trace risk EN', risk_phrase_zh: 'Trace risk ZH',
+    risk_acknowledgement_current: false, plaintext_capture_supported: true,
+    plaintext_capture_support_reason: 'supported',
+    all_groups: true, group_ids: [], model_scope: 'all', models: [],
+    platform_scope: 'all', platforms: [], platform_exclude_unknown: false,
+  });
+  getGatewayMockOperatorSettings.mockResolvedValue({
+    enabled: false,
+    rules: [{ id: 'gmr_1', keyword: 'hi', normalized_keyword: 'hi', reply: 'Hello!', enabled: true, updated_at: '2026-09-30T03:00:00Z' }],
+    preset_available: true,
+    preset_created: 0,
+  });
+  getSettings.mockResolvedValue({ ...baseSettingsResponse });
+  const wrapper = mountView();
+  await flushPromises();
+  await openGatewayTab(wrapper);
+
+  expect(wrapper.find('[data-testid="gateway-mock-settings"]').exists()).toBe(true);
+  expect(wrapper.get('[data-testid="gateway-mock-state"]').attributes('data-state')).toBe('off');
+  expect(wrapper.get('[data-testid="gateway-mock-rule-keyword"]').element).toHaveProperty('value', 'hi');
+  // 命中列表只在窗口打开时由面板自己按页读一次。
+  expect(listGatewayMockEvents).toHaveBeenCalledWith({ page: 1, page_size: 20 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(wrapper.find('[data-testid="gateway-mock-events-empty"]').exists()).toBe(true);
 });
 
 function mountView() {

@@ -35,10 +35,14 @@ func RegisterGatewayRoutes(
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
 	clientRequestID := middleware.ClientRequestID()
-	// 两个参数都是必填的具名参数：做成 ...any 会让漏注入在运行期退化成
+	// 参数都是必填的具名参数：做成 ...any 会让漏注入在运行期退化成
 	// "线上永远采集不到"，而编译期本可以发现（见 wire.go 对探针的同类说明）。
-	requestTraceCapture := handler.RequestTraceCaptureMiddleware(func(ctx context.Context) bool {
-		return settingService != nil && settingService.RequestTraceGate(ctx).CaptureAllowed
+	// 门控与采集范围一起求值：范围随门控快照冻结在同一份结论里。
+	requestTraceCapture := handler.RequestTraceCaptureMiddleware(func(ctx context.Context) service.RequestTraceGate {
+		if settingService == nil {
+			return service.RequestTraceGate{}
+		}
+		return settingService.RequestTraceGate(ctx)
 	}, requestTraceRepo, requestTraceQueue)
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
 	endpointNorm := handler.InboundEndpointMiddleware()

@@ -22,11 +22,33 @@ const status = (overrides: Partial<RequestTraceOperatorStatus> = {}): RequestTra
   risk_phrase_zh: '新版请求跟踪明文风险确认。',
   plaintext_capture_supported: true,
   plaintext_capture_support_reason: 'supported',
+  all_groups: true,
+  group_ids: [],
+  model_scope: 'all',
+  models: [],
+  platform_scope: 'all',
+  platforms: [],
+  platform_exclude_unknown: false,
   ...overrides,
 })
 
 function mountGate(current: RequestTraceOperatorStatus | null = status()) {
   return mount(RequestTraceOperatorSettings, { props: { status: current, loading: false } })
+}
+
+/** The scope half of the update body, as the form submits it for the given picks. */
+function scopeBody(overrides: Record<string, unknown> = {}) {
+  return {
+    scope_provided: true,
+    all_groups: true,
+    group_ids: [],
+    model_scope: 'all',
+    models: [],
+    platform_scope: 'all',
+    platforms: [],
+    platform_exclude_unknown: false,
+    ...overrides,
+  }
 }
 
 describe('Trace operator gate', () => {
@@ -90,5 +112,148 @@ describe('Trace operator gate', () => {
     const wrapper = mountGate({ ...status(), body: 'BODY_CANARY', authorization: 'Bearer secret' } as RequestTraceOperatorStatus)
     expect(wrapper.text()).not.toContain('BODY_CANARY')
     expect(wrapper.text()).not.toContain('Bearer secret')
+  })
+})
+
+describe('Trace capture scope', () => {
+  beforeEach(() => {
+    api.updateOperatorSettings.mockReset()
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  it('shows the stored scope from the server and saves it back whole', async () => {
+    const current = status({
+      all_groups: false, group_ids: [4, 7],
+      model_scope: 'include', models: ['claude-sonnet-4-5'],
+      platform_scope: 'exclude', platforms: ['antigravity'], platform_exclude_unknown: true,
+    })
+    api.updateOperatorSettings.mockResolvedValue(current)
+    const wrapper = mountGate(current)
+
+    expect(wrapper.get('[data-testid="request-trace-scope-stored-groups"]').text()).toBe('admin.requestTrace.operator.scope.onlyValues')
+    expect(wrapper.get('[data-testid="request-trace-scope-stored-models"]').text()).toBe('admin.requestTrace.operator.scope.onlyValues')
+    expect(wrapper.get('[data-testid="request-trace-scope-stored-platforms"]').text()).toBe('admin.requestTrace.operator.scope.exceptValues')
+    expect((wrapper.get('[data-testid="request-trace-scope-all-groups"]').element as HTMLInputElement).checked).toBe(false)
+    expect((wrapper.get('[data-testid="request-trace-scope-platform-exclude-unknown"]').element as HTMLInputElement).checked).toBe(true)
+
+    await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
+    await flushPromises()
+    expect(api.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: false,
+      language: 'en',
+      phrase: '',
+      scope_provided: true,
+      all_groups: false,
+      group_ids: [4, 7],
+      model_scope: 'include',
+      models: ['claude-sonnet-4-5'],
+      platform_scope: 'exclude',
+      platforms: ['antigravity'],
+      platform_exclude_unknown: true,
+    })
+  })
+
+  it('sends a complete scope for an edited draft and never a partial one', async () => {
+    api.updateOperatorSettings.mockResolvedValue(status())
+    const wrapper = mountGate()
+    await wrapper.get('[data-testid="request-trace-scope-all-groups"]').setValue(false)
+    await wrapper.get('[data-testid="request-trace-scope-group-ids"]').setValue('7 9')
+    await wrapper.get('[data-testid="request-trace-scope-model-mode"]').setValue('exclude')
+    await wrapper.get('[data-testid="request-trace-scope-models"]').setValue('gpt-5.3-codex, claude-sonnet-4-5')
+    await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
+    await flushPromises()
+    expect(api.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: false,
+      language: 'en',
+      phrase: '',
+      ...scopeBody({
+        all_groups: false,
+        group_ids: [7, 9],
+        model_scope: 'exclude',
+        models: ['gpt-5.3-codex', 'claude-sonnet-4-5'],
+      }),
+    })
+    expect(wrapper.find('[data-testid="request-trace-scope-error"]').exists()).toBe(false)
+  })
+
+  it('refuses an incomplete scope instead of storing a scope that matches nothing', async () => {
+    api.updateOperatorSettings.mockResolvedValue(status())
+    const wrapper = mountGate()
+    await wrapper.get('[data-testid="request-trace-scope-model-mode"]').setValue('include')
+    await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
+    expect(wrapper.get('[data-testid="request-trace-scope-error"]').exists()).toBe(true)
+    expect(api.updateOperatorSettings).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="request-trace-scope-models"]').setValue('claude-sonnet-4-5')
+    await wrapper.get('[data-testid="request-trace-scope-all-groups"]').setValue(false)
+    await wrapper.get('[data-testid="request-trace-scope-group-ids"]').setValue('0')
+    await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
+    expect(wrapper.get('[data-testid="request-trace-scope-error"]').exists()).toBe(true)
+    expect(api.updateOperatorSettings).not.toHaveBeenCalled()
+  })
+
+  it('saves the scope while capture is on without touching the switch, and only with a freshly typed statement', async () => {
+    const current = status({ enabled: true, capture_allowed: true, risk_acknowledged: true, risk_acknowledgement_current: true })
+    api.updateOperatorSettings.mockResolvedValue(current)
+    const wrapper = mountGate(current)
+    // The statement is never replayed from the stored acknowledgement.
+    const save = wrapper.get('[data-testid="request-trace-scope-save"]')
+    expect((save.element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.get('[data-testid="request-trace-scope-phrase"]').element as HTMLTextAreaElement).value).toBe('')
+    await wrapper.get('[data-testid="request-trace-scope-phrase"]').setValue(phrase)
+    expect((save.element as HTMLButtonElement).disabled).toBe(false)
+    await save.trigger('click')
+    await flushPromises()
+    expect(api.updateOperatorSettings).toHaveBeenCalledWith({
+      enabled: true,
+      language: 'en',
+      phrase,
+      ...scopeBody(),
+    })
+  })
+
+  it('keeps a switch update free of scope fields', async () => {
+    api.updateOperatorSettings.mockResolvedValue(status({ enabled: true, capture_allowed: true }))
+    const wrapper = mountGate()
+    await wrapper.get('[data-testid="request-trace-phrase-input"]').setValue(phrase)
+    await wrapper.get('[data-testid="request-trace-enable"]').trigger('click')
+    await flushPromises()
+    const [body] = api.updateOperatorSettings.mock.calls[0]
+    expect(Object.keys(body as object).sort()).toEqual(['enabled', 'language', 'phrase'])
+    expect(body).toEqual({ enabled: true, language: 'en', phrase })
+  })
+
+  it('surfaces the exclusion risk and the group semantics instead of promising a platform never appears', () => {
+    const wrapper = mountGate()
+    expect(wrapper.get('[data-testid="request-trace-scope-platform-risk"]').text())
+      .toBe('admin.requestTrace.operator.scope.excludeRisk')
+    expect(wrapper.get('[data-testid="request-trace-scope-platforms-note"]').text())
+      .toBe('admin.requestTrace.operator.scope.platformsNote')
+    expect(wrapper.get('[data-testid="request-trace-scope-models-note"]').text())
+      .toBe('admin.requestTrace.operator.scope.modelsNote')
+    expect(wrapper.get('[data-testid="request-trace-scope-groups-note"]').text())
+      .toBe('admin.requestTrace.operator.scope.groupsNote')
+    // The unknown-platform flag is offered only where it has a meaning.
+    expect(wrapper.find('[data-testid="request-trace-scope-platform-exclude-unknown"]').exists()).toBe(false)
+  })
+
+  it('confirms a saved scope only until the draft is edited again', async () => {
+    api.updateOperatorSettings.mockResolvedValue(status())
+    const wrapper = mountGate()
+    await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="request-trace-scope-saved"]').text()).toBe('admin.requestTrace.operator.scope.updated')
+    await wrapper.get('[data-testid="request-trace-scope-all-groups"]').setValue(false)
+    expect(wrapper.find('[data-testid="request-trace-scope-saved"]').exists()).toBe(false)
+  })
+
+  it('reports a refused scope save without claiming the server accepted it', async () => {
+    api.updateOperatorSettings.mockRejectedValue(new Error('REQUEST_TRACE_DEPLOYMENT_UNSUPPORTED'))
+    const wrapper = mountGate()
+    await wrapper.get('[data-testid="request-trace-scope-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="request-trace-error"]').text()).toBe('admin.requestTrace.operator.scope.saveFailed')
+    expect(wrapper.find('[data-testid="request-trace-scope-saved"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('REQUEST_TRACE_DEPLOYMENT_UNSUPPORTED')
   })
 })

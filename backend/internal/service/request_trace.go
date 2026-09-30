@@ -49,6 +49,12 @@ type RequestTrace struct {
 	CreatedAt       time.Time                `json:"created_at"`
 	CompletedAt     *time.Time               `json:"completed_at"`
 	CleanupAfter    *time.Time               `json:"cleanup_after"`
+	// GroupID 是下游 API Key 在**请求当时**所属的分组；nil 表示该事实未被观察到
+	// （例如鉴权前被拒）。它是请求时事实，不随分组改名或删除而变化。
+	GroupID *int64 `json:"group_id,omitempty"`
+	// RequestedModel 是客户端**请求的**模型名；空表示未观察到。
+	// 它不是出站映射后的模型名（那属于上游尝试事实）。
+	RequestedModel string `json:"requested_model,omitempty"`
 }
 
 type RequestTraceStage struct {
@@ -98,6 +104,19 @@ type RequestTraceListFilter struct {
 	// 账号即命中，列表响应本身仍只返回元数据信封，不回传阶段 JSONB。
 	UsageLogID *int64
 	AccountID  *int64
+	// GroupID / RequestedModel 按"请求时事实"检索：分组是下游 API Key 在请求当时
+	// 所属的分组，模型是客户端请求的模型名（非出站映射结果）。
+	//
+	// 两者各自配套一个 *Unknown 开关：为 true 时只匹配该事实**未观察到**的行，
+	// nil 表示不加该条件。未知不等于任何一个具体值，也不从使用记录反推。
+	GroupID        *int64
+	GroupUnknown   *bool
+	RequestedModel string
+	ModelUnknown   *bool
+	// Platform 按任一真实上游尝试选中的账号平台检索；PlatformUnknown 为 true 时
+	// 只匹配没有任何 wire_attempt 平台事实的 Trace。两者互斥。
+	Platform        string
+	PlatformUnknown *bool
 }
 
 // RequestTraceRepository stores the independent envelope and on-demand per-stage

@@ -174,6 +174,13 @@ type SettingService struct {
 	requestTraceGateCache   atomic.Value // *cachedRequestTraceGate
 	requestTraceGateVersion atomic.Uint64
 	requestTraceGateSF      singleflight.Group
+
+	// gatewayMockCache 缓存「下游测试请求 mock」的启用规则快照（见 gateway_mock_settings.go）。
+	// 该判断在每条推理请求的准入路径上求值，因此同样不退化为每请求回读设置表：写入设置
+	// 会立即失效，跨实例最长等 gatewayMockCacheTTL。读取失败按"关闭"处理，绝不 fail-open。
+	gatewayMockCache   atomic.Value // *cachedGatewayMockRuleset
+	gatewayMockVersion atomic.Uint64
+	gatewayMockSF      singleflight.Group
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

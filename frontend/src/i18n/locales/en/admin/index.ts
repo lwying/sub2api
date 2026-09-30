@@ -8,6 +8,7 @@ import audit from './audit'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
 import { requestTraceEn } from '@/features/request-trace/locale'
+import { gatewayMockEn } from '@/features/gateway-mock/locale'
 
 export default {
   ...overview,
@@ -20,4 +21,5 @@ export default {
   ...promptAudit,
   ...plugins,
   ...requestTraceEn,
+  ...gatewayMockEn,
 }

@@ -3,6 +3,16 @@ const client = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: client }))
 import { getOperatorSettings, updateOperatorSettings } from '../api'
 
+const scope = {
+  all_groups: false,
+  group_ids: [4, 7],
+  model_scope: 'include',
+  models: ['claude-sonnet-4-5'],
+  platform_scope: 'exclude',
+  platforms: ['antigravity'],
+  platform_exclude_unknown: true,
+}
+
 const status = {
   enabled: false,
   capture_allowed: false,
@@ -12,6 +22,7 @@ const status = {
   risk_phrase_zh: '新明文风险',
   plaintext_capture_supported: true,
   plaintext_capture_support_reason: 'supported',
+  ...scope,
 }
 
 describe('Trace operator settings API', () => {
@@ -26,13 +37,29 @@ describe('Trace operator settings API', () => {
     expect(result.capture_allowed).toBe(false)
   })
 
-  it('sends only the new gate and typed acknowledgement, never a legacy setting', async () => {
+  it('sends the gate and typed acknowledgement without any scope, and says so', async () => {
     client.put.mockResolvedValue({ data: status })
     await updateOperatorSettings({ enabled: true, language: 'en', phrase: 'New Trace risk' })
     expect(client.put).toHaveBeenCalledWith('/admin/settings/request-trace', {
       enabled: true,
       language: 'en',
       phrase: 'New Trace risk',
+      // Explicitly not a scope edit: the server keeps the stored scope.
+      scope_provided: false,
     }, expect.objectContaining({ headers: expect.objectContaining({ Pragma: 'no-cache' }) }))
+  })
+
+  it('sends the whole scope, and only when the operator actually provided one', async () => {
+    client.put.mockResolvedValue({ data: status })
+    await updateOperatorSettings({
+      enabled: false, language: 'en', phrase: '', scope_provided: true, ...scope,
+    })
+    expect(client.put).toHaveBeenCalledWith('/admin/settings/request-trace', {
+      enabled: false,
+      language: 'en',
+      phrase: '',
+      scope_provided: true,
+      ...scope,
+    }, expect.objectContaining({ headers: expect.objectContaining({ 'Cache-Control': 'no-store' }) }))
   })
 })

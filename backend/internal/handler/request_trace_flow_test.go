@@ -41,7 +41,7 @@ func TestRequestTraceAuthenticatedWithoutObservedWireDoesNotClaimComplete(t *tes
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
 	r := gin.New()
-	r.POST("/v1/responses", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/responses", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -161,7 +161,7 @@ func TestRequestTraceAuthAndRouteDecisionsSurviveQueueWithoutBodyRead(t *testing
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "synthetic_reject"})
 	})
 	body := &unreadableTraceBody{}
@@ -367,7 +367,7 @@ func TestRequestTraceWireAttemptsExposeIndependentActualOutcomes(t *testing.T) {
 	client := upstream.Client()
 	client.Transport = &countingTraceTransport{base: client.Transport}
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -440,7 +440,7 @@ func TestRequestTraceManyAttemptsKeepFinalClientResponseAndExplicitGap(t *testin
 	client := upstream.Client()
 	client.Transport = &countingTraceTransport{base: client.Transport}
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -533,7 +533,7 @@ func TestRequestTraceClientDisconnectMidStreamIsNotClaimedComplete(t *testing.T)
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -577,7 +577,7 @@ func TestRequestTraceDownstreamSSEPreservesWholeEventsAndRedactsKnownKeys(t *tes
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -624,7 +624,7 @@ func TestRequestTraceCompleteFactsAreFinalizedOnlyAfterQueueWrites(t *testing.T)
 		_, _ = w.Write([]byte(`{"result":"synthetic"}`))
 	}))
 	defer upstream.Close()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -669,7 +669,7 @@ func TestRequestTracePersistsRedactedClientAndRealAttemptFacts(t *testing.T) {
 	}))
 	defer upstream.Close()
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {
@@ -731,13 +731,66 @@ func TestRequestTracePersistsRedactedClientAndRealAttemptFacts(t *testing.T) {
 	require.NotNil(t, wireAttempt.Metadata.EndedAt)
 }
 
+// 实际选中的上游账号平台必须作为 wire_attempt 的请求时事实落库：
+// 采集范围按它判定，管理端也按它检索，账号后来更换平台不改变这条历史。
+func TestRequestTraceRecordsSelectedAccountPlatformOnWireAttempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &requestTraceWriterRepoStub{}
+	queue := service.NewRequestTraceCaptureQueue(repo)
+	defer queue.Stop()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	r := gin.New()
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
+		BindRequestTraceAfterAuth()(c)
+	}, func(c *gin.Context) {
+		// 这是各入口在选到账号之后的同一个调用点。
+		markRequestTraceSelectedPlatform(c, service.PlatformAntigravity)
+		body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
+		require.NoError(t, err)
+		ctx := httpattempt.WithMetadata(c.Request.Context(), httpattempt.Metadata{AccountID: 73, Protocol: "anthropic.messages"})
+		out, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.URL, bytes.NewReader(body))
+		require.NoError(t, err)
+		client := upstream.Client()
+		client.Transport = &countingTraceTransport{base: client.Transport}
+		resp, err := client.Do(out)
+		require.NoError(t, err)
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		c.Data(http.StatusOK, "application/json", data)
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"hello":"synthetic"}`))
+	r.ServeHTTP(httptest.NewRecorder(), request)
+	waitForRequestTraceWrites(t, repo, 4)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	var found bool
+	for _, stage := range repo.stages {
+		if stage.Stage != "wire_attempt" || stage.Metadata == nil {
+			continue
+		}
+		found = true
+		require.Equal(t, service.PlatformAntigravity, stage.Metadata.Platform,
+			"the wire attempt must carry the platform that was actually selected")
+	}
+	require.True(t, found, "a real attempt must have been observed")
+}
+
 func TestRequestTraceAuthenticatedFlowHasInboundAndWireAndFinalStages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &requestTraceWriterRepoStub{}
 	queue := service.NewRequestTraceCaptureQueue(repo)
 	defer queue.Stop()
 	r := gin.New()
-	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue), func(c *gin.Context) {
+	r.POST("/v1/messages", RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue), func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{})
 		BindRequestTraceAfterAuth()(c)
 	}, func(c *gin.Context) {

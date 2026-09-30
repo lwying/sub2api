@@ -112,6 +112,71 @@
             </select>
           </div>
 
+          <!-- 多选后再一键加入待授权列表；选择只在本弹窗会话内有效，跨筛选与翻页保留。 -->
+          <div
+            v-if="visibleCandidates.length > 0 || selectedCount > 0"
+            class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2 dark:border-dark-600"
+            data-test="candidate-selection"
+          >
+            <label class="flex cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+              <input
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed dark:border-dark-500"
+                :checked="allVisibleSelected"
+                :disabled="visibleCandidates.length === 0"
+                data-test="select-visible-candidates"
+                @change="handleToggleSelectVisible"
+              />
+              {{ t('assignedAccounts.admin.selectVisible') }}
+            </label>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-gray-500 dark:text-gray-400" data-test="selection-count">
+                {{ t('assignedAccounts.admin.selectedCount', { count: selectedCount }) }}
+              </span>
+              <button
+                v-if="selectedCount > 0"
+                type="button"
+                class="text-xs font-medium text-gray-500 hover:underline dark:text-gray-400"
+                data-test="clear-selection"
+                @click="clearCandidateSelection"
+              >
+                {{ t('assignedAccounts.admin.clearSelection') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary px-3 py-1 text-xs"
+                :disabled="selectedCount === 0"
+                data-test="batch-add-selected"
+                @click="addSelectedAccounts"
+              >
+                {{ t('assignedAccounts.admin.batchAdd') }}
+              </button>
+            </div>
+          </div>
+
+          <!--
+            一键加入只合并本地待授权列表，不发起写入；授权仍然只在「保存」时一次提交，
+            因此这里只报告合并结果，不宣布授权已生效。
+          -->
+          <div
+            v-if="lastBatchAddResult"
+            class="mt-3 rounded-xl border border-gray-200 px-4 py-3 dark:border-dark-600"
+            data-test="batch-add-summary"
+          >
+            <p class="text-sm text-gray-700 dark:text-gray-200">
+              {{
+                t('assignedAccounts.admin.batchAddSummary', {
+                  added: lastBatchAddResult.added,
+                  skipped: lastBatchAddResult.skipped,
+                  failed: lastBatchAddResult.failed
+                })
+              }}
+            </p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-test="batch-add-pending-notice">
+              {{ t('assignedAccounts.admin.batchAddPendingNotice') }}
+            </p>
+          </div>
+
           <ul v-if="visibleCandidates.length > 0" class="mt-2 space-y-1" data-test="candidate-list">
             <li
               v-for="candidate in visibleCandidates"
@@ -119,11 +184,31 @@
               class="flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-dark-700"
               :data-test="`candidate-${candidate.id}`"
             >
-              <div class="min-w-0">
-                <p class="truncate text-sm text-gray-800 dark:text-gray-200">{{ candidate.name || `#${candidate.id}` }}</p>
-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ candidateMeta(candidate) }}
-                </p>
+              <div class="flex min-w-0 items-center gap-3">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
+                  :checked="isCandidateSelected(candidate.id)"
+                  :aria-label="t('assignedAccounts.admin.selectCandidate', { name: candidate.name || `#${candidate.id}` })"
+                  :data-test="`candidate-select-${candidate.id}`"
+                  @change="toggleCandidateSelection(candidate.id)"
+                />
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <p class="truncate text-sm text-gray-800 dark:text-gray-200">{{ candidate.name || `#${candidate.id}` }}</p>
+                    <!-- 停用或异常账号照常可选，这里只把状态显示得更醒目 -->
+                    <span
+                      v-if="candidate.status && candidate.status !== 'active'"
+                      class="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
+                      :data-test="`candidate-status-${candidate.id}`"
+                    >
+                      {{ statusLabel(candidate.status) }}
+                    </span>
+                  </div>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ candidateMeta(candidate) }}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
@@ -183,6 +268,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useAppStore } from '@/stores/app'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
+import { useTableSelection } from '@/composables/useTableSelection'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import { ACCOUNT_TYPE_OPTIONS } from '@/constants/accountTypes'
@@ -238,6 +324,13 @@ let requestGeneration = 0
 let candidateGeneration = 0
 /** 只作为详情缓存：account_ids 是权威集合，缺少详情的 id 仍要保留。 */
 const accountDetails = new Map<number, GrantAccount>()
+/**
+ * 候选账号详情缓存：候选列表会随搜索与筛选整页替换，这里保留本次会话见过的账号资料，
+ * 使跨筛选、跨分页仍被选中的账号在一键加入时还能还原名称与状态。
+ */
+const candidateDetails = new Map<number, GrantAccount>()
+/** 最近一次「一键加入」的合并结果；只描述待授权列表，不代表授权已生效。 */
+const lastBatchAddResult = ref<{ added: number; skipped: number; failed: number } | null>(null)
 let loadMoreController: AbortController | null = null
 
 /** 保存必须建立在「当前用户已成功读取授权」之上，读取失败或进行中一律禁用。 */
@@ -255,6 +348,28 @@ const assignedIds = computed(() => new Set(assigned.value.map((account) => accou
 const visibleCandidates = computed(() =>
   candidates.value.filter((candidate) => !assignedIds.value.has(candidate.id))
 )
+
+/**
+ * 候选账号的多选状态。列表是普通 <ul> 而不是 DataTable，但选择语义与表格批量操作完全相同，
+ * 因此直接复用 useTableSelection（它只依赖行集合与取 id 的函数，不绑定表格组件）。
+ * 选择集只属于当前弹窗会话：切换用户、关闭或重新打开都会清空。
+ *
+ * 「全选」作用于当前列表里已加载的候选账号：候选使用「加载更多」而非分页器，
+ * 所以这里的“当前页”就是当前已列出的候选。
+ */
+const {
+  selectedIds: selectedCandidateIds,
+  selectedCount,
+  allVisibleSelected,
+  isSelected: isCandidateSelected,
+  toggle: toggleCandidateSelection,
+  clear: clearCandidateSelection,
+  removeMany: removeCandidatesFromSelection,
+  toggleVisible: toggleVisibleCandidates
+} = useTableSelection<AccountOption>({
+  rows: visibleCandidates,
+  getId: (candidate) => candidate.id
+})
 
 const hasMoreCandidates = computed(
   () => !candidatesLoading.value && candidates.value.length < candidateTotal.value
@@ -328,6 +443,44 @@ function toAccountOption(account: AccountOptionItem): AccountOption {
   }
 }
 
+/** 候选列表每次只持有当前筛选的结果，这里累积详情供跨页、跨筛选的一键加入使用。 */
+function cacheCandidateDetails(items: AccountOption[]): void {
+  for (const item of items) {
+    const account = toGrantAccount({
+      id: item.id,
+      name: item.name,
+      platform: item.platform,
+      account_type: item.type,
+      status: item.status
+    })
+    candidateDetails.set(account.id, account)
+  }
+}
+
+/**
+ * 还原被选中账号的资料：优先用本次会话的详情缓存，其次用当前候选列表。
+ * 都取不到时返回 null（该账号无法加入待授权列表，会在结果里如实报告）。
+ */
+function resolveCandidateAccount(id: number): GrantAccount | null {
+  const cached = candidateDetails.get(id)
+  if (cached) {
+    return cached
+  }
+
+  const listed = candidates.value.find((candidate) => candidate.id === id)
+  if (!listed) {
+    return null
+  }
+
+  return toGrantAccount({
+    id: listed.id,
+    name: listed.name,
+    platform: listed.platform,
+    account_type: listed.type,
+    status: listed.status
+  })
+}
+
 /**
  * 以后端 account_ids 为权威集合解析已分配账号：
  * - 响应里带 account_ids（即使是空数组）→ 以它为准，因此撤销到零不会被旧状态复活；
@@ -378,6 +531,9 @@ function resetForNewUser(): void {
   enabled.value = false
   assigned.value = []
   accountDetails.clear()
+  candidateDetails.clear()
+  lastBatchAddResult.value = null
+  clearCandidateSelection()
   search.value = ''
   candidatePlatform.value = ''
   candidateType.value = ''
@@ -410,7 +566,9 @@ const candidateSearch = useKeyedDebouncedSearch<PaginatedResponse<AccountOptionI
   search: (keyword, context) =>
     adminAPI.accounts.listOptions(1, CANDIDATE_PAGE_SIZE, candidateFilters(keyword), { signal: context.signal }),
   onSuccess: (_key, page) => {
-    candidates.value = page.items.map(toAccountOption)
+    const items = page.items.map(toAccountOption)
+    cacheCandidateDetails(items)
+    candidates.value = items
     candidatePage.value = 1
     candidateTotal.value = page.total
     candidatesFailed.value = false
@@ -461,10 +619,9 @@ async function loadMoreCandidates(): Promise<void> {
     if (!isCurrent()) return
 
     const known = new Set(candidates.value.map((candidate) => candidate.id))
-    candidates.value = [
-      ...candidates.value,
-      ...page.items.map(toAccountOption).filter((candidate) => !known.has(candidate.id))
-    ]
+    const items = page.items.map(toAccountOption)
+    cacheCandidateDetails(items)
+    candidates.value = [...candidates.value, ...items.filter((candidate) => !known.has(candidate.id))]
     candidatePage.value = nextPage
     candidateTotal.value = page.total
     candidatesFailed.value = false
@@ -499,12 +656,64 @@ function removeAccount(id: number): void {
   assigned.value = assigned.value.filter((account) => account.id !== id)
 }
 
+function handleToggleSelectVisible(event: Event): void {
+  toggleVisibleCandidates((event.target as HTMLInputElement).checked)
+}
+
+/**
+ * 一键加入待授权列表：只把选中的候选合并进本地待授权集合，不发起任何写入。
+ * 授权仍然只在「保存」时通过一次全量替换提交，因此这里只报告合并结果。
+ * 选择只在本弹窗会话内有效：已加入与已跳过的从选择中移除，取不到资料的保留选中以便修正重试。
+ */
+function addSelectedAccounts(): void {
+  if (selectedCount.value === 0) {
+    return
+  }
+
+  const added: GrantAccount[] = []
+  const addedIds: number[] = []
+  const skippedIds: number[] = []
+  const failedIds: number[] = []
+
+  for (const id of selectedCandidateIds.value) {
+    if (assignedIds.value.has(id)) {
+      skippedIds.push(id)
+      continue
+    }
+
+    const account = resolveCandidateAccount(id)
+    if (!account) {
+      failedIds.push(id)
+      continue
+    }
+
+    accountDetails.set(account.id, account)
+    added.push(account)
+    addedIds.push(account.id)
+  }
+
+  if (added.length > 0) {
+    assigned.value = [...assigned.value, ...added]
+  }
+
+  lastBatchAddResult.value = {
+    added: added.length,
+    skipped: skippedIds.length,
+    failed: failedIds.length
+  }
+  removeCandidatesFromSelection([...addedIds, ...skippedIds])
+}
+
 watch(
   () => [props.show, props.user?.id] as const,
   ([visible]) => {
     if (visible && props.user) {
       void load()
+      return
     }
+    // 关闭即结束本次选择会话：重新打开时不沿用上一次的选择与合并结果。
+    clearCandidateSelection()
+    lastBatchAddResult.value = null
   },
   { immediate: true }
 )

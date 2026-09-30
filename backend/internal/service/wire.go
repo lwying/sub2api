@@ -393,9 +393,11 @@ func ProvideGrokTokenProvider(
 }
 
 // ProvideDashboardAggregationService 创建并启动仪表盘聚合服务
-func ProvideDashboardAggregationService(repo DashboardAggregationRepository, timingWheel *TimingWheelService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config, settingRepo SettingRepository) *DashboardAggregationService {
+
+func ProvideDashboardAggregationService(repo DashboardAggregationRepository, timingWheel *TimingWheelService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config, settingRepo SettingRepository, mockEventCleaner GatewayMockEventCleaner) *DashboardAggregationService {
 	svc := NewDashboardAggregationService(repo, timingWheel, cfg)
 	svc.settingRepo = settingRepo
+	svc.SetGatewayMockEventCleaner(mockEventCleaner)
 	svc.SetLeaderLock(lockCache, db)
 	svc.Start()
 	return svc
@@ -817,7 +819,7 @@ func ProvideRequestTraceCaptureQueue(repo RequestTraceRepository, linker Request
 	return NewRequestTraceCaptureQueue(repo, linker)
 }
 
-func ProvideRequestTraceExportService(store RequestTraceExportStore, source RequestTraceExportSource, cfg *config.Config) *RequestTraceExportService {
+func ProvideRequestTraceExportService(store RequestTraceExportStore, source RequestTraceExportSource, cfg *config.Config, settings *SettingService) *RequestTraceExportService {
 	options := RequestTraceExportOptions{}
 	if cfg != nil {
 		options.Enabled = cfg.RequestTraceExport.Enabled
@@ -827,7 +829,17 @@ func ProvideRequestTraceExportService(store RequestTraceExportStore, source Requ
 	// This identifier is node/process-local. A different instance or a restart
 	// cannot claim a previous temp file as its own; lost downloads stay explicit.
 	options.InstanceID = uuid.NewString()
-	return NewRequestTraceExportService(store, source, options)
+	svc := NewRequestTraceExportService(store, source, options)
+	// 导出风险确认与采集确认分开：只有管理员接受当前版本的明文副本声明后才产生副本。
+	// 未接线（settings 为 nil）时按未确认处理，能力保持关闭。
+	if settings != nil {
+		svc.SetAcknowledgementChecker(func() bool {
+			return settings.RequestTraceExportAcknowledged(context.Background())
+		})
+		// 任务上限同样在开始执行时读取：管理员改配置只影响之后开始的任务。
+		svc.SetLimitsProvider(settings.GetRequestTraceExportLimits)
+	}
+	return svc
 }
 
 func ProvideRequestTraceExportWorker(svc *RequestTraceExportService) *RequestTraceExportWorker {

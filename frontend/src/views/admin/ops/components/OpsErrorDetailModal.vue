@@ -19,6 +19,15 @@
           <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">
             {{ requestId || '—' }}
           </div>
+          <!-- 只有在对应的请求 Trace 现在确实可读时才提供直达，避免死链接。 -->
+          <RouterLink
+            v-if="requestTraceTarget"
+            :to="requestTraceTarget"
+            class="mt-2 inline-block text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
+            data-testid="ops-error-trace-link"
+          >
+            {{ t('admin.ops.errorDetail.viewRequestTrace') }}
+          </RouterLink>
         </div>
 
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
@@ -258,6 +267,21 @@ const detail = ref<OpsErrorDetail | null>(null)
 const showUpstreamList = computed(() => props.errorType === 'request')
 
 const requestId = computed(() => detail.value?.request_id || detail.value?.client_request_id || '')
+
+/**
+ * 直达请求 Trace 的目标。
+ *
+ * 只有服务端确认那条 Trace 现在确实还在（request_trace_available）时才给出链接：
+ * 记录了 ID 但写入失败或已被清理时给链接会把管理员带到空页面。这里也绝不拿
+ * 客户端可重复的 request_id 去猜——那不是 Trace 身份。
+ */
+const requestTraceTarget = computed(() => {
+  const current = detail.value
+  if (!current?.request_trace_available) return null
+  const traceId = (current.request_trace_id ?? '').trim()
+  if (!/^[0-9a-f]{32}$/.test(traceId)) return null
+  return { path: '/admin/request-traces', query: { trace_id: traceId } }
+})
 
 type DiagnosticPayloadKey = 'client' | 'upstream_message' | 'upstream_detail' | 'upstream_events'
 

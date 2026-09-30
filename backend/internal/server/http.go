@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -24,7 +25,28 @@ import (
 var ProviderSet = wire.NewSet(
 	ProvideRouter,
 	ProvideHTTPServer,
+	ProvideGatewayMockEventCleaner,
+	ProvideGatewayMockEventStore,
 )
+
+// ProvideGatewayMockEventCleaner 把最小 mock 事件仓库适配成保留清理函数。
+// 适配放在 server 层：service 与 handler 都不允许依赖 repository（见 .golangci.yml），
+// 而这里的装配点两侧都能导入，跨包转换只发生在此处。
+func ProvideGatewayMockEventCleaner(repo *repository.GatewayMockEventRepo) service.GatewayMockEventCleaner {
+	if repo == nil {
+		return nil
+	}
+	return repo.DeleteMockEventsBefore
+}
+
+// ProvideGatewayMockEventStore 提供"取存储"的闭包，便于 handler 侧在装配后仍可空值判断。
+// 返回闭包而非存储本身：wire 对函数类型与接口类型都要求非 nil，闭包是两者的合法空值。
+func ProvideGatewayMockEventStore(repo *repository.GatewayMockEventRepo) func() service.GatewayMockEventStore {
+	if repo == nil {
+		return nil
+	}
+	return func() service.GatewayMockEventStore { return repo }
+}
 
 // ProvideRouter 提供路由器
 func ProvideRouter(

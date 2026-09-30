@@ -26,6 +26,11 @@ type requestTraceFlow struct {
 	rejectReason          string
 	decisions             []requestTraceDecisionEvent
 	decisionDropped       int
+	// selectedPlatform 是本次逻辑请求**首次**选中的上游账号平台，用于采集范围判定；
+	// observedPlatforms 列出本次请求实际选中过的所有平台（去重），用于给每条尝试标注平台。
+	// 两者必须分开：重试可能切到别的账号，判定只认首个，记录要完整。
+	selectedPlatform  string
+	observedPlatforms []string
 }
 
 type requestTraceAttemptFacts struct {
@@ -52,6 +57,47 @@ func (f *requestTraceFlow) inboundFacts(method string, url *url.URL, headers htt
 	f.mu.Lock()
 	f.clientFacts = facts
 	f.mu.Unlock()
+}
+
+// setSelectedPlatform 记录本次逻辑请求**首次**选中的上游账号平台。
+//
+// 只有第一个平台写入：采集范围按"首个可确定的实际账号平台"判定，后来重试切到
+// 别的平台不改变这条逻辑请求的结论。已存在时保留原值，不做覆盖。
+func (f *requestTraceFlow) setSelectedPlatform(platform string) {
+	if f == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(platform)
+	if trimmed == "" {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.selectedPlatform == "" {
+		f.selectedPlatform = trimmed
+	}
+	for _, existing := range f.observedPlatforms {
+		if existing == trimmed {
+			return
+		}
+	}
+	f.observedPlatforms = append(f.observedPlatforms, trimmed)
+}
+
+// platformSnapshot 报告给"当次尝试"标注的平台：最近一次选中的账号平台。
+// 每次尝试由当时选中的那个账号发出，因此标注最新值而不是首个值；
+// 采集范围判定另走 requestTraceScopeFacts 的首个平台（两者语义不同）。
+// 尚未选中任何账号时为空——此时不得伪造平台事实。
+func (f *requestTraceFlow) platformSnapshot() string {
+	if f == nil {
+		return ""
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.observedPlatforms) == 0 {
+		return ""
+	}
+	return f.observedPlatforms[len(f.observedPlatforms)-1]
 }
 
 func (f *requestTraceFlow) recordDecision(attemptIndex int, reason string, facts service.RequestTraceDecisionFacts) {
@@ -168,6 +214,7 @@ func (f *requestTraceFlow) traceObserver() *httpattempt.TraceObserver {
 			facts: service.NewRequestTraceAttemptFacts(start.Method, start.URL, start.Header, nil,
 				start.AccountID, start.Model, start.Protocol, start.ValueProtocol, 0, &started, nil),
 		}
+		facts.facts.Platform = f.platformSnapshot()
 		f.mu.Lock()
 		f.attempts = append(f.attempts, facts)
 		f.mu.Unlock()

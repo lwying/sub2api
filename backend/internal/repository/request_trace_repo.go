@@ -34,7 +34,7 @@ func NewRequestTraceRepository(db *sql.DB) service.RequestTraceRepository {
 
 var _ service.RequestTraceRepository = (*requestTraceRepository)(nil)
 
-const requestTraceEnvelopeColumns = `id, trace_id, route_family, inbound_endpoint, capture_state, client_status, usage_log_id, created_at, completed_at, cleanup_after`
+const requestTraceEnvelopeColumns = `id, trace_id, route_family, inbound_endpoint, capture_state, client_status, usage_log_id, created_at, completed_at, cleanup_after, group_id, requested_model`
 
 func scanRequestTraceEnvelope(row interface{ Scan(...any) error }) (service.RequestTrace, error) {
 	var trace service.RequestTrace
@@ -42,8 +42,10 @@ func scanRequestTraceEnvelope(row interface{ Scan(...any) error }) (service.Requ
 	var usageID sql.NullInt64
 	var completedAt sql.NullTime
 	var traceCleanupAfter time.Time
+	var groupID sql.NullInt64
+	var requestedModel sql.NullString
 	err := row.Scan(&trace.ID, &trace.TraceID, &family, &trace.InboundEndpoint, &state, &trace.ClientStatus,
-		&usageID, &trace.CreatedAt, &completedAt, &traceCleanupAfter)
+		&usageID, &trace.CreatedAt, &completedAt, &traceCleanupAfter, &groupID, &requestedModel)
 	if err != nil {
 		return service.RequestTrace{}, err
 	}
@@ -58,6 +60,12 @@ func scanRequestTraceEnvelope(row interface{ Scan(...any) error }) (service.Requ
 	if trace.UsageLogID == nil {
 		trace.CleanupAfter = &traceCleanupAfter
 	}
+	// 未观察到的事实保持为零值，页面按"未知"呈现，不伪造成某个具体分组或模型。
+	if groupID.Valid {
+		value := groupID.Int64
+		trace.GroupID = &value
+	}
+	trace.RequestedModel = requestedModel.String
 	return trace, nil
 }
 
@@ -103,17 +111,26 @@ func (r *requestTraceRepository) CreateRequestTrace(ctx context.Context, trace s
 		completedAt = trace.CompletedAt.UTC()
 	}
 	const query = `
-		INSERT INTO request_traces (trace_id, route_family, inbound_endpoint, capture_state, client_status, created_at, completed_at, cleanup_after)
-		VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $6::timestamptz + INTERVAL '30 days')
+		INSERT INTO request_traces (trace_id, route_family, inbound_endpoint, capture_state, client_status, created_at, completed_at, cleanup_after, group_id, requested_model)
+		VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7, $6::timestamptz + INTERVAL '30 days', $8, $9)
 		ON CONFLICT (trace_id) DO NOTHING
 		RETURNING ` + requestTraceEnvelopeColumns
 	stored, err := scanRequestTraceEnvelopeForQuery(ctx, r.q, query, trace.TraceID, trace.RouteFamily, trace.InboundEndpoint,
-		trace.CaptureState, trace.ClientStatus, createdAt, completedAt)
+		trace.CaptureState, trace.ClientStatus, createdAt, completedAt, trace.GroupID, nullIfEmptyTraceModel(trace.RequestedModel))
 	if errors.Is(err, sql.ErrNoRows) {
 		const existing = `SELECT ` + requestTraceEnvelopeColumns + ` FROM request_traces WHERE trace_id = $1`
 		return scanRequestTraceEnvelopeForQuery(ctx, r.q, existing, trace.TraceID)
 	}
 	return stored, err
+}
+
+// nullIfEmptyTraceModel 让"未观察到模型"落库为 NULL 而不是空串，
+// 这样查询侧能区分"未知"与"确实请求了空模型名"。
+func nullIfEmptyTraceModel(model string) any {
+	if model == "" {
+		return nil
+	}
+	return model
 }
 
 func scanRequestTraceEnvelopeForQuery(ctx context.Context, q sqlQueryer, query string, args ...any) (service.RequestTrace, error) {
@@ -395,7 +412,23 @@ func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter s
 			WHERE s.trace_id = request_traces.id
 			  AND s.stage = 'wire_attempt'
 			  AND s.metadata @> jsonb_build_object('account_id', $8::bigint)
-		))`
+		))
+		AND ($9::bigint IS NULL OR group_id = $9)
+		AND ($10::boolean IS NULL OR (group_id IS NULL) = $10)
+		AND ($11::text IS NULL OR lower(requested_model) = lower($11))
+		AND ($12::boolean IS NULL OR (requested_model IS NULL) = $12)
+		AND ($13::text IS NULL OR EXISTS (
+			SELECT 1 FROM request_trace_stages s2
+			WHERE s2.trace_id = request_traces.id
+			  AND s2.stage = 'wire_attempt'
+			  AND s2.metadata @> jsonb_build_object('platform', $13::text)
+		))
+		AND ($14::boolean IS NULL OR (NOT EXISTS (
+			SELECT 1 FROM request_trace_stages s3
+			WHERE s3.trace_id = request_traces.id
+			  AND s3.stage = 'wire_attempt'
+			  AND s3.metadata ? 'platform'
+		)) = $14)`
 	var from, to any
 	if !filter.CreatedFrom.IsZero() {
 		from = filter.CreatedFrom
@@ -407,13 +440,28 @@ func (r *requestTraceRepository) ListRequestTraces(ctx context.Context, filter s
 	if filter.UsageLinked != nil {
 		usageLinked = *filter.UsageLinked
 	}
-	args := []any{filter.TraceID, filter.RouteFamily, filter.ClientStatus, from, to, usageLinked, filter.UsageLogID, filter.AccountID}
+	var groupUnknown, modelUnknown, platformUnknown any
+	if filter.GroupUnknown != nil {
+		groupUnknown = *filter.GroupUnknown
+	}
+	if filter.ModelUnknown != nil {
+		modelUnknown = *filter.ModelUnknown
+	}
+	if filter.PlatformUnknown != nil {
+		platformUnknown = *filter.PlatformUnknown
+	}
+	args := []any{
+		filter.TraceID, filter.RouteFamily, filter.ClientStatus, from, to, usageLinked,
+		filter.UsageLogID, filter.AccountID, filter.GroupID, groupUnknown,
+		nullIfEmptyTraceModel(filter.RequestedModel), modelUnknown,
+		nullIfEmptyTraceModel(filter.Platform), platformUnknown,
+	}
 	var count int64
 	if err := scanSingleRow(ctx, r.q, `SELECT COUNT(*) FROM request_traces WHERE `+where, args, &count); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.q.QueryContext(ctx, `SELECT `+requestTraceEnvelopeColumns+` FROM request_traces WHERE `+where+
-		` ORDER BY created_at DESC, id DESC LIMIT $9 OFFSET $10`, append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)...)
+		` ORDER BY created_at DESC, id DESC LIMIT $15 OFFSET $16`, append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)...)
 	if err != nil {
 		return nil, 0, err
 	}

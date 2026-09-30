@@ -1,6 +1,16 @@
 export type TraceAckLanguage = 'en' | 'zh'
 
 /**
+ * The capture-scope filter kinds, mirroring the Go constants
+ * (`RequestTraceScopeAll` / `Include` / `Exclude`). The list is the single source
+ * of truth for the parser and for the modes the settings form offers, so a kind
+ * the backend gains or drops cannot silently become an unlabelled option.
+ */
+export const requestTraceScopes = ['all', 'include', 'exclude'] as const
+
+export type RequestTraceScope = (typeof requestTraceScopes)[number]
+
+/**
  * The summary `capture_state` closed set, as a runtime list and a union type. It
  * mirrors the Go contract's `RequestTraceCaptureState` values the summary endpoint
  * can return, and it is the single source of truth for both the parser's `Set` and
@@ -60,6 +70,15 @@ export interface RequestTraceSummary {
   capture_state: RequestTraceCaptureState
   usage_log_id: number | null
   cleanup_after: string | null
+  /**
+   * Request-time facts, not current values: the downstream API key group at the
+   * moment of the request, and the model the **client** asked for (never the
+   * mapped outbound model). `null` means the fact was not observed — an older
+   * Trace, a request rejected before it could be determined — and must never be
+   * rendered as a value, an empty string or a guess.
+   */
+  group_id: number | null
+  requested_model: string | null
 }
 
 export interface RequestTraceStage {
@@ -182,6 +201,23 @@ export interface RequestTraceListParams {
    */
   usage_log_id?: number
   account_id?: number
+  /**
+   * The three request-time facts an operator can query by, each as a concrete
+   * value **or** an explicit "not observed" flag — never both: the server
+   * refuses the pair, and a request whose fact could not be determined is not
+   * equal to any concrete value.
+   *
+   * `requested_model` is the model the client asked for (not the mapped outbound
+   * model) and matches without regard to case. `platform` matches any real
+   * upstream attempt's selected account platform. `group_id` is the downstream
+   * API key group at request time.
+   */
+  group_id?: number
+  group_unknown?: boolean
+  requested_model?: string
+  model_unknown?: boolean
+  platform?: string
+  platform_unknown?: boolean
 }
 
 const traceIDPattern = /^[0-9a-f]{32}$/
@@ -189,6 +225,13 @@ const routeFamilies = new Set(['messages', 'chat_completions', 'responses'])
 const captureStates = new Set<string>(requestTraceCaptureStates)
 const stageStates = new Set<string>(requestTraceStageStates)
 const safeStagePattern = /^[a-z][a-z0-9_]*$/
+
+// Mirrors of the server-side capture scope contract: the closed filter kinds,
+// and generous-but-finite bounds so a compromised server cannot push an
+// unbounded list of unbounded tokens into the settings panel.
+const scopeKinds = new Set<string>(requestTraceScopes)
+const maxScopeEntries = 1000
+const maxScopeEntryLength = 256
 
 // Mirror of the server-side stage fact budget and per-field bounds. The client
 // re-checks them so a compromised or buggy server cannot push unbounded or
@@ -249,6 +292,18 @@ function optionalTimestamp(value: unknown): string | null {
   return value
 }
 
+/**
+ * An observed request-time scalar: absent **and empty** both mean "not
+ * observed" (the wire omits the field or sends `""`), never an observed empty
+ * value. Anything else must be a bounded, single-line token.
+ */
+function optionalObservedScalar(value: unknown, max = maxScopeEntryLength): string | null {
+  if (value == null || value === '') return null
+  if (typeof value !== 'string' || value.length > max) throw new Error('Invalid request Trace fact')
+  if (unsafeFactTextPattern.test(value) || malformedTextPattern.test(value)) throw new Error('Invalid request Trace fact')
+  return value
+}
+
 export function normalizeRequestTraceSummary(value: unknown): RequestTraceSummary {
   const source = traceRecord(value)
   if (typeof source.trace_id !== 'string' || !traceIDPattern.test(source.trace_id)) throw new Error('Invalid request Trace id')
@@ -257,6 +312,10 @@ export function normalizeRequestTraceSummary(value: unknown): RequestTraceSummar
   if (typeof source.capture_state !== 'string' || !captureStates.has(source.capture_state)) throw new Error('Invalid request Trace state')
   if (typeof source.created_at !== 'string' || optionalTimestamp(source.created_at) === null) throw new Error('Invalid request Trace creation time')
   const usage = source.usage_log_id == null ? null : nonnegativeInt(source.usage_log_id)
+  // A group id is a positive id or it is unknown; zero and negatives are refused
+  // rather than shown as an observed group.
+  const groupID = source.group_id == null ? null : nonnegativeInt(source.group_id)
+  if (groupID === 0) throw new Error('Invalid request Trace group')
   return {
     trace_id: source.trace_id,
     route_family: source.route_family as RequestTraceSummary['route_family'],
@@ -267,6 +326,8 @@ export function normalizeRequestTraceSummary(value: unknown): RequestTraceSummar
     capture_state: source.capture_state as RequestTraceSummary['capture_state'],
     usage_log_id: usage,
     cleanup_after: optionalTimestamp(source.cleanup_after),
+    group_id: groupID,
+    requested_model: optionalObservedScalar(source.requested_model),
   }
 }
 
@@ -531,13 +592,47 @@ export interface RequestTraceOperatorStatus {
   }
   plaintext_capture_supported: boolean
   plaintext_capture_support_reason: TraceDeploymentReason
+  /**
+   * The stored **capture scope**: which future requests are captured. It never
+   * rewrites Traces that were already stored. A scope of `all` (all groups, all
+   * models, all platforms) is the only one that covers a request whose fact
+   * could not be determined.
+   */
+  all_groups: boolean
+  group_ids: number[]
+  model_scope: RequestTraceScope
+  models: string[]
+  platform_scope: RequestTraceScope
+  platforms: string[]
+  /** Only meaningful with `platform_scope: 'exclude'`; unknown stays captured otherwise. */
+  platform_exclude_unknown: boolean
 }
 
-export interface RequestTraceOperatorUpdateInput {
+/** The complete scope object, as it is stored and submitted. */
+export interface RequestTraceScopeInput {
+  all_groups: boolean
+  group_ids: number[]
+  model_scope: RequestTraceScope
+  models: string[]
+  platform_scope: RequestTraceScope
+  platforms: string[]
+  platform_exclude_unknown: boolean
+}
+
+/**
+ * A settings update either carries the **complete** scope (`scope_provided:
+ * true`) or no scope at all. A partial scope is not expressible: the server
+ * replaces the stored scope wholesale, so a half-filled object would silently
+ * drop the rest of the operator's scope.
+ */
+export type RequestTraceOperatorUpdateInput = {
   enabled: boolean
   language: TraceAckLanguage
   phrase: string
-}
+} & (
+  | { scope_provided?: false }
+  | { scope_provided: true } & RequestTraceScopeInput
+)
 
 const deploymentReasons = new Set<TraceDeploymentReason>([
   'supported',
@@ -551,6 +646,35 @@ const deploymentReasons = new Set<TraceDeploymentReason>([
 function record(raw: unknown): Record<string, unknown> {
   if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
   throw new Error('Trace operator status is not an object')
+}
+
+/** A closed scope kind, or it is not a scope this backend can have stored. */
+function scopeKind(value: unknown): RequestTraceScope {
+  if (typeof value !== 'string' || !scopeKinds.has(value)) throw new Error('Trace capture scope is unavailable')
+  return value as RequestTraceScope
+}
+
+/** A bounded list of observed scope entries; a blank entry is not an entry. */
+function scopeEntryList(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > maxScopeEntries) throw new Error('Trace capture scope is unavailable')
+  return value.map(entry => {
+    if (typeof entry !== 'string' || entry === '' || entry.length > maxScopeEntryLength) {
+      throw new Error('Trace capture scope is unavailable')
+    }
+    if (unsafeFactTextPattern.test(entry) || malformedTextPattern.test(entry)) {
+      throw new Error('Trace capture scope is unavailable')
+    }
+    return entry
+  })
+}
+
+/** Group ids are positive ids; zero and negatives are not groups. */
+function scopeGroupIDs(value: unknown): number[] {
+  if (!Array.isArray(value) || value.length > maxScopeEntries) throw new Error('Trace capture scope is unavailable')
+  return value.map(id => {
+    if (!Number.isSafeInteger(id) || (id as number) <= 0) throw new Error('Trace capture scope is unavailable')
+    return id as number
+  })
 }
 
 export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceOperatorStatus {
@@ -568,6 +692,12 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
   if (typeof source.risk_acknowledgement_current !== 'boolean' || typeof source.plaintext_capture_supported !== 'boolean') {
     throw new Error('Trace gate status is unavailable')
   }
+  // The capture scope is part of the same record as the switch: a missing or
+  // wrong-typed scope is not rendered as an empty (i.e. permissive-looking)
+  // scope, because that would misstate what is being captured.
+  if (typeof source.all_groups !== 'boolean' || typeof source.platform_exclude_unknown !== 'boolean') {
+    throw new Error('Trace capture scope is unavailable')
+  }
   const status: RequestTraceOperatorStatus = {
     enabled: source.enabled,
     capture_allowed: source.capture_allowed,
@@ -578,6 +708,13 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
     risk_acknowledgement_current: source.risk_acknowledgement_current,
     plaintext_capture_supported: source.plaintext_capture_supported,
     plaintext_capture_support_reason: reason as TraceDeploymentReason,
+    all_groups: source.all_groups,
+    group_ids: scopeGroupIDs(source.group_ids),
+    model_scope: scopeKind(source.model_scope),
+    models: scopeEntryList(source.models),
+    platform_scope: scopeKind(source.platform_scope),
+    platforms: scopeEntryList(source.platforms),
+    platform_exclude_unknown: source.platform_exclude_unknown,
   }
   if (source.risk_acknowledgement !== undefined && source.risk_acknowledgement !== null) {
     const ack = record(source.risk_acknowledgement)
@@ -591,8 +728,14 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
 export type RequestTraceExportStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 /**
- * Bounded background export scope: the same metadata-only filter surface as the
- * Trace list. There is no body, query or free-text search here on purpose.
+ * The bounded export scope. It is the same metadata-only filter surface as the
+ * Trace list — the export has to answer the same question the query answered —
+ * so every list condition the server accepts is expressible here, and nothing
+ * else is: there is no body, no full-text search and no sort control.
+ *
+ * `trace_ids` is the "export selected" scope: the explicitly checked Traces,
+ * bounded by the server, and mutually exclusive with the filters above (a
+ * selected export has no query behind it).
  */
 export interface RequestTraceExportFilter {
   trace_id?: string
@@ -601,7 +744,36 @@ export interface RequestTraceExportFilter {
   created_from?: string
   created_to?: string
   usage_linked?: boolean
+  usage_log_id?: number
+  account_id?: number
+  group_id?: number
+  group_unknown?: boolean
+  requested_model?: string
+  model_unknown?: boolean
+  platform?: string
+  platform_unknown?: boolean
+  trace_ids?: string[]
 }
+
+/**
+ * The "export selected" bound, mirrored from the server
+ * (`service.RequestTraceExportMaxSelectedIDs`). Above it the server refuses the
+ * request outright, so the UI refuses first and says why instead of silently
+ * exporting a subset of what was checked.
+ */
+export const requestTraceExportMaxSelectedTraces = 2000
+
+/** The server's own bound on shards per task (`service.requestTraceExportMaxShards`). */
+export const requestTraceExportMaxShards = 1000
+
+/**
+ * The closed set of reasons a completed export is marked incomplete. It is a
+ * closed set of codes, not free text: an unknown code renders through the
+ * generic fallback label, never as the raw server string.
+ */
+export const requestTraceExportIncompleteReasons = ['limit_rows', 'limit_bytes', 'limit_runtime', 'source_gone'] as const
+
+export type RequestTraceExportIncompleteReason = (typeof requestTraceExportIncompleteReasons)[number]
 
 /**
  * Server-owned task view. Completion and download deadlines are absent until the
@@ -609,6 +781,10 @@ export interface RequestTraceExportFilter {
  * session, right now, may download" — the client never recomputes it from a clock.
  * A gone temporary file is not a field here: it is only ever read from the
  * bounded reason of a refused download.
+ *
+ * `truncated` is *not* success: a completed task that hit a task limit or lost a
+ * source record delivers the shards it wrote and says so. It is rendered as its
+ * own state, and its shards stay downloadable while the server allows it.
  */
 export interface RequestTraceExportTask {
   id: string
@@ -621,11 +797,39 @@ export interface RequestTraceExportTask {
   completed_at: string | null
   download_until: string | null
   downloadable: boolean
+  shard_count: number
+  truncated: boolean
+  incomplete_reason: string | null
 }
+
+/**
+ * The states the task area renders. The wire statuses plus the two local
+ * outcomes of a refused download, plus the one state that must never be shown as
+ * success: a completed-but-truncated task. Each has its own label, so no render
+ * path can turn "incomplete" into "done".
+ */
+export const requestTraceExportDisplayStates = [
+  'pending', 'running', 'completed', 'incomplete', 'failed', 'file_lost', 'expired',
+] as const
+
+export type RequestTraceExportDisplayState = (typeof requestTraceExportDisplayStates)[number]
 
 /** Server-generated export task id: 32 lowercase hex characters, same shape as a Trace ID. */
 export const requestTraceExportIDPattern = /^[0-9a-f]{32}$/
 const exportStatuses = new Set<RequestTraceExportStatus>(['pending', 'running', 'completed', 'failed'])
+
+/** A lookup filter the server resolves: only a positive integer is an ID. */
+function optionalPositiveInt(value: unknown): number | undefined {
+  if (value == null) return undefined
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) throw new Error('Invalid request Trace export filter')
+  return value as number
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (value == null) return undefined
+  if (typeof value !== 'boolean') throw new Error('Invalid request Trace export filter')
+  return value
+}
 
 function normalizeRequestTraceExportFilter(value: unknown): RequestTraceExportFilter {
   const source = traceRecord(value)
@@ -647,8 +851,84 @@ function normalizeRequestTraceExportFilter(value: unknown): RequestTraceExportFi
     const parsed = optionalTimestamp(source[key])
     if (parsed !== null) filter[key] = parsed
   }
+  for (const key of ['usage_log_id', 'account_id', 'group_id'] as const) {
+    const parsed = optionalPositiveInt(source[key])
+    if (parsed !== undefined) filter[key] = parsed
+  }
+  // Each request-time fact is queried as a concrete value or as an explicit
+  // "not observed", never both: the server refuses the pair.
+  for (const key of ['group_unknown', 'model_unknown', 'platform_unknown'] as const) {
+    const parsed = optionalBoolean(source[key])
+    if (parsed !== undefined) filter[key] = parsed
+  }
+  for (const key of ['requested_model', 'platform'] as const) {
+    const parsed = optionalObservedScalar(source[key])
+    if (parsed !== null) filter[key] = parsed
+  }
+  if (source.trace_ids != null) {
+    if (!Array.isArray(source.trace_ids) || source.trace_ids.length === 0) throw new Error('Invalid request Trace export filter')
+    if (source.trace_ids.length > requestTraceExportMaxSelectedTraces) throw new Error('Invalid request Trace export filter')
+    const ids: string[] = []
+    for (const entry of source.trace_ids) {
+      if (typeof entry !== 'string' || !traceIDPattern.test(entry)) throw new Error('Invalid request Trace export filter')
+      ids.push(entry)
+    }
+    filter.trace_ids = ids
+  }
   return filter
 }
+
+/**
+ * The configured caps for NEW export tasks. They are the administrator's own
+ * bounds: `configured` says whether they were ever set explicitly or are still
+ * the deployment defaults. There is no unlimited value in this shape, and the
+ * server clamps anything out of range rather than accepting it.
+ */
+export interface RequestTraceExportLimits {
+  max_rows: number
+  max_bytes: number
+  max_runtime_seconds: number
+  max_shard_rows: number
+  max_shard_bytes: number
+  configured: boolean
+}
+
+/** The server's allowed range, mirrored from `service.NormalizeRequestTraceExportLimits`. */
+export const requestTraceExportLimitBounds = {
+  max_rows: { min: 100, max: 5_000_000 },
+  max_bytes: { min: 1_048_576, max: 68_719_476_736 },
+  max_runtime_seconds: { min: 30, max: 21_600 },
+  max_shard_rows: { min: 10 },
+  max_shard_bytes: { min: 1_048_576 },
+} as const
+
+/**
+ * A written acknowledgement of the export risk statement, as the settings screen
+ * renders it. The statement text is the server's own; the client never invents
+ * or rewrites it, and only its presence and version are meaningful here.
+ */
+export interface RequestTraceExportRisk {
+  acknowledged: boolean
+  version: string
+  phrase_en: string
+  phrase_zh: string
+  phrase: string | null
+  admin_user_id: number | null
+  accepted_at: string | null
+}
+
+/**
+ * The bounded reasons an export action can be refused. They are the server's
+ * own stable codes, collapsed into the outcomes the UI can explain — plus the
+ * one the client raises itself: a checked set above the sendable bound is
+ * refused here rather than trimmed down to something the operator did not ask
+ * for. The server's message text is never one of these.
+ */
+export const requestTraceExportRefusals = [
+  'risk_ack_required', 'session_required', 'disabled', 'capacity', 'invalid_filter', 'selection_too_large', 'unavailable',
+] as const
+
+export type RequestTraceExportRefusal = (typeof requestTraceExportRefusals)[number]
 
 /**
  * The value-free operational-status closed sets, as runtime lists as well as
@@ -805,6 +1085,7 @@ export function normalizeRequestTraceExportTask(value: unknown): RequestTraceExp
   if (typeof source.status !== 'string' || !exportStatuses.has(source.status as RequestTraceExportStatus)) throw new Error('Invalid request Trace export status')
   if (typeof source.created_at !== 'string' || optionalTimestamp(source.created_at) === null) throw new Error('Invalid request Trace export creation time')
   if (typeof source.downloadable !== 'boolean') throw new Error('Invalid request Trace export download state')
+  if (typeof source.truncated !== 'boolean') throw new Error('Invalid request Trace export completeness state')
   return {
     id: source.id,
     status: source.status as RequestTraceExportStatus,
@@ -816,5 +1097,68 @@ export function normalizeRequestTraceExportTask(value: unknown): RequestTraceExp
     completed_at: optionalTimestamp(source.completed_at),
     download_until: optionalTimestamp(source.download_until),
     downloadable: source.downloadable,
+    shard_count: nonnegativeInt(source.shard_count, requestTraceExportMaxShards),
+    truncated: source.truncated,
+    // Only a code from the closed set survives; an unrecognized one is kept as
+    // its own bounded token so the reason still renders through the generic
+    // label instead of being silently reported as "complete".
+    incomplete_reason: optionalObservedScalar(source.incomplete_reason),
   }
 }
+
+/**
+ * Normalizes the whole-task and per-shard caps. Every value is a finite
+ * non-negative integer — there is no "unlimited" in this shape — and `configured`
+ * says whether an administrator ever set them or they are still the deployment
+ * defaults. The bounds are re-checked here so a value the server would clamp is
+ * never rendered as if it had been accepted.
+ */
+export function normalizeRequestTraceExportLimits(value: unknown): RequestTraceExportLimits {
+  const source = traceRecord(value)
+  return {
+    max_rows: boundedInt(source.max_rows, requestTraceExportLimitBounds.max_rows.min, requestTraceExportLimitBounds.max_rows.max),
+    max_bytes: boundedInt(source.max_bytes, requestTraceExportLimitBounds.max_bytes.min, requestTraceExportLimitBounds.max_bytes.max),
+    max_runtime_seconds: boundedInt(source.max_runtime_seconds, requestTraceExportLimitBounds.max_runtime_seconds.min, requestTraceExportLimitBounds.max_runtime_seconds.max),
+    max_shard_rows: boundedInt(source.max_shard_rows, requestTraceExportLimitBounds.max_shard_rows.min, requestTraceExportLimitBounds.max_rows.max),
+    max_shard_bytes: boundedInt(source.max_shard_bytes, requestTraceExportLimitBounds.max_shard_bytes.min, requestTraceExportLimitBounds.max_bytes.max),
+    configured: opsBool(source.configured, 'Invalid request Trace export limits provenance'),
+  }
+}
+
+function boundedInt(value: unknown, min: number, max: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < min || (value as number) > max) throw new Error('Invalid request Trace export limit')
+  return value as number
+}
+
+/**
+ * Normalizes the export risk acknowledgement. The statement text is the
+ * server's own: it is carried verbatim so the operator types exactly what the
+ * server will compare against, and it is bounded so a hostile or broken server
+ * cannot push an unbounded payload into the settings form.
+ */
+export function normalizeRequestTraceExportRisk(value: unknown): RequestTraceExportRisk {
+  const source = traceRecord(value)
+  if (typeof source.acknowledged !== 'boolean') throw new Error('Invalid request Trace export risk state')
+  if (typeof source.version !== 'string' || source.version.length > maxRiskPhraseLength) throw new Error('Invalid request Trace export risk version')
+  const phraseEN = riskPhrase(source.phrase_en)
+  const phraseZH = riskPhrase(source.phrase_zh)
+  const adminUserID = optionalPositiveInt(source.admin_user_id)
+  return {
+    acknowledged: source.acknowledged,
+    version: source.version,
+    phrase_en: phraseEN,
+    phrase_zh: phraseZH,
+    phrase: riskPhrase(source.phrase ?? undefined) || null,
+    admin_user_id: adminUserID ?? null,
+    accepted_at: optionalTimestamp(source.accepted_at),
+  }
+}
+
+/** The statement is non-empty text the admin retypes; it is never shown as an error message. */
+function riskPhrase(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value !== 'string' || value.length > maxRiskPhraseLength) throw new Error('Invalid request Trace risk statement')
+  return value
+}
+
+const maxRiskPhraseLength = 8192

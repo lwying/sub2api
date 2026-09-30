@@ -29,11 +29,14 @@ type RequestTraceStageFacts struct {
 	ResponseHeadersOmitted int         `json:"response_headers_omitted,omitempty"`
 	AccountID              int64       `json:"account_id,omitempty"`
 	Model                  string      `json:"model,omitempty"`
-	Protocol               string      `json:"protocol,omitempty"`
-	ValueProtocol          string      `json:"value_protocol,omitempty"`
-	Status                 int         `json:"status,omitempty"`
-	StartedAt              *time.Time  `json:"started_at,omitempty"`
-	EndedAt                *time.Time  `json:"ended_at,omitempty"`
+	// Platform 是本次尝试实际选中的上游账号平台。它只在 wire_attempt 上出现，
+	// 是"请求时事实"，因此账号后来更换平台也不改变历史筛选结果。
+	Platform      string     `json:"platform,omitempty"`
+	Protocol      string     `json:"protocol,omitempty"`
+	ValueProtocol string     `json:"value_protocol,omitempty"`
+	Status        int        `json:"status,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
 }
 
 func requestTraceFactTokenOrEmpty(value string) string {
@@ -104,6 +107,10 @@ func (f *RequestTraceStageFacts) TrimToBudget() {
 			f.URLOmitted = true
 		} else if f.Model != "" {
 			f.Model = ""
+		} else if f.Platform != "" {
+			// 平台是采集范围判定要用的事实，但它排在同为标量的模型之后丢弃：
+			// 超限时宁可少一个平台标记，也不让整份事实被拒绝。
+			f.Platform = ""
 		} else if f.Protocol != "" {
 			f.Protocol = ""
 		} else if f.ValueProtocol != "" {
@@ -136,10 +143,11 @@ func ValidRequestTraceStageFacts(stage string, facts *RequestTraceStageFacts) bo
 	if stage != "client_metadata" && stage != "wire_attempt" || facts.RequestHeadersOmitted < 0 || facts.ResponseHeadersOmitted < 0 ||
 		facts.AccountID < 0 || facts.Status < 0 || facts.Status > 599 ||
 		facts.Method != requestTraceFactTokenOrEmpty(facts.Method) || facts.Model != requestTraceFactTokenOrEmpty(facts.Model) ||
+		facts.Platform != requestTraceFactTokenOrEmpty(facts.Platform) ||
 		facts.Protocol != requestTraceFactTokenOrEmpty(facts.Protocol) || facts.ValueProtocol != requestTraceFactTokenOrEmpty(facts.ValueProtocol) {
 		return false
 	}
-	if stage == "client_metadata" && (facts.AccountID != 0 || facts.Protocol != "" || facts.ValueProtocol != "" || facts.Model != "" ||
+	if stage == "client_metadata" && (facts.AccountID != 0 || facts.Platform != "" || facts.Protocol != "" || facts.ValueProtocol != "" || facts.Model != "" ||
 		facts.Status != 0 || facts.StartedAt != nil || facts.EndedAt != nil || len(facts.ResponseHeaders) != 0) {
 		return false
 	}

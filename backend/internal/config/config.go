@@ -116,10 +116,14 @@ type SimpleModeConfig struct {
 	AutoCreateDefaultGroups bool `mapstructure:"auto_create_default_groups" yaml:"auto_create_default_groups"`
 }
 
-// RequestTraceExportConfig enables node-local plaintext export only after an
-// operator explicitly declares a single-instance deployment. Both flags default
-// to false; a leader lock cannot prove that a downloaded file is on this node.
+// RequestTraceExportConfig 描述本机明文导出所在的部署形态。
+//
+// 授权来自管理员在界面上的动作（开启 Trace + 确认明文副本风险），不再由配置文件开关决定：
+// Enabled 已废弃并且**不参与任何判定**，把它重新接回门控会让管理员按设计操作后仍然拿到 503。
+// 真正的部署前提只有 SingleInstanceDeclared：没有共享文件系统的多实例部署无法保证下载
+// 拿到的是本机那份文件，leader 锁也不能证明这一点。
 type RequestTraceExportConfig struct {
+	// Enabled 已废弃，设成任何值都不改变行为。
 	Enabled                bool   `mapstructure:"enabled"`
 	SingleInstanceDeclared bool   `mapstructure:"single_instance_declared"`
 	TempDir                string `mapstructure:"temp_dir"`
@@ -2224,7 +2228,8 @@ func setDefaults() {
 	viper.SetDefault("redis.min_idle_conns", 128)
 	viper.SetDefault("redis.enable_tls", false)
 
-	// Trace export remains off unless operators explicitly declare single-instance use.
+	// Trace export 的部署前提：只有显式声明单实例才允许导出（多实例无法保证下载拿到本机文件）。
+	// request_trace_export.enabled 是已废弃的兼容键：不再参与判定，保留默认值只为不改动既有配置形状。
 	viper.SetDefault("request_trace_export.enabled", false)
 	viper.SetDefault("request_trace_export.single_instance_declared", false)
 	viper.SetDefault("request_trace_export.temp_dir", "")

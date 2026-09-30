@@ -122,7 +122,7 @@ func TestRequestTraceRealGatewayMessagesPersistsRealWireAttemptFacts(t *testing.
 
 	r := gin.New()
 	r.POST("/v1/messages",
-		RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, repo, queue),
+		RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, repo, queue),
 		func(c *gin.Context) {
 			c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, group))
 			keyGroupID := groupID
@@ -326,7 +326,7 @@ func (e *requestTraceRealOpenAIEnv) serve(t *testing.T, path, body string, entry
 	group := e.group
 	r := gin.New()
 	r.POST(path,
-		RequestTraceCaptureMiddleware(func(context.Context) bool { return true }, e.repo, e.queue),
+		RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return RequestTraceGateForCapture(true) }, e.repo, e.queue),
 		func(c *gin.Context) {
 			keyGroupID := group.ID
 			apiKey := &service.APIKey{

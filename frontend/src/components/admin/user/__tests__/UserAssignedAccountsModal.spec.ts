@@ -106,6 +106,34 @@ function candidatePage(ids: number[], options: { total?: number; page?: number }
   }
 }
 
+/** 候选列表的另一种构造：名称可预测，并能指定部分账号的状态（停用账号仍应可选）。 */
+function candidateList(
+  ids: number[],
+  options: { statuses?: Record<number, string>; total?: number; page?: number } = {}
+) {
+  const items = ids.map((id) => ({
+    id,
+    name: `candidate-${id}`,
+    platform: 'openai',
+    type: 'oauth',
+    status: options.statuses?.[id] ?? 'active'
+  }))
+  return {
+    items,
+    total: options.total ?? items.length,
+    page: options.page ?? 1,
+    page_size: 20,
+    pages: 1
+  }
+}
+
+/** 等待弹窗完成一次授权读取 + 候选首页加载。 */
+async function settleModal(): Promise<void> {
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+}
+
 describe('UserAssignedAccountsModal', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -679,6 +707,267 @@ describe('UserAssignedAccountsModal', () => {
 
     expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="save-grant"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  // --- 候选多选：一键加入待授权列表（只合并本地草稿，保存时才写入） ---
+
+  it('selects every listed candidate with the select-all control and clears the selection', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 13, 14]))
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    // 全选只作用于当前列出的候选：已分配的 11 不在候选里，因此不会被选中。
+    await wrapper.get('[data-test="select-visible-candidates"]').setValue(true)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":3')
+    expect(wrapper.get('[data-test="candidate-select-12"]').element).toHaveProperty('checked', true)
+
+    await wrapper.get('[data-test="clear-selection"]').trigger('click')
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":0')
+    expect(wrapper.get('[data-test="candidate-select-12"]').element).toHaveProperty('checked', false)
+    expect(wrapper.find('[data-test="clear-selection"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="batch-add-selected"]').attributes('disabled')).toBeDefined()
+    expect(updateAccountView).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('merges multi-selected candidates into the pending list without writing to the server', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 13, 14], { statuses: { 13: 'inactive' } }))
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    // 停用账号照常可选，并明确标注状态；正常账号不额外加标记。
+    expect(wrapper.get('[data-test="candidate-status-13"]').text()).toContain('admin.accounts.status.inactive')
+    expect(wrapper.find('[data-test="candidate-status-12"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="candidate-select-13"]').setValue(true)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":2')
+
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+
+    // 一键加入只合并本地待授权列表，不发起任何写入，也不宣布授权已生效。
+    expect(updateAccountView).not.toHaveBeenCalled()
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="assigned-12"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-13"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-count"]').text()).toContain('"count":3')
+
+    const summary = wrapper.get('[data-test="batch-add-summary"]').text()
+    expect(summary).toContain('assignedAccounts.admin.batchAddSummary')
+    expect(summary).toContain('"added":2')
+    expect(summary).toContain('"skipped":0')
+    expect(summary).toContain('"failed":0')
+    expect(wrapper.get('[data-test="batch-add-pending-notice"]').text()).toContain(
+      'assignedAccounts.admin.batchAddPendingNotice'
+    )
+
+    // 加入后它们不再出现在候选里，选择也随之清空。
+    expect(wrapper.find('[data-test="candidate-12"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":0')
+    expect(wrapper.get('[data-test="batch-add-selected"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+    expect(updateAccountView).toHaveBeenCalledWith(42, { enabled: true, account_ids: [11, 12, 13] })
+    wrapper.unmount()
+  })
+
+  it('reports selected candidates that are already pending instead of duplicating them', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 13]))
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    // 先选中 12，再用行内「添加」把它放进待授权列表：它仍留在选择里。
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="add-12"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="candidate-12"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":1')
+
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+
+    const summary = wrapper.get('[data-test="batch-add-summary"]').text()
+    expect(summary).toContain('"added":0')
+    expect(summary).toContain('"skipped":1')
+    expect(summary).toContain('"failed":0')
+    expect(wrapper.findAll('[data-test="assigned-12"]')).toHaveLength(1)
+    expect(wrapper.get('[data-test="assigned-count"]').text()).toContain('"count":2')
+    expect(updateAccountView).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps the selection across filter changes and load-more pages', async () => {
+    listAccounts.mockResolvedValueOnce(
+      candidateList(
+        Array.from({ length: 20 }, (_, index) => index + 1),
+        { total: 21 }
+      )
+    )
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="candidate-select-1"]').setValue(true)
+
+    listAccounts.mockResolvedValueOnce(candidateList([21], { page: 2, total: 21 }))
+    await wrapper.get('[data-test="load-more-candidates"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="candidate-select-21"]').setValue(true)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":2')
+
+    // 切换筛选会整页替换候选，选择必须保留。
+    listAccounts.mockResolvedValueOnce(candidateList([201]))
+    await wrapper.get('[data-test="candidate-platform"]').setValue('openai')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, { platform: 'openai' }, expect.anything())
+    expect(wrapper.find('[data-test="candidate-1"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":2')
+
+    // 筛选结果为空时，选择依旧可见（可清除、可一键加入）。
+    listAccounts.mockResolvedValueOnce(emptyCandidates())
+    await wrapper.get('[data-test="candidate-status"]').setValue('inactive')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":2')
+    expect(wrapper.get('[data-test="select-visible-candidates"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+
+    // 跨筛选选中的账号仍能取到资料，而不是退化成占位 id。
+    expect(wrapper.get('[data-test="assigned-1"]').text()).toContain('candidate-1')
+    expect(wrapper.get('[data-test="assigned-21"]').text()).toContain('candidate-21')
+    expect(wrapper.get('[data-test="batch-add-summary"]').text()).toContain('"added":2')
+    expect(updateAccountView).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+    expect(updateAccountView).toHaveBeenCalledWith(42, { enabled: true, account_ids: [11, 1, 21] })
+    wrapper.unmount()
+  })
+
+  it('clears the selection when the target user changes or the dialog is reopened', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 22, 23]))
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="candidate-select-22"]').setValue(true)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":1')
+
+    getAccountView.mockResolvedValue({
+      user_id: 43,
+      enabled: true,
+      account_ids: [21],
+      accounts: [
+        { id: 21, name: 'second-user-account', platform: 'openai', account_type: 'oauth', status: 'active' }
+      ]
+    })
+    await wrapper.setProps({ user: secondUser })
+    await settleModal()
+
+    // 新用户从干净状态开始：没有选择，也没有上一个用户的合并结果。
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":0')
+    expect(wrapper.get('[data-test="candidate-select-22"]').element).toHaveProperty('checked', false)
+    expect(wrapper.find('[data-test="batch-add-summary"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="candidate-select-22"]').setValue(true)
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":1')
+
+    // 关闭再打开同一个用户同样清空选择。
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+    await wrapper.setProps({ show: true })
+    await settleModal()
+
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":0')
+    expect(wrapper.get('[data-test="candidate-select-22"]').element).toHaveProperty('checked', false)
+    wrapper.unmount()
+  })
+
+  it('keeps the pending list and the selection when the server rejects the save', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 13]))
+    updateAccountView.mockRejectedValue({ status: 400, message: 'account 12 was deleted' })
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+
+    // 再选中一个尚未加入的候选账号，用来验证保存失败不会连带清空选择。
+    await wrapper.get('[data-test="candidate-select-13"]').setValue(true)
+
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    expect(updateAccountView).toHaveBeenCalledWith(42, { enabled: true, account_ids: [11, 12] })
+    // 整批都没有落地：不报告成功、不关闭弹窗，草稿与选择原样保留。
+    expect(showError).toHaveBeenCalledTimes(1)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('success')).toBeUndefined()
+    expect(wrapper.get('[data-test="grant-dialog"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-12"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-count"]').text()).toContain('"count":2')
+    expect(wrapper.get('[data-test="selection-count"]').text()).toContain('"count":1')
+    expect(wrapper.get('[data-test="candidate-select-13"]').element).toHaveProperty('checked', true)
+    expect(wrapper.get('[data-test="save-grant"]').attributes('disabled')).toBeUndefined()
+
+    // 管理员就地修正后可以原样重试。
+    updateAccountView.mockResolvedValue({
+      user_id: 42,
+      enabled: true,
+      account_ids: [11, 12],
+      accounts: []
+    })
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    expect(showSuccess).toHaveBeenCalledWith('assignedAccounts.admin.saveSuccess')
+    wrapper.unmount()
+  })
+
+  it('never drops server-side assignments that are outside the current candidate filter', async () => {
+    getAccountView.mockResolvedValue({
+      user_id: 42,
+      enabled: true,
+      account_ids: [11, 99],
+      accounts: [
+        { id: 11, name: 'assigned-one', platform: 'anthropic', account_type: 'oauth', status: 'active' }
+      ]
+    })
+    listAccounts.mockResolvedValue(candidateList([12, 13]))
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="candidate-platform"]').setValue('openai')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    // 带详情的 11 与只有 id 的 99 都在提交集合里：筛选与多选都不会丢掉既有授权。
+    expect(updateAccountView).toHaveBeenCalledWith(42, { enabled: true, account_ids: [11, 99, 12] })
     wrapper.unmount()
   })
 })

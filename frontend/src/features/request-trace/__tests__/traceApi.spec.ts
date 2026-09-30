@@ -1,9 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
+const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: client }))
 
-import { createTraceExport, downloadTraceExport, getTrace, getTraceExport, listTraces } from '../api'
+import {
+  TraceExportRefusedError,
+  acknowledgeTraceExportRisk,
+  createTraceExport,
+  downloadTraceExport,
+  downloadTraceExportPart,
+  getTrace,
+  getTraceExport,
+  getTraceExportLimits,
+  getTraceExportRisk,
+  listTraces,
+  updateTraceExportLimits,
+} from '../api'
 
 const row = { trace_id: 'a'.repeat(32), route_family: 'messages', inbound_endpoint: '/v1/messages', capture_state: 'partial', client_status: 401, usage_log_id: null, cleanup_after: '2026-10-28T00:00:00Z', created_at: '2026-09-28T00:00:00Z', completed_at: null }
 
@@ -56,6 +68,8 @@ const exportTask = (overrides: Record<string, unknown> = {}) => ({
   completed_at: null,
   download_until: null,
   downloadable: false,
+  shard_count: 0,
+  truncated: false,
   ...overrides,
 })
 
@@ -89,6 +103,66 @@ describe('Trace batch export API', () => {
     expect(created.completed_at).toBeNull()
     expect(created.download_until).toBeNull()
     expect(created.downloadable).toBe(false)
+    expect(created.truncated).toBe(false)
+    expect(created.shard_count).toBe(0)
+    expect(created.incomplete_reason).toBeNull()
+  })
+
+  it('sends every list condition the query used, so the export answers the same question', async () => {
+    client.post.mockResolvedValue({ data: exportTask() })
+    await createTraceExport({
+      route_family: 'responses', client_status: 429, usage_linked: false, created_from: '2026-09-01T00:00:00Z',
+      usage_log_id: 12, account_id: 34, group_id: 5, requested_model: 'claude-sonnet-4-5', platform: 'antigravity',
+    })
+
+    expect(exportParams()).toEqual({
+      route_family: 'responses', client_status: 429, usage_linked: false, created_from: '2026-09-01T00:00:00Z',
+      usage_log_id: 12, account_id: 34, group_id: 5, requested_model: 'claude-sonnet-4-5', platform: 'antigravity',
+    })
+  })
+
+  it('sends an explicit not-observed condition as its own flag, never as a value', async () => {
+    client.post.mockResolvedValue({ data: exportTask() })
+    await createTraceExport({ group_unknown: true, model_unknown: true, platform_unknown: true })
+
+    expect(exportParams()).toEqual({ group_unknown: true, model_unknown: true, platform_unknown: true })
+  })
+
+  it('sends the checked set as a comma-separated scope with no filter beside it', async () => {
+    client.post.mockResolvedValue({ data: exportTask() })
+    const first = 'a'.repeat(32)
+    const second = 'c'.repeat(32)
+    await createTraceExport({ trace_ids: [first, second], route_family: 'messages', client_status: 500 })
+
+    // The server ANDs the two scopes, so a selected export must not carry a query
+    // the operator may not have been looking at.
+    expect(exportParams()).toEqual({ trace_ids: `${first},${second}` })
+    expect(exportParams()).not.toHaveProperty('route_family')
+  })
+
+  it('refuses a checked set above the server bound instead of exporting part of it', async () => {
+    const ids = Array.from({ length: 2001 }, (_, index) => index.toString(16).padStart(32, '0'))
+    await expect(createTraceExport({ trace_ids: ids })).rejects.toMatchObject({ refusal: 'selection_too_large' })
+    expect(client.post).not.toHaveBeenCalled()
+  })
+
+  it('maps a refused creation onto a bounded outcome instead of the server message', async () => {
+    const refusal = async (reason: string) => {
+      client.post.mockRejectedValueOnce({ status: 429, reason, message: 'SECRET_SERVER_TEXT' })
+      const error = await createTraceExport({}).catch((thrown: unknown) => thrown)
+      expect(error).toBeInstanceOf(TraceExportRefusedError)
+      expect(JSON.stringify(error)).not.toContain('SECRET_SERVER_TEXT')
+      return (error as InstanceType<typeof TraceExportRefusedError>).refusal
+    }
+
+    expect(await refusal('REQUEST_TRACE_EXPORT_RISK_ACK_REQUIRED')).toBe('risk_ack_required')
+    expect(await refusal('REQUEST_TRACE_EXPORT_ADMIN_SESSION_REQUIRED')).toBe('session_required')
+    expect(await refusal('REQUEST_TRACE_EXPORT_FORBIDDEN')).toBe('session_required')
+    expect(await refusal('REQUEST_TRACE_EXPORT_DISABLED')).toBe('disabled')
+    expect(await refusal('REQUEST_TRACE_EXPORT_CAPACITY_LIMIT')).toBe('capacity')
+    expect(await refusal('REQUEST_TRACE_EXPORT_INVALID_FILTER')).toBe('invalid_filter')
+    // Anything unrecognized, including a transport failure, is not a verdict.
+    expect(await refusal('REQUEST_TRACE_EXPORT_SOMETHING_ELSE')).toBe('unavailable')
   })
 
   it('drops unknown task fields instead of carrying captured content or a download URL', async () => {
@@ -111,6 +185,20 @@ describe('Trace batch export API', () => {
     await expect(createTraceExport({})).rejects.toThrow()
   })
 
+  it('reads a truncated task as truncated, with its reason and shard count', async () => {
+    client.post.mockResolvedValue({ data: exportTask({ status: 'completed', truncated: true, incomplete_reason: 'limit_rows', shard_count: 3 }) })
+    const created = await createTraceExport({})
+
+    expect(created.truncated).toBe(true)
+    expect(created.incomplete_reason).toBe('limit_rows')
+    expect(created.shard_count).toBe(3)
+  })
+
+  it('refuses to call a task complete when the completeness flag is missing', async () => {
+    client.post.mockResolvedValue({ data: exportTask({ truncated: undefined }) })
+    await expect(createTraceExport({})).rejects.toThrow()
+  })
+
   it('reads the same task view by id from the server-owned route', async () => {
     client.get.mockResolvedValue({ data: exportTask({ status: 'completed', completed_at: '2026-09-28T00:10:00Z', download_until: '2026-10-05T00:10:00Z', rows_exported: 42, rows_skipped: 3, bytes_exported: 2048, downloadable: true }) })
     const task = await getTraceExport(TASK_ID)
@@ -124,13 +212,35 @@ describe('Trace batch export API', () => {
     expect(client.get).not.toHaveBeenCalled()
   })
 
-  it('downloads the temporary file as a blob under the server filename', async () => {
+  it('downloads the manifest as a blob under the server filename, without a part', async () => {
     const blob = new Blob(['SYNTHETIC'])
-    client.get.mockResolvedValue({ status: 200, data: blob, headers: { 'content-disposition': `attachment; filename="sub2api-request-trace-export-${TASK_ID}.jsonl"` } })
+    client.get.mockResolvedValue({ status: 200, data: blob, headers: { 'content-disposition': `attachment; filename="sub2api-request-trace-export-${TASK_ID}.manifest.json"` } })
     const result = await downloadTraceExport(TASK_ID)
 
-    expect(client.get).toHaveBeenCalledWith(`/admin/request-traces/exports/${TASK_ID}/download`, expect.objectContaining({ responseType: 'blob', headers: expect.objectContaining({ 'Cache-Control': 'no-store' }) }))
-    expect(result).toEqual({ outcome: 'ready', blob, fileName: `sub2api-request-trace-export-${TASK_ID}.jsonl` })
+    const [url, config] = client.get.mock.calls[0] as [string, { params?: unknown; responseType?: string; headers?: Record<string, string> }]
+    expect(url).toBe(`/admin/request-traces/exports/${TASK_ID}/download`)
+    expect(config.params).toBeUndefined()
+    expect(config.responseType).toBe('blob')
+    expect(config.headers).toEqual(expect.objectContaining({ 'Cache-Control': 'no-store' }))
+    expect(result).toEqual({ outcome: 'ready', blob, fileName: `sub2api-request-trace-export-${TASK_ID}.manifest.json` })
+  })
+
+  it('downloads shard N with ?part=N from the same session-scoped route', async () => {
+    const blob = new Blob(['SYNTHETIC'])
+    client.get.mockResolvedValue({ status: 200, data: blob, headers: { 'content-disposition': `attachment; filename="sub2api-request-trace-export-${TASK_ID}-part0002.jsonl"` } })
+    const result = await downloadTraceExportPart(TASK_ID, 2)
+
+    const [url, config] = client.get.mock.calls[0] as [string, { params?: Record<string, unknown> }]
+    expect(url).toBe(`/admin/request-traces/exports/${TASK_ID}/download`)
+    expect(config.params).toEqual({ part: 2 })
+    expect(result).toEqual({ outcome: 'ready', blob, fileName: `sub2api-request-trace-export-${TASK_ID}-part0002.jsonl` })
+  })
+
+  it('refuses a shard index the server route cannot own', async () => {
+    await expect(downloadTraceExportPart(TASK_ID, 0)).rejects.toThrow()
+    await expect(downloadTraceExportPart(TASK_ID, 1001)).rejects.toThrow()
+    await expect(downloadTraceExportPart('../exports', 1)).rejects.toThrow()
+    expect(client.get).not.toHaveBeenCalled()
   })
 
   it('never follows a hostile filename out of the server header', async () => {
@@ -141,14 +251,28 @@ describe('Trace batch export API', () => {
     expect(result).toEqual({ outcome: 'ready', blob, fileName: '.._.._etc_passwd' })
   })
 
+  it('falls back to a server-shaped name when the header carries nothing usable', async () => {
+    const blob = new Blob(['SYNTHETIC'])
+    client.get.mockResolvedValue({ status: 200, data: blob, headers: {} })
+
+    await expect(downloadTraceExport(TASK_ID)).resolves.toMatchObject({
+      fileName: `sub2api-request-trace-export-${TASK_ID}.manifest.json`,
+    })
+    await expect(downloadTraceExportPart(TASK_ID, 2)).resolves.toMatchObject({
+      fileName: `sub2api-request-trace-export-${TASK_ID}-part0002.jsonl`,
+    })
+  })
+
   it('reports a lost temporary file only from the server 410 file-lost reason', async () => {
     client.get.mockResolvedValue(withReason('REQUEST_TRACE_EXPORT_FILE_LOST'))
     await expect(downloadTraceExport(TASK_ID)).resolves.toEqual({ outcome: 'file_lost' })
+    await expect(downloadTraceExportPart(TASK_ID, 1)).resolves.toEqual({ outcome: 'file_lost' })
   })
 
   it('does not claim a lost file when the 410 means the download window closed', async () => {
     client.get.mockResolvedValue(withReason('REQUEST_TRACE_EXPORT_DOWNLOAD_EXPIRED'))
     await expect(downloadTraceExport(TASK_ID)).resolves.toEqual({ outcome: 'expired' })
+    await expect(downloadTraceExportPart(TASK_ID, 1)).resolves.toEqual({ outcome: 'expired' })
   })
 
   it('does not claim a lost file from an unrecognized 410 reason', async () => {
@@ -156,9 +280,83 @@ describe('Trace batch export API', () => {
     await expect(downloadTraceExport(TASK_ID)).resolves.toEqual({ outcome: 'unavailable' })
   })
 
+  it('distinguishes a task that is not ready yet from one that expired', async () => {
+    // 409 是"任务还没产出文件"，重试即可；报成 expired 会让轮询中的任务像是已失败。
+    client.get.mockResolvedValue({ status: 409, data: JSON.stringify({ reason: 'REQUEST_TRACE_EXPORT_NOT_READY' }), headers: {} })
+    await expect(downloadTraceExport(TASK_ID)).resolves.toEqual({ outcome: 'not_ready' })
+    await expect(downloadTraceExportPart(TASK_ID, 1)).resolves.toEqual({ outcome: 'not_ready' })
+  })
+
   it('reports a refused or failed download without pretending the file arrived', async () => {
     client.get.mockRejectedValue({ status: 403, message: 'forbidden' })
     await expect(downloadTraceExport(TASK_ID)).resolves.toEqual({ outcome: 'unavailable' })
+  })
+})
+
+describe('Trace export settings API', () => {
+  beforeEach(() => Object.values(client).forEach(mock => mock.mockReset()))
+
+  const risk = {
+    acknowledged: false,
+    version: 'v2026.09.30',
+    phrase_en: 'EN statement',
+    phrase_zh: '中文声明',
+  }
+
+  it('reads the risk statement without carrying any credential or operator address', async () => {
+    client.get.mockResolvedValue({ data: { ...risk, ip_address: '203.0.113.9', user_agent: 'CANARY_UA', admin_api_key: 'sk-CANARY' } })
+    const status = await getTraceExportRisk()
+
+    const [url, config] = client.get.mock.calls[0] as [string, { headers?: Record<string, string> }]
+    expect(url).toBe('/admin/settings/request-trace/export-risk')
+    expect(config.headers).toEqual(expect.objectContaining({ 'Cache-Control': 'no-store', Pragma: 'no-cache' }))
+    expect(JSON.stringify(status)).not.toContain('203.0.113.9')
+    expect(JSON.stringify(status)).not.toContain('CANARY_UA')
+    expect(JSON.stringify(status)).not.toContain('sk-CANARY')
+    expect(status.acknowledged).toBe(false)
+    expect(status.phrase).toBeNull()
+    expect(status.accepted_at).toBeNull()
+  })
+
+  it('keeps an acknowledgement record only as bounded facts', async () => {
+    client.get.mockResolvedValue({ data: { ...risk, acknowledged: true, phrase: risk.phrase_en, admin_user_id: 3, accepted_at: '2026-09-30T00:00:00Z' } })
+    const status = await getTraceExportRisk()
+
+    expect(status).toMatchObject({ acknowledged: true, admin_user_id: 3, accepted_at: '2026-09-30T00:00:00Z' })
+  })
+
+  it('submits the typed statement and nothing else', async () => {
+    client.post.mockResolvedValue({ data: { ...risk, acknowledged: true } })
+    await acknowledgeTraceExportRisk({ language: 'zh', phrase: risk.phrase_zh })
+
+    expect(client.post).toHaveBeenCalledWith('/admin/settings/request-trace/export-risk', { language: 'zh', phrase: risk.phrase_zh }, expect.objectContaining({ headers: expect.objectContaining({ 'Cache-Control': 'no-store' }) }))
+  })
+
+  it('refuses a risk state that is not a state rather than rendering it', async () => {
+    client.get.mockResolvedValue({ data: { ...risk, acknowledged: 'yes' } })
+    await expect(getTraceExportRisk()).rejects.toThrow()
+  })
+
+  it('reads and writes the five caps, always as one complete set', async () => {
+    const stored = { max_rows: 500, max_bytes: 2_000_000, max_runtime_seconds: 60, max_shard_rows: 100, max_shard_bytes: 1_500_000, configured: true }
+    client.get.mockResolvedValue({ data: stored })
+    await expect(getTraceExportLimits()).resolves.toEqual(stored)
+    expect(client.get).toHaveBeenCalledWith('/admin/settings/request-trace/export-limits', expect.objectContaining({ headers: expect.objectContaining({ Pragma: 'no-cache' }) }))
+
+    client.put.mockResolvedValue({ data: { ...stored, max_rows: 5000 } })
+    await expect(updateTraceExportLimits(stored)).resolves.toEqual({ ...stored, max_rows: 5000 })
+    // `configured` is the server's own provenance flag, not something a client asserts.
+    expect(client.put).toHaveBeenCalledWith('/admin/settings/request-trace/export-limits', {
+      max_rows: 500, max_bytes: 2_000_000, max_runtime_seconds: 60, max_shard_rows: 100, max_shard_bytes: 1_500_000,
+    }, expect.objectContaining({ headers: expect.objectContaining({ 'Cache-Control': 'no-store' }) }))
+  })
+
+  it('refuses caps outside the range the server clamps to instead of passing them on', async () => {
+    client.get.mockResolvedValue({ data: { max_rows: 10, max_bytes: 2_000_000, max_runtime_seconds: 60, max_shard_rows: 100, max_shard_bytes: 1_500_000, configured: true } })
+    await expect(getTraceExportLimits()).rejects.toThrow()
+
+    client.get.mockResolvedValue({ data: { max_rows: 500, max_bytes: 2_000_000, max_runtime_seconds: 60, max_shard_rows: 100, max_shard_bytes: 1_500_000, configured: 'yes' } })
+    await expect(getTraceExportLimits()).rejects.toThrow()
   })
 })
 

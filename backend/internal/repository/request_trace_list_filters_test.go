@@ -32,7 +32,7 @@ func TestRequestTraceRepositoryBindsOptionalUsageAndAccountFilters(t *testing.T)
 			_, _, err := repo.ListRequestTraces(ctx, tc.filter)
 			require.Error(t, err, "the stub returns no rows")
 			require.Len(t, stub.args, 1)
-			require.Len(t, stub.args[0], 8)
+			require.Len(t, stub.args[0], 14)
 
 			boundUsage, usageOptional := stub.args[0][6].(*int64)
 			require.True(t, usageOptional, "usage_log_id must be bound as an optional value")
@@ -58,6 +58,86 @@ func TestRequestTraceRepositoryBindsOptionalUsageAndAccountFilters(t *testing.T)
 			require.NotContains(t, query, "4242")
 			require.NotContains(t, query, "73")
 			require.False(t, strings.Contains(query, "SELECT s.metadata"), "the list must not select raw metadata")
+		})
+	}
+}
+
+// 分组与客户端模型筛选按"请求时事实"绑定：具体值与"未知"各自独立，
+// 未知用 IS NULL 判定而不是伪装成某个具体值；两套条件都不把值格式化进语句。
+func TestRequestTraceRepositoryBindsGroupAndModelScopeFilters(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(91)
+	unknown := true
+	for _, tc := range []struct {
+		name   string
+		filter service.RequestTraceListFilter
+		// assert 在绑定参数上做本行独有的断言。
+		assert func(t *testing.T, args []any, query string)
+	}{
+		{
+			name:   "specific group and model",
+			filter: service.RequestTraceListFilter{Page: 1, PageSize: 20, GroupID: &groupID, RequestedModel: "Claude-Sonnet-4-5"},
+			assert: func(t *testing.T, args []any, _ string) {
+				boundGroup, ok := args[8].(*int64)
+				require.True(t, ok)
+				require.Equal(t, groupID, *boundGroup)
+				boundModel, ok := args[10].(string)
+				require.True(t, ok, "a present model filter must bind a value")
+				require.Equal(t, "Claude-Sonnet-4-5", boundModel)
+			},
+		},
+		{
+			name:   "unknown group only",
+			filter: service.RequestTraceListFilter{Page: 1, PageSize: 20, GroupUnknown: &unknown},
+			assert: func(t *testing.T, args []any, _ string) {
+				require.Nil(t, args[8], "unknown group must not bind a concrete id")
+				boundUnknown, ok := args[9].(bool)
+				require.True(t, ok, "a present unknown flag must bind a boolean")
+				require.True(t, boundUnknown)
+			},
+		},
+		{
+			name:   "specific platform",
+			filter: service.RequestTraceListFilter{Page: 1, PageSize: 20, Platform: "antigravity"},
+			assert: func(t *testing.T, args []any, query string) {
+				boundPlatform, ok := args[12].(string)
+				require.True(t, ok, "a present platform filter must bind a value")
+				require.Equal(t, "antigravity", *&boundPlatform)
+				require.Contains(t, query, "s2.metadata @> jsonb_build_object('platform', $13::text)")
+				require.NotContains(t, query, "antigravity")
+			},
+		},
+		{
+			name:   "unknown platform",
+			filter: service.RequestTraceListFilter{Page: 1, PageSize: 20, PlatformUnknown: &unknown},
+			assert: func(t *testing.T, args []any, query string) {
+				require.Nil(t, args[12], "unknown platform must not bind a concrete value")
+				boundUnknown, ok := args[13].(bool)
+				require.True(t, ok, "a present platform-unknown flag must bind a boolean")
+				require.True(t, boundUnknown)
+				require.Contains(t, query, "s3.metadata ? 'platform'")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &recordingRequestTraceQueryer{}
+			repo := &requestTraceRepository{q: stub}
+			_, _, err := repo.ListRequestTraces(ctx, tc.filter)
+			require.Error(t, err, "the stub returns no rows")
+			require.Len(t, stub.args, 1)
+			args := stub.args[0]
+			require.Len(t, args, 14)
+
+			query := stub.queries[0]
+			require.Contains(t, query, "$9::bigint IS NULL OR group_id = $9")
+			require.Contains(t, query, "$10::boolean IS NULL OR (group_id IS NULL) = $10")
+			require.Contains(t, query, "lower(requested_model) = lower($11)")
+			require.Contains(t, query, "$12::boolean IS NULL OR (requested_model IS NULL) = $12")
+			require.Contains(t, query, "$13::text IS NULL OR EXISTS (")
+			require.Contains(t, query, "$14::boolean IS NULL OR (NOT EXISTS (")
+			require.NotContains(t, query, "91")
+			require.NotContains(t, query, "Claude-Sonnet-4-5")
+			tc.assert(t, args, query)
 		})
 	}
 }

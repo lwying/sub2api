@@ -616,6 +616,20 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 新 Trace 总开关与独立风险确认；默认关闭，独立于强制审计门禁。
 		adminSettings.GET("/request-trace", h.Admin.Setting.GetRequestTraceOperatorSettings)
 		adminSettings.PUT("/request-trace", h.Admin.Setting.UpdateRequestTraceOperatorSettings)
+		// 下游测试请求 mock：默认关闭，规则回复直接发给下游，因此仅管理员会话可改。
+		adminSettings.GET("/gateway-mock", h.Admin.Setting.GetGatewayMockOperatorSettings)
+		adminSettings.PUT("/gateway-mock", h.Admin.Setting.UpdateGatewayMockOperatorSettings)
+		adminSettings.POST("/gateway-mock/presets", h.Admin.Setting.SeedGatewayMockPresets)
+		// 明文导出副本的独立风险确认：与采集确认分开，缺少它只影响导出，不停采集。
+		adminSettings.GET("/request-trace/export-risk", h.Admin.Setting.GetRequestTraceExportRisk)
+		adminSettings.POST("/request-trace/export-risk", h.Admin.Setting.AcknowledgeRequestTraceExportRisk)
+		// 导出任务上限：管理员可配置但必须有限，任务开始时取快照。
+		adminSettings.GET("/request-trace/export-limits", h.Admin.Setting.GetRequestTraceExportLimits)
+		adminSettings.PUT("/request-trace/export-limits", h.Admin.Setting.UpdateRequestTraceExportLimits)
+		// 最小命中事件只读列表：只有元数据与总数，不含关键词与回复正文，
+		// 因此与 request-trace 的运维状态端点同一先例，普通管理员凭据即可读；
+		// 上方三个改规则的入口仍要求管理员登录会话。
+		adminSettings.GET("/gateway-mock/events", h.Admin.GatewayMockEvent.List)
 	}
 }
 

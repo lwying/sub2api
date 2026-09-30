@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type unreadableTraceBody struct { reads int }
+type unreadableTraceBody struct{ reads int }
 
 func (b *unreadableTraceBody) Read([]byte) (int, error) { b.reads++; return 0, io.EOF }
-func (b *unreadableTraceBody) Close() error { return nil }
+func (b *unreadableTraceBody) Close() error             { return nil }
 
 func TestRequestTraceMiddlewareCreatesIndependentIDWithoutReadingDeniedBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)

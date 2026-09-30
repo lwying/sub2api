@@ -6159,6 +6159,17 @@
             @updated="requestTraceStatus = $event"
           />
 
+          <!-- Export risk acknowledgement and task caps: separate from the capture
+               gate, and read/written by the panel itself. -->
+          <RequestTraceExportSettings />
+
+          <GatewayMockSettings
+            :status="gatewayMockStatus"
+            :loading="gatewayMockLoading"
+            @updated="gatewayMockStatus = $event"
+          />
+          <GatewayMockEventsPanel />
+
           <!-- Web Search Emulation -->
           <div class="card">
             <div
@@ -9212,8 +9223,13 @@
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import RequestTraceOperatorSettings from '@/features/request-trace/RequestTraceOperatorSettings.vue'
+import RequestTraceExportSettings from '@/features/request-trace/RequestTraceExportSettings.vue'
 import { getOperatorSettings as getRequestTraceOperatorSettings } from '@/features/request-trace/api'
 import type { RequestTraceOperatorStatus } from '@/features/request-trace/types'
+import GatewayMockSettings from '@/features/gateway-mock/GatewayMockSettings.vue'
+import GatewayMockEventsPanel from '@/features/gateway-mock/GatewayMockEventsPanel.vue'
+import { getOperatorSettings as getGatewayMockOperatorSettings } from '@/features/gateway-mock/api'
+import type { GatewayMockOperatorStatus } from '@/features/gateway-mock/types'
 import { adminAPI } from "@/api";
 import {
   appendAuthSourceDefaultsToUpdateRequest,
@@ -9313,6 +9329,19 @@ async function loadRequestTraceOperatorSettings() {
     requestTraceStatus.value = null
   } finally {
     requestTraceLoading.value = false
+  }
+}
+const gatewayMockStatus = ref<GatewayMockOperatorStatus | null>(null)
+const gatewayMockLoading = ref(true)
+
+async function loadGatewayMockOperatorSettings() {
+  gatewayMockLoading.value = true
+  try {
+    gatewayMockStatus.value = await getGatewayMockOperatorSettings()
+  } catch {
+    gatewayMockStatus.value = null
+  } finally {
+    gatewayMockLoading.value = false
   }
 }
 const appStore = useAppStore();
@@ -13239,6 +13268,7 @@ onMounted(() => {
   loadRateLimit429AccountLimit();
   loadKeyBillingSnapshotSettings();
   loadRequestTraceOperatorSettings();
+  loadGatewayMockOperatorSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();

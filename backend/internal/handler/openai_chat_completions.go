@@ -237,10 +237,12 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		markRequestTraceRequestedModel(c, reqModel)
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		markRequestTraceSelectedPlatform(c, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if slotResult == openAISlotAcquireProfitVetoed {
@@ -252,6 +254,15 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
+			return
+		}
+
+		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
+		markGatewayMockStream(c, reqStream)
+		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolChatCompletions, reqModel, account.ID, body) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
 			return
 		}
 

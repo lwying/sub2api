@@ -913,6 +913,10 @@ export interface OpsErrorLog {
 
   client_request_id: string
   request_id: string
+  // 服务端生成的请求 Trace 标识；只有 request_trace_available 为真时才代表
+  // 那条 Trace 现在确实可读。客户端可重复的 request_id 不是 Trace 身份。
+  request_trace_id?: string
+  request_trace_available?: boolean
   message: string
 
   user_id?: number | null
