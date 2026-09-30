@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +26,11 @@ const (
 	exportSourceInternalTraceID = int64(4242)
 	// Non-ASCII on purpose: the approved detail carries UTF-8 payload text only.
 	exportSourceSentinel = "合成哨兵-ünïcode-✓"
+)
+
+var (
+	exportSourceCreatedAt    = time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	exportSourceCleanupAfter = exportSourceCreatedAt.Add(30 * 24 * time.Hour)
 )
 
 var errExportSourceStubQuery = errors.New("stub query must not be given rows")
@@ -46,7 +53,8 @@ func (q *recordingTraceExportSourceQueryer) QueryContext(_ context.Context, quer
 	return nil, sql.ErrNoRows
 }
 
-func newRequestTraceExportSourceMock(t *testing.T) (service.RequestTraceExportSource, sqlmock.Sqlmock, *[]string) {
+// 返回具体类型：本文件的测试直接打具体实现，接口一致性由 var _ 断言保证。
+func newRequestTraceExportSourceMock(t *testing.T) (*requestTraceExportSource, sqlmock.Sqlmock, *[]string) {
 	t.Helper()
 	queries := make([]string, 0, 2)
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherFunc(
@@ -56,12 +64,42 @@ func newRequestTraceExportSourceMock(t *testing.T) (service.RequestTraceExportSo
 		})))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	return NewRequestTraceExportSource(db), mock, &queries
+	return &requestTraceExportSource{q: db}, mock, &queries
 }
 
 func exportSourceEnvelopeRows(usageLogID any) *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "route_family", "inbound_endpoint", "capture_state", "client_status", "usage_log_id"}).
-		AddRow(exportSourceInternalTraceID, "messages", "/v1/messages", "stored", 200, usageLogID)
+	return exportSourceEnvelopeRowsWithPlatforms(usageLogID, nil)
+}
+
+func exportSourceEnvelopeRowsWithPlatforms(usageLogID, platforms any) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "route_family", "inbound_endpoint", "capture_state", "client_status", "usage_log_id",
+		"created_at", "completed_at", "cleanup_after", "group_id", "requested_model", "observed_platforms", "user_id", "api_key_id"}).
+		AddRow(exportSourceInternalTraceID, "messages", "/v1/messages", "stored", 200, usageLogID,
+			exportSourceCreatedAt, nil, exportSourceCleanupAfter, nil, nil, platforms, nil, nil)
+}
+
+// 导出详情与管理员详情披露同款的请求时平台历史：非 NULL 的去重平台按原样导出；
+// NULL 保持缺席（未知）；损坏的数组按"不可用"处理，绝不尽力解释后写进文件。
+func TestRequestTraceExportSourceReadsEnvelopePlatformHistory(t *testing.T) {
+	source, mock, _ := newRequestTraceExportSourceMock(t)
+	mock.ExpectQuery("request trace envelope").WillReturnRows(
+		exportSourceEnvelopeRowsWithPlatforms(nil, []byte(`["anthropic","opencode_go"]`)))
+	mock.ExpectQuery("request trace stages").WillReturnRows(exportSourceStageRows())
+
+	detail, available, err := source.ReadApprovedDetail(context.Background(), exportSourceTraceIDFirst)
+	require.NoError(t, err)
+	require.True(t, available)
+	require.Equal(t, []string{"anthropic", "opencode_go"}, detail.ObservedPlatforms)
+
+	for _, malformed := range []string{`[]`, `["bad platform"]`, `["anthropic","anthropic"]`, `{"a":1}`} {
+		malformedSource, malformedMock, _ := newRequestTraceExportSourceMock(t)
+		malformedMock.ExpectQuery("request trace envelope").WillReturnRows(
+			exportSourceEnvelopeRowsWithPlatforms(nil, []byte(malformed)))
+		detail, available, err := malformedSource.ReadApprovedDetail(context.Background(), exportSourceTraceIDFirst)
+		require.ErrorIs(t, err, service.ErrRequestTraceInvalidRecord, "malformed platform history %s must fail closed", malformed)
+		require.False(t, available)
+		require.Equal(t, service.RequestTraceExportApprovedDetail{}, detail)
+	}
 }
 
 func exportSourceStageRows() *sqlmock.Rows {
@@ -85,9 +123,10 @@ func TestNewRequestTraceExportSourceWithoutDatabaseFailsClosed(t *testing.T) {
 	source := NewRequestTraceExportSource(nil)
 	require.NotNil(t, source)
 
-	ids, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{}, "", 10)
+	ids, next, err := source.NextTracePage(context.Background(), service.RequestTraceExportFilter{}, "", 10)
 	require.ErrorIs(t, err, errRequestTraceExportSourceUnavailable)
 	require.Nil(t, ids)
+	require.Empty(t, next)
 
 	detail, available, err := source.ReadApprovedDetail(context.Background(), exportSourceTraceIDFirst)
 	require.ErrorIs(t, err, errRequestTraceExportSourceUnavailable)
@@ -95,7 +134,7 @@ func TestNewRequestTraceExportSourceWithoutDatabaseFailsClosed(t *testing.T) {
 	require.Equal(t, service.RequestTraceExportApprovedDetail{}, detail)
 }
 
-func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *testing.T) {
+func TestRequestTraceExportSourceNextTracePageBindsCursorAndMetadataFilters(t *testing.T) {
 	stub := &recordingTraceExportSourceQueryer{err: errExportSourceStubQuery}
 	source := &requestTraceExportSource{q: stub}
 	from := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
@@ -105,8 +144,9 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 		TraceID: exportSourceTraceIDThird, RouteFamily: string(service.RequestTraceMessages), ClientStatus: requestTraceExportTestStatus(200),
 		CreatedFrom: &from, CreatedTo: &to, UsageLinked: &linked,
 	}
+	cursor := "v1:1759132800000000:4242"
 
-	_, err := source.NextTraceIDs(context.Background(), filter, exportSourceTraceIDSecond, 128)
+	_, _, err := source.NextTracePage(context.Background(), filter, cursor, 128)
 	require.ErrorIs(t, err, errExportSourceStubQuery)
 	require.Len(t, stub.queries, 1)
 
@@ -118,23 +158,26 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	require.Contains(t, normalized, "($4::timestamptz IS NULL OR created_at >= $4)")
 	require.Contains(t, normalized, "($5::timestamptz IS NULL OR created_at < $5)")
 	require.Contains(t, normalized, "($6::boolean IS NULL OR (usage_log_id IS NOT NULL) = $6)")
-	require.Contains(t, normalized, "trace_id > $16")
-	require.Contains(t, normalized, "ORDER BY trace_id LIMIT $17")
-	// 筛选只用类型化事实：账号/平台只匹配 wire_attempt 阶段的 JSONB 键，
-	// 绝不 SELECT 明细正文，也没有任何通配。
-	require.Contains(t, normalized, "sa.stage = 'wire_attempt'")
+	// 次序键必须与 Trace 列表逐字一致，游标按 (created_at, 内部 id) 行构造比较。
+	require.Contains(t, normalized, "(created_at, id) < ($21::timestamptz, $22::bigint)")
+	require.Contains(t, normalized, "ORDER BY created_at DESC, id DESC LIMIT $23")
+	// 账号筛选只匹配 wire_attempt 的类型化事实；平台筛选与列表同源，取 wire_attempt
+	// 阶段 platform 与信封 observed_platforms 的并集（含"选中但未发出"的错误 Trace）。
+	require.Contains(t, normalized, "s.stage = 'wire_attempt'")
 	require.Contains(t, normalized, "jsonb_build_object('account_id', $8::bigint)")
-	require.Contains(t, normalized, "sp.stage = 'wire_attempt'")
+	require.Contains(t, normalized, "s2.stage = 'wire_attempt'")
 	require.Contains(t, normalized, "jsonb_build_object('platform', $13::text)")
+	require.Contains(t, normalized, "OR observed_platforms @> jsonb_build_array($13::text)")
+	require.Contains(t, normalized, "AND observed_platforms IS NULL")
 	require.NotContains(t, normalized, "payload")
 	require.NotContains(t, normalized, "SELECT *")
-	require.NotContains(t, normalized, "SELECT sa.metadata")
-	// Values are bound, never interpolated into the statement text.
-	require.NotContains(t, normalized, exportSourceTraceIDSecond)
+	require.NotContains(t, normalized, "SELECT s.metadata")
+	// 游标与筛选值只会被绑定，绝不拼进语句。
+	require.NotContains(t, normalized, cursor)
 	require.NotContains(t, normalized, exportSourceTraceIDThird)
 	require.NotContains(t, normalized, "messages")
 
-	require.Len(t, stub.args[0], 17)
+	require.Len(t, stub.args[0], 23)
 	require.Equal(t, exportSourceTraceIDThird, stub.args[0][0])
 	require.Equal(t, string(service.RequestTraceMessages), stub.args[0][1])
 	status, ok := stub.args[0][2].(*int)
@@ -144,47 +187,140 @@ func TestRequestTraceExportSourceNextTraceIDsBindsCursorAndMetadataFilters(t *te
 	require.Equal(t, from.UTC(), stub.args[0][3])
 	require.Equal(t, to.UTC(), stub.args[0][4])
 	require.Equal(t, true, stub.args[0][5])
-	// 未给出的新条件一律绑定 NULL：它们不得退化成"匹配全部"以外的任何含义。
+	// 未给出的条件一律绑定 NULL：它们不得退化成"匹配全部"以外的任何含义。
 	require.Nil(t, stub.args[0][6], "an absent usage_log_id must bind SQL NULL")
 	require.Nil(t, stub.args[0][7], "an absent account_id must bind SQL NULL")
-	require.Nil(t, stub.args[0][8])
-	require.Nil(t, stub.args[0][9])
-	require.Nil(t, stub.args[0][10])
-	require.Nil(t, stub.args[0][11])
-	require.Nil(t, stub.args[0][12])
-	require.Nil(t, stub.args[0][13])
-	require.Nil(t, stub.args[0][14], "an absent selected-id set must bind SQL NULL")
-	require.Equal(t, exportSourceTraceIDSecond, stub.args[0][15])
-	require.Equal(t, 128, stub.args[0][16])
+	for index := 8; index <= 19; index++ {
+		require.Nil(t, stub.args[0][index])
+	}
+	require.Equal(t, time.UnixMicro(1759132800000000).UTC(), stub.args[0][20])
+	require.Equal(t, int64(4242), stub.args[0][21])
+	require.Equal(t, 128, stub.args[0][22])
 }
 
-func TestRequestTraceExportSourceNextTraceIDsOmitsAbsentFilters(t *testing.T) {
+// 所有可选条件缺席时必须绑定 SQL NULL，游标是其后第一个非空参数；首屏游标本身
+// 也必须是 NULL，而不是空串或某个默认值。
+func TestRequestTraceExportSourceNextTracePageOmitsAbsentFilters(t *testing.T) {
 	stub := &recordingTraceExportSourceQueryer{err: errExportSourceStubQuery}
 	source := &requestTraceExportSource{q: stub}
 
-	_, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{}, "", 3)
+	_, _, err := source.NextTracePage(context.Background(), service.RequestTraceExportFilter{}, "", 3)
 	require.ErrorIs(t, err, errExportSourceStubQuery)
 	require.Len(t, stub.args, 1)
-	require.Len(t, stub.args[0], 17)
+	require.Len(t, stub.args[0], 23)
 	require.Equal(t, "", stub.args[0][0])
 	require.Equal(t, "", stub.args[0][1])
 	status, ok := stub.args[0][2].(*int)
 	require.True(t, ok)
 	require.Nil(t, status, "an omitted status filter must bind SQL NULL")
-	require.Nil(t, stub.args[0][3])
-	require.Nil(t, stub.args[0][4])
-	require.Nil(t, stub.args[0][5])
-	// 所有可选条件缺席时必须绑定 SQL NULL，游标是其后第一个非空参数。
-	for index := 6; index <= 14; index++ {
+	for index := 3; index <= 19; index++ {
 		require.Nil(t, stub.args[0][index], "an omitted optional filter must bind SQL NULL")
 	}
-	require.Equal(t, "", stub.args[0][15])
-	require.Equal(t, 3, stub.args[0][16])
+	require.Nil(t, stub.args[0][20], "首屏没有游标时必须绑定 SQL NULL")
+	require.Nil(t, stub.args[0][21])
+	require.Equal(t, 3, stub.args[0][22])
 }
 
-func TestRequestTraceExportSourceNextTraceIDsRejectsUnboundedOrMalformedInput(t *testing.T) {
-	from := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
-	earlier := from.Add(-time.Hour)
+func TestRequestTraceExportSourceNextTracePagePropagatesQueryFailure(t *testing.T) {
+	failure := errors.New("connection reset")
+	stub := &recordingTraceExportSourceQueryer{err: failure}
+	source := &requestTraceExportSource{q: stub}
+
+	ids, next, err := source.NextTracePage(context.Background(), service.RequestTraceExportFilter{}, "", 10)
+	require.ErrorIs(t, err, failure)
+	require.Nil(t, ids)
+	require.Empty(t, next)
+}
+
+// 所选 ID 必须以驱动可序列化的数组绑定；裸 []string 会被 lib/pq 在转换 $15 时
+// 拒绝（"unsupported type []string"）。sqlmock 不执行 SQL，所以这里断言绑定形态。
+func TestRequestTraceExportSourceNextTracePageBindsSelectedIDsAsDriverArray(t *testing.T) {
+	stub := &recordingTraceExportSourceQueryer{err: errExportSourceStubQuery}
+	source := &requestTraceExportSource{q: stub}
+
+	_, _, err := source.NextTracePage(context.Background(),
+		service.RequestTraceExportFilter{TraceIDs: []string{exportSourceTraceIDFirst, exportSourceTraceIDThird}}, "", 10)
+	require.ErrorIs(t, err, errExportSourceStubQuery)
+	require.Len(t, stub.args[0], 23)
+
+	valuer, ok := stub.args[0][19].(driver.Valuer)
+	require.True(t, ok, "所选 ID 必须绑成驱动可序列化的数组，而不是裸 []string")
+	value, err := valuer.Value()
+	require.NoError(t, err)
+	require.NotNil(t, value, "有选中 ID 时不得绑成 NULL")
+	rendered, ok := value.(string)
+	require.True(t, ok)
+	require.Contains(t, rendered, exportSourceTraceIDFirst)
+	require.Contains(t, rendered, exportSourceTraceIDThird)
+}
+
+func TestRequestTraceExportSourceNextTracePageReturnsListOrderAndNextCursor(t *testing.T) {
+	source, mock, queries := newRequestTraceExportSourceMock(t)
+	newest := time.Date(2026, 9, 29, 12, 3, 0, 0, time.UTC)
+	tied := newest.Add(-2 * time.Minute)
+	mock.ExpectQuery("request trace export page").WillReturnRows(
+		sqlmock.NewRows([]string{"trace_id", "created_at", "id"}).
+			AddRow(exportSourceTraceIDSecond, newest, int64(9)).
+			AddRow(exportSourceTraceIDFirst, newest, int64(4)).
+			AddRow(exportSourceTraceIDThird, tied, int64(2)))
+
+	ids, next, err := source.NextTracePage(context.Background(), service.RequestTraceExportFilter{}, "", 3)
+	require.NoError(t, err)
+	require.Equal(t, []string{exportSourceTraceIDSecond, exportSourceTraceIDFirst, exportSourceTraceIDThird}, ids,
+		"同一 created_at 上内部 id 更大者在前，与列表的 id DESC 一致")
+	require.Equal(t, encodeRequestTraceExportCursor(tied, 2), next)
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.Contains(t, normalizeSQLWhitespace((*queries)[0]), "ORDER BY created_at DESC, id DESC")
+}
+
+func TestRequestTraceExportSourceNextTracePageEmptyPageEndsIteration(t *testing.T) {
+	source, mock, _ := newRequestTraceExportSourceMock(t)
+	mock.ExpectQuery("request trace export page").WillReturnRows(
+		sqlmock.NewRows([]string{"trace_id", "created_at", "id"}))
+
+	ids, next, err := source.NextTracePage(context.Background(), service.RequestTraceExportFilter{}, "v1:1:1", 128)
+	require.NoError(t, err)
+	require.Empty(t, ids)
+	require.Empty(t, next, "空页表示遍历结束，不返回游标")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRequestTraceExportSourceNextTracePageRefusesNonDescendingPage(t *testing.T) {
+	newest := time.Date(2026, 9, 29, 12, 3, 0, 0, time.UTC)
+	older := newest.Add(-time.Minute)
+	cases := []struct {
+		name string
+		rows *sqlmock.Rows
+	}{
+		{name: "ascending created_at", rows: sqlmock.NewRows([]string{"trace_id", "created_at", "id"}).
+			AddRow(exportSourceTraceIDFirst, older, int64(1)).
+			AddRow(exportSourceTraceIDSecond, newest, int64(2))},
+		{name: "ascending internal id on a tied created_at", rows: sqlmock.NewRows([]string{"trace_id", "created_at", "id"}).
+			AddRow(exportSourceTraceIDFirst, newest, int64(1)).
+			AddRow(exportSourceTraceIDSecond, newest, int64(2))},
+		{name: "repeated row", rows: sqlmock.NewRows([]string{"trace_id", "created_at", "id"}).
+			AddRow(exportSourceTraceIDFirst, newest, int64(5)).
+			AddRow(exportSourceTraceIDFirst, newest, int64(5))},
+		{name: "malformed id", rows: sqlmock.NewRows([]string{"trace_id", "created_at", "id"}).
+			AddRow("not-a-trace-id", newest, int64(5))},
+		{name: "non positive internal id", rows: sqlmock.NewRows([]string{"trace_id", "created_at", "id"}).
+			AddRow(exportSourceTraceIDFirst, newest, int64(0))},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			source, mock, _ := newRequestTraceExportSourceMock(t)
+			mock.ExpectQuery("request trace export page").WillReturnRows(testCase.rows)
+
+			ids, next, err := source.NextTracePage(context.Background(), service.RequestTraceExportFilter{}, "", 128)
+			require.ErrorIs(t, err, service.ErrRequestTraceInvalidRecord)
+			require.Nil(t, ids)
+			require.Empty(t, next)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestRequestTraceExportSourceNextTracePageRejectsUnboundedOrMalformedInput(t *testing.T) {
 	cases := []struct {
 		name   string
 		filter service.RequestTraceExportFilter
@@ -194,87 +330,74 @@ func TestRequestTraceExportSourceNextTraceIDsRejectsUnboundedOrMalformedInput(t 
 		{name: "zero limit", limit: 0},
 		{name: "negative limit", limit: -1},
 		{name: "limit above page bound", limit: requestTraceExportSourceMaxLimit + 1},
-		{name: "malformed cursor", after: "not-a-trace-id", limit: 10},
-		{name: "short cursor", after: "abc", limit: 10},
-		{name: "uppercase cursor", after: "0123456789ABCDEF0123456789ABCDEF", limit: 10},
+		{name: "malformed cursor", after: "not-a-cursor", limit: 10},
+		{name: "fixed width cursor is not a cursor", after: exportSourceTraceIDFirst, limit: 10},
 		{name: "malformed trace id filter", filter: service.RequestTraceExportFilter{TraceID: "zz"}, limit: 10},
 		{name: "unsupported route family", filter: service.RequestTraceExportFilter{RouteFamily: "gemini"}, limit: 10},
 		{name: "client status above range", filter: service.RequestTraceExportFilter{ClientStatus: requestTraceExportTestStatus(600)}, limit: 10},
 		{name: "negative client status", filter: service.RequestTraceExportFilter{ClientStatus: requestTraceExportTestStatus(-1)}, limit: 10},
-		{name: "inverted window", filter: service.RequestTraceExportFilter{CreatedFrom: &from, CreatedTo: &earlier}, limit: 10},
-		{name: "empty window", filter: service.RequestTraceExportFilter{CreatedFrom: &from, CreatedTo: &from}, limit: 10},
 	}
-
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			stub := &recordingTraceExportSourceQueryer{}
 			source := &requestTraceExportSource{q: stub}
 
-			ids, err := source.NextTraceIDs(context.Background(), testCase.filter, testCase.after, testCase.limit)
+			ids, next, err := source.NextTracePage(context.Background(), testCase.filter, testCase.after, testCase.limit)
 			require.ErrorIs(t, err, service.ErrRequestTraceInvalidRecord)
 			require.Nil(t, ids)
+			require.Empty(t, next)
 			require.Empty(t, stub.queries, "rejected input must not reach SQL")
 		})
 	}
 }
 
-func TestRequestTraceExportSourceNextTraceIDsReturnsAscendingPageAndCapsLimit(t *testing.T) {
-	source, mock, queries := newRequestTraceExportSourceMock(t)
-	mock.ExpectQuery("request trace export page").WillReturnRows(
-		sqlmock.NewRows([]string{"trace_id"}).
-			AddRow(exportSourceTraceIDFirst).
-			AddRow(exportSourceTraceIDSecond))
-
-	ids, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{RouteFamily: string(service.RequestTraceChatCompletions)}, "", 2)
-	require.NoError(t, err)
-	require.Equal(t, []string{exportSourceTraceIDFirst, exportSourceTraceIDSecond}, ids)
-	require.NoError(t, mock.ExpectationsWereMet())
-	require.Len(t, *queries, 1)
-	require.Contains(t, normalizeSQLWhitespace((*queries)[0]), "ORDER BY trace_id LIMIT $17")
-}
-
-func TestRequestTraceExportSourceNextTraceIDsEmptyPageEndsIteration(t *testing.T) {
-	source, mock, _ := newRequestTraceExportSourceMock(t)
-	mock.ExpectQuery("request trace export page").WillReturnRows(sqlmock.NewRows([]string{"trace_id"}))
-
-	ids, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{}, exportSourceTraceIDThird, 128)
-	require.NoError(t, err)
-	require.Empty(t, ids)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestRequestTraceExportSourceNextTraceIDsRefusesNonMonotonicPage(t *testing.T) {
+// 空时间窗（from >= to）是合法查询的空结果，不是非法输入：返回空页而不是错误，
+// 且不触达 SQL。"查询全部"的内部上界（任务创建时刻）与一个落在未来的下界就会
+// 形成这种区间，导出必须能以 0 行、清单"完整"收尾。
+func TestRequestTraceExportSourceNextTracePageReturnsEmptyPageForNonPositiveWindow(t *testing.T) {
+	from := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	for _, testCase := range []struct {
-		name string
-		rows []string
+		name  string
+		from  time.Time
+		until time.Time
 	}{
-		{name: "descending", rows: []string{exportSourceTraceIDThird, exportSourceTraceIDFirst}},
-		{name: "repeated id", rows: []string{exportSourceTraceIDThird, exportSourceTraceIDThird}},
-		{name: "malformed id", rows: []string{"not-a-trace-id"}},
+		{name: "inverted window", from: from, until: from.Add(-time.Hour)},
+		{name: "empty window", from: from, until: from},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			source, mock, _ := newRequestTraceExportSourceMock(t)
-			rows := sqlmock.NewRows([]string{"trace_id"})
-			for _, id := range testCase.rows {
-				rows.AddRow(id)
-			}
-			mock.ExpectQuery("request trace export page").WillReturnRows(rows)
+			stub := &recordingTraceExportSourceQueryer{}
+			source := &requestTraceExportSource{q: stub}
+			filter := service.RequestTraceExportFilter{CreatedFrom: &testCase.from, CreatedTo: &testCase.until}
 
-			ids, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{}, "", 128)
-			require.ErrorIs(t, err, service.ErrRequestTraceInvalidRecord)
+			ids, next, err := source.NextTracePage(context.Background(), filter, "", 10)
+			require.NoError(t, err)
 			require.Nil(t, ids)
-			require.NoError(t, mock.ExpectationsWereMet())
+			require.Empty(t, next)
+			require.Empty(t, stub.queries, "an empty window must not reach SQL")
 		})
 	}
 }
 
-func TestRequestTraceExportSourceNextTraceIDsPropagatesQueryFailure(t *testing.T) {
-	failure := errors.New("connection reset")
-	stub := &recordingTraceExportSourceQueryer{err: failure}
-	source := &requestTraceExportSource{q: stub}
+func TestRequestTraceExportCursorRoundTripsAndRejectsMalformedTokens(t *testing.T) {
+	createdAt := time.Date(2026, 9, 29, 12, 3, 0, 123456000, time.UTC)
+	token := encodeRequestTraceExportCursor(createdAt, 4242)
+	decoded, ok := decodeRequestTraceExportCursor(token)
+	require.True(t, ok)
+	require.Equal(t, createdAt.UnixMicro(), decoded.createdAtMicros)
+	require.Equal(t, int64(4242), decoded.internalID)
+	// 游标自证次序键：(created_at, 内部 id) 严格更小者才算"在游标之后"。
+	require.True(t, decoded.strictlyBefore(createdAt.Add(-time.Microsecond), 9999))
+	require.False(t, decoded.strictlyBefore(createdAt, 4242))
+	require.False(t, decoded.strictlyBefore(createdAt, 4243))
+	require.True(t, decoded.strictlyBefore(createdAt, 4241))
 
-	_, err := source.NextTraceIDs(context.Background(), service.RequestTraceExportFilter{}, "", 10)
-	require.ErrorIs(t, err, failure)
+	for _, malformed := range []string{
+		"", "v1:", "v1:1", "v1:1:", "v1::1", "v1:1:2:3", "v1:0:1", "v1:1:0", "v1:-1:1", "v1:1:+2",
+		"v1: 1:1", "v2:1:1", exportSourceTraceIDFirst, strings.Repeat("9", requestTraceExportCursorMaxLen+1),
+	} {
+		_, ok := decodeRequestTraceExportCursor(malformed)
+		require.False(t, ok, "token %q 必须被拒绝", malformed)
+	}
 }
 
 func TestRequestTraceExportSourceIncludesBoundedRedactedAttemptFacts(t *testing.T) {
@@ -356,7 +479,8 @@ func TestRequestTraceExportSourceRefusesMalformedDecisionRows(t *testing.T) {
 func TestRequestTraceExportSourceReadApprovedDetailCountsDeletedTrace(t *testing.T) {
 	source, mock, queries := newRequestTraceExportSourceMock(t)
 	mock.ExpectQuery("request trace envelope").WillReturnRows(sqlmock.NewRows([]string{
-		"id", "route_family", "inbound_endpoint", "capture_state", "client_status", "usage_log_id"}))
+		"id", "route_family", "inbound_endpoint", "capture_state", "client_status", "usage_log_id",
+		"created_at", "completed_at", "cleanup_after", "group_id", "requested_model", "observed_platforms"}))
 
 	detail, available, err := source.ReadApprovedDetail(context.Background(), exportSourceTraceIDFirst)
 	require.NoError(t, err)
@@ -385,6 +509,12 @@ func TestRequestTraceExportSourceReadApprovedDetailAdmitsOnlyApprovedFields(t *t
 	require.Equal(t, 200, detail.ClientStatus)
 	require.NotNil(t, detail.UsageLogID)
 	require.Equal(t, usageLogID, *detail.UsageLogID)
+	require.Equal(t, exportSourceCreatedAt, detail.CreatedAt)
+	require.Nil(t, detail.CompletedAt)
+	// 与详情同一条规则：已关联使用记录的 Trace 不单独披露 cleanup_after。
+	require.Nil(t, detail.CleanupAfter)
+	require.Nil(t, detail.GroupID)
+	require.Empty(t, detail.RequestedModel)
 	require.Len(t, detail.Stages, 3)
 
 	first := detail.Stages[0]
@@ -414,11 +544,13 @@ func TestRequestTraceExportSourceReadApprovedDetailAdmitsOnlyApprovedFields(t *t
 	// metadata map or internal identifier may ride along.
 	encoded, err := json.Marshal(detail)
 	require.NoError(t, err)
-	require.Equal(t, []string{"capture_state", "client_status", "inbound_endpoint", "route_family", "stages", "trace_id", "usage_log_id"}, jsonKeys(t, encoded))
+	// 键集合就是"详情同款字段契约"本身：详情恒定输出的信封键，导出也恒定输出，
+	// 即便这一行的 completed_at / cleanup_after 是 nil（详情同样输出 null）。
+	require.Equal(t, []string{"api_key_id", "capture_state", "cleanup_after", "client_status", "completed_at", "created_at", "inbound_endpoint", "route_family", "stages", "trace_id", "usage_log_id", "user_id"}, jsonKeys(t, encoded))
 	require.Equal(t, []string{"attempt_index", "dropped_events", "observed_bytes", "ordinal", "payload_text", "reason",
 		"redaction_unverified", "retained_bytes", "stage", "state", "view_name"}, jsonKeys(t, []byte(mustJSON(t, detail.Stages[0]))))
 	raw := string(encoded)
-	for _, forbidden := range []string{"metadata", "url", "header", "authorization", "cookie", "api_key", "query", "internal", "created_at"} {
+	for _, forbidden := range []string{"metadata", "url", "header", "authorization", "cookie", "api_key_name", "query", "internal"} {
 		require.NotContains(t, raw, forbidden, "approved detail must not expose %q", forbidden)
 	}
 	require.NotContains(t, raw, "�", "payload text must never be silently lossily re-encoded")
@@ -448,7 +580,10 @@ func TestRequestTraceExportSourceReadApprovedDetailKeepsEmptyStageListArray(t *t
 	encoded, err := json.Marshal(detail)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), `"stages":[]`, "an unlinked trace with no stages still serializes as an empty array")
-	require.NotContains(t, string(encoded), "usage_log_id")
+	// 未关联 usage 的 Trace，其 usage_log_id 与详情一样是显式的 null，而不是缺键。
+	require.Contains(t, string(encoded), `"usage_log_id":null`)
+	require.NotContains(t, string(encoded), "group_id")
+	require.NotContains(t, string(encoded), "requested_model")
 }
 
 func TestRequestTraceExportSourceReadApprovedDetailRejectsMalformedTraceID(t *testing.T) {

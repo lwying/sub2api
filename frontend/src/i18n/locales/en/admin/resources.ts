@@ -558,6 +558,21 @@ export default {
       clickToViewBalance: 'Click to view balance history',
       failedToLoadUser: 'Failed to load user info',
       userDeletedBadge: 'Deleted',
+      detail: {
+        title: 'Usage detail', viewTrace: 'View Trace', backToUsage: 'Back to usage detail', traceUnavailable: 'No readable Trace (it may not have been captured, persisted, or retained)',
+        forcedAudit: 'Forced audit metadata', forcedUnavailable: 'This forced audit evidence is not currently readable',
+        forcedReasons: {
+          missing_reservation: 'The pre-send reservation is missing; final evidence is incomplete',
+          finalization_failed: 'Linking the usage record or finalizing forced evidence failed',
+          write_failed_after_response_started: 'Pre-send metadata write failed after the response started; the response could not be rolled back',
+          reservation_missing_after_response_started: 'The reservation went missing after the response started; the response could not be rolled back',
+          cyber_policy_audit_partial: 'An upstream policy rejection left only partial attempt facts',
+          unknown: 'The reason cannot be confirmed',
+        },
+        time: 'Time', requestId: 'Request ID', user: 'User', apiKey: 'API Key', account: 'Upstream account', group: 'Group',
+        model: 'Model', inbound: 'Inbound endpoint', upstream: 'Upstream endpoint', inputTokens: 'Input tokens', outputTokens: 'Output tokens',
+        cacheReadTokens: 'Cache read tokens', cacheCreationTokens: 'Cache creation tokens', cost: 'Actual cost', duration: 'Duration (ms)', firstToken: 'Time to first token (ms)',
+      },
       requestAudit: {
         title: 'Request audit',
         viewTrace: 'View request Trace',

@@ -67,12 +67,15 @@ func TestNoRegisteredRouteCarriesLegacySensitiveCaptureSegments(t *testing.T) {
 	}
 	// 阳性对照：路由表确实被枚举到了，否则上面的遍历是空集。
 	require.NotEmpty(t, registeredPaths)
-	require.True(t, registered[http.MethodGet+" /api/v1/admin/usage/:id/request-audit"],
-		"阳性对照：既有运维入口应当仍在路由表里")
+	require.False(t, registered[http.MethodGet+" /api/v1/admin/usage/:id/request-audit"],
+		"旧请求审计读取入口已退役")
+	require.True(t, registered[http.MethodGet+" /api/v1/admin/usage/:id/request-audit/forced"],
+		"阳性对照：仅强制审计元数据运维入口保留")
 
 	// 参数具体化后的直接访问必须落到 NoRoute 哨兵。比既有用例多出的形态：
 	// 真实 id、比登记路径更深的子路径（value-detail/reveal）。
 	legacyDirectHits := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/admin/usage/123/request-audit"},
 		{http.MethodGet, "/api/v1/admin/usage/123/request-audit/value-detail"},
 		{http.MethodPost, "/api/v1/admin/usage/123/request-audit/value-detail"},
 		{http.MethodGet, "/api/v1/admin/usage/123/request-audit/value-detail/reveal"},
@@ -98,7 +101,7 @@ func TestNoRegisteredRouteCarriesLegacySensitiveCaptureSegments(t *testing.T) {
 	kept := []struct {
 		method, pattern, concrete string
 	}{
-		{http.MethodGet, "/api/v1/admin/usage/:id/request-audit", "/api/v1/admin/usage/123/request-audit"},
+		{http.MethodGet, "/api/v1/admin/usage/:id/request-audit/forced", "/api/v1/admin/usage/123/request-audit/forced"},
 		{http.MethodGet, "/api/v1/admin/settings/request-trace", "/api/v1/admin/settings/request-trace"},
 		{http.MethodPut, "/api/v1/admin/settings/request-trace", "/api/v1/admin/settings/request-trace"},
 	}

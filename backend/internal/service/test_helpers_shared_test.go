@@ -15,6 +15,12 @@ func (s *stubRequestAuditRepo) CreateRequestAudit(ctx context.Context, rec *Requ
 	return s.err
 }
 
+// Tests of event/attempt projection use the same builder as forced finalization;
+// they do not turn the retired ordinary audit writer back on.
+func recordAuditProjectionForTest(repo *stubRequestAuditRepo, input RequestAuditInput) {
+	repo.created = BuildRequestAuditRecord(input)
+}
+
 func (s *stubRequestAuditRepo) GetByUsageLogID(_ context.Context, usageLogID int64) (*RequestAuditRecord, error) {
 	if s.created != nil && s.created.UsageLogID == usageLogID {
 		return s.created, s.err

@@ -32,7 +32,7 @@ const exportLimitsPath = '/admin/settings/request-trace/export-limits'
 const headers = { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
 
 export async function listTraces(params: RequestTraceListParams, options?: { signal?: AbortSignal }): Promise<RequestTracePage> {
-  const { data } = await apiClient.get<unknown>(tracePath, { params, headers, signal: options?.signal })
+  const { data } = await apiClient.get<unknown>(tracePath, { params: { ...params, include_stats: true }, headers, signal: options?.signal })
   return normalizeRequestTracePage(data)
 }
 
@@ -80,22 +80,22 @@ export async function updateOperatorSettings(input: RequestTraceOperatorUpdateIn
     models: input.models,
     platform_scope: input.platform_scope,
     platforms: input.platforms,
-    platform_exclude_unknown: input.platform_exclude_unknown,
   } : body
   const { data } = await apiClient.put<unknown>(path, payload, { headers })
   return normalizeRequestTraceOperatorStatus(data)
 }
 
 /**
- * The only filter keys an export may carry: the same metadata question the list
- * answers, plus the bounded "export selected" id set. An allowlist — not a
- * spread — so a draft field, a body field or a future key on the caller's
- * object can never reach the query string.
+ * The only filter keys an export may carry in the query string: the same
+ * metadata question the list answers. An allowlist — not a spread — so a draft
+ * field, a body field or a future key on the caller's object can never reach the
+ * query string. The "export selected" id set is deliberately absent: it is a
+ * bounded structured body, never a query parameter.
  */
 const exportFilterKeys = [
   'trace_id', 'route_family', 'client_status', 'usage_linked', 'created_from', 'created_to',
   'usage_log_id', 'account_id', 'group_id', 'group_unknown', 'requested_model', 'model_unknown',
-  'platform', 'platform_unknown',
+  'platform', 'platform_unknown', 'user_id', 'user_unknown', 'api_key_id', 'api_key_unknown', 'q',
 ] as const
 
 /**
@@ -110,6 +110,9 @@ const refusalByReason: Record<string, RequestTraceExportRefusal> = {
   REQUEST_TRACE_EXPORT_DISABLED: 'disabled',
   REQUEST_TRACE_EXPORT_CAPACITY_LIMIT: 'capacity',
   REQUEST_TRACE_EXPORT_INVALID_FILTER: 'invalid_filter',
+  // A cursor this client could not have sent (it only ever echoes the server's
+  // own token) is still an unreadable request, not "no more tasks".
+  REQUEST_TRACE_EXPORT_INVALID_CURSOR: 'invalid_filter',
 }
 
 /** A refused export action, carrying only a bounded outcome — never server text. */
@@ -130,36 +133,65 @@ function refusalOf(error: unknown): RequestTraceExportRefusal {
   return refusalByReason[reason] ?? 'unavailable'
 }
 
+/** The query-string scope: every list condition the query used, and nothing else. */
+function exportQueryParams(filter: RequestTraceExportFilter): Record<string, unknown> {
+  const params: Record<string, unknown> = {}
+  for (const key of exportFilterKeys) {
+    const value = filter[key]
+    if (value === undefined || value === null || value === '') continue
+    params[key] = value
+  }
+  return params
+}
+
 /**
- * Creates a bounded background export. The server reads the bounded metadata
- * filter from the query string and accepts no request body at all, so a body or
- * full-text search cannot be expressed here. Only the originating admin session
- * may later read or download the task; the server enforces that.
+ * The bounded "export selected" set. It is an explicit id set or nothing: an
+ * empty one is not "export everything", and a malformed or repeated id means the
+ * checked set cannot be described honestly, so the call is refused with the
+ * server's own invalid-filter outcome instead of starting a task over a set the
+ * operator did not choose. The bound mirrors `service.RequestTraceExportMaxSelectedIDs`.
+ */
+function boundedTraceSelection(traceIDs: string[]): string[] {
+  if (traceIDs.length === 0) throw new TraceExportRefusedError('invalid_filter')
+  if (traceIDs.length > requestTraceExportMaxSelectedTraces) throw new TraceExportRefusedError('selection_too_large')
+  const seen = new Set<string>()
+  for (const traceID of traceIDs) {
+    if (!requestTraceExportIDPattern.test(traceID) || seen.has(traceID)) throw new TraceExportRefusedError('invalid_filter')
+    seen.add(traceID)
+  }
+  return traceIDs
+}
+
+/**
+ * Creates a bounded background export. The scope is exactly one of two mutually
+ * exclusive shapes; a request carrying both is refused by the server:
  *
- * "Export selected" is sent as the explicit id set and carries no filter at all:
- * the server ANDs the two, and a checked record is checked against the query the
- * operator actually ran. Above the server's bound the call is refused here
- * rather than trimmed to a subset the operator did not choose.
+ * - "Export the query": the bounded metadata filter rides in the query string and
+ *   the request carries no body at all, so a body or a full-text search cannot be
+ *   expressed here.
+ * - "Export selected": the explicitly checked Trace IDs ride in a bounded
+ *   structured JSON body. They never go into the URL — a checked set is not
+ *   truncated by a query-length limit, a proxy or a log — and no metadata filter
+ *   is sent beside them, so a checked record is checked against the query the
+ *   operator actually ran and the two scopes never blur into one.
+ *
+ * Only the originating admin session may later read or download the task; the
+ * server enforces that.
  */
 export async function createTraceExport(
   filter: RequestTraceExportFilter,
   options?: { signal?: AbortSignal },
 ): Promise<RequestTraceExportTask> {
-  const selected = filter.trace_ids ?? []
-  const params: Record<string, unknown> = {}
-  if (selected.length > 0) {
-    if (selected.length > requestTraceExportMaxSelectedTraces) throw new TraceExportRefusedError('selection_too_large')
-    params.trace_ids = selected.join(',')
-  } else {
-    for (const key of exportFilterKeys) {
-      const value = filter[key]
-      if (value === undefined || value === null || value === '') continue
-      params[key] = value
-    }
-  }
+  // The checked set is settled before the request, so a local refusal can never
+  // be re-labelled as a transport failure by the mapping below.
+  const selected = filter.trace_ids == null ? null : boundedTraceSelection(filter.trace_ids)
   let data: unknown
   try {
-    ({ data } = await apiClient.post<unknown>(exportPath, null, { params, headers, signal: options?.signal }))
+    if (selected !== null) {
+      ({ data } = await apiClient.post<unknown>(exportPath, { trace_ids: selected }, { headers, signal: options?.signal }))
+    } else {
+      ({ data } = await apiClient.post<unknown>(exportPath, null, { params: exportQueryParams(filter), headers, signal: options?.signal }))
+    }
   } catch (error) {
     // A cancellation is not a refusal: it must stay recognisable to the caller.
     // A transport or protocol failure is one, and says nothing about why.
@@ -175,6 +207,86 @@ export async function getTraceExport(exportID: string, options?: { signal?: Abor
   if (!requestTraceExportIDPattern.test(exportID)) throw new Error('Invalid request Trace export ID')
   const { data } = await apiClient.get<unknown>(`${exportPath}/${exportID}`, { headers, signal: options?.signal })
   return normalizeRequestTraceExportTask(data)
+}
+
+/**
+ * One recall page is at most this many tasks. The server owns the bound and
+ * refuses more rather than truncating; this mirror only keeps a hostile or
+ * broken payload from being rendered as a longer list than one page can hold.
+ */
+export const requestTraceExportRecallLimit = 100
+
+/**
+ * Mirrors the server's opaque-cursor length bound. A longer string is not a
+ * token this server minted, so it is treated as an unreadable page rather than
+ * followed.
+ */
+export const requestTraceExportRecallCursorLimit = 128
+
+/**
+ * One page of the session's export tasks, plus the token for the page after it.
+ *
+ * `nextCursor` is `null` when the server says there is no further page: that is
+ * the "no more" answer itself, not an absent field. Keeping the two apart is what
+ * stops "the list ends here" from being confused with "this response could not be
+ * read" — the second is an error, and must never be shown as a shorter list.
+ */
+export type TraceExportRecallPage = {
+  items: RequestTraceExportTask[]
+  nextCursor: string | null
+}
+
+/**
+ * Normalizes the bounded recall page. The shape is one `items` array plus one
+ * `next_cursor`. An unreadable, over-long, or cursor-less payload is a protocol
+ * failure, not an empty list: it must not be rendered as "you have no tasks",
+ * and it must not silently end the walk either.
+ */
+function normalizeTraceExportRecallPage(value: unknown): TraceExportRecallPage {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid request Trace export list')
+  const payload = value as { items?: unknown; next_cursor?: unknown }
+  if (!('next_cursor' in payload)) throw new Error('Invalid request Trace export list')
+  const { items, next_cursor: nextCursor } = payload
+  if (!Array.isArray(items) || items.length > requestTraceExportRecallLimit) throw new Error('Invalid request Trace export list')
+  if (nextCursor !== null && (typeof nextCursor !== 'string' || nextCursor.length === 0 || nextCursor.length > requestTraceExportRecallCursorLimit)) {
+    throw new Error('Invalid request Trace export list')
+  }
+  return { items: items.map(normalizeRequestTraceExportTask), nextCursor }
+}
+
+/**
+ * Reads back one page of the export tasks of **this admin login session**,
+ * newest first. `cursor` is the opaque token the server handed out for the
+ * previous page; omitting it asks for the first page, and the token is only ever
+ * passed back, never parsed or stored.
+ *
+ * The session is the credential: the server filters on the authenticated admin
+ * plus the session it derived from the session itself, so this call takes no
+ * task id, no filter and no session handle. Leaving or refreshing the page does
+ * not lose the tasks — a different session cannot list them, and an admin API
+ * key is refused outright. A refused call says why through the same bounded
+ * outcomes as the other export calls.
+ */
+export async function listTraceExports(options?: {
+  signal?: AbortSignal
+  cursor?: string | null
+  limit?: number
+}): Promise<TraceExportRecallPage> {
+  const params: Record<string, string | number> = {}
+  if (options?.cursor) params.cursor = options.cursor
+  if (options?.limit !== undefined) params.limit = options.limit
+  // No scope of its own: an empty query string means "the first page", exactly
+  // as an empty parameter object did before.
+  const query = Object.keys(params).length > 0 ? { params } : {}
+  let data: unknown
+  try {
+    ({ data } = await apiClient.get<unknown>(exportPath, { ...query, headers, signal: options?.signal }))
+  } catch (error) {
+    // Cancellation stays recognisable; anything else is a bounded refusal.
+    if (options?.signal?.aborted) throw error
+    throw new TraceExportRefusedError(refusalOf(error))
+  }
+  return normalizeTraceExportRecallPage(data)
 }
 
 /** The server refuses a download with 410 and one of these two bounded reasons. */

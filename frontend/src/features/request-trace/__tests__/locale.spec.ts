@@ -30,6 +30,7 @@ import {
   requestTraceExportDisplayStates,
   requestTraceExportIncompleteReasons,
   requestTraceExportRefusals,
+  requestTraceExportSkipReasons,
   requestTraceStageNames,
   requestTraceStageReasons,
   requestTraceStageStates,
@@ -142,6 +143,19 @@ describe('request Trace locale', () => {
     expect(missingZh, 'zh bundle is missing request Trace keys').toEqual([])
   })
 
+  it('labels every skip reason an export task can report a count for', () => {
+    // The breakdown renders each counted reason through the same closed-set label
+    // map the task's own reason code uses, so a reason without wording would show
+    // as a bare token to the operator.
+    for (const [locale, messages] of Object.entries({ en: requestTraceEn, zh: requestTraceZh })) {
+      for (const reason of requestTraceExportSkipReasons) {
+        const label = readLeaf(messages, `requestTrace.export.reason.${reason}`)
+        expect(typeof label, `${locale} skip reason ${reason}`).toBe('string')
+        expect((label as string).trim(), `${locale} skip reason ${reason}`).not.toBe('')
+      }
+    }
+  })
+
   it('labels every decision kind the backend contract can send', () => {
     for (const [locale, messages] of Object.entries({ en: requestTraceEn, zh: requestTraceZh })) {
       expect(decisionLabels(messages, 'kindLabel'), `${locale} decision kinds`).toEqual([...requestTraceDecisionKinds].sort())
@@ -197,6 +211,64 @@ describe('request Trace locale', () => {
       }
       expect(new Set(labels).size, `${locale} ${path} has repeated labels`).toBe(keys.length)
     }
+  })
+
+  it('states the unknown-platform rule instead of shipping a toggle the backend does not have', () => {
+    // The Go contract has no `platform_exclude_unknown`, so there is no toggle
+    // and no key for one. The rule it used to imply — an unknown platform is
+    // never captured under "only"/"except" — is stated in the platform note.
+    for (const [locale, messages] of Object.entries({ en: requestTraceEn, zh: requestTraceZh })) {
+      for (const key of ['excludeUnknown', 'excludeUnknownNote', 'platformUnknownPolicy']) {
+        expect(readLeaf(messages, `requestTrace.operator.scope.${key}`), `${locale} ${key}`).toBeUndefined()
+      }
+    }
+    expect(requestTraceEn.requestTrace.operator.scope.platformsNote).toContain('never captured')
+    expect(requestTraceEn.requestTrace.operator.scope.platformsNote).toContain('all platforms')
+    expect(requestTraceZh.requestTrace.operator.scope.platformsNote).toContain('不采集')
+    expect(requestTraceZh.requestTrace.operator.scope.platformsNote).toContain('所有平台')
+  })
+
+  it('names the local mock decision as a served reply, not as a missing attempt', () => {
+    // The mock kind and its reason say the gateway chose to answer locally: a
+    // label that read like a gap or a failed attempt would misstate a successful
+    // local mock as an incomplete Trace.
+    const en = requestTraceEn.requestTrace.detail
+    const zh = requestTraceZh.requestTrace.detail
+    expect(en.decision.kindLabel.mock).toBe('Local mock reply')
+    expect(zh.decision.kindLabel.mock).toBe('本地 mock 应答')
+    expect(en.reasonLabel.mock_served).toContain('no upstream attempt')
+    expect(zh.reasonLabel.mock_served).toContain('未发出上游尝试')
+  })
+
+  it('labels the shard cap as an incomplete export, not a failed task', () => {
+    const en = requestTraceEn.requestTrace.export.reason
+    const zh = requestTraceZh.requestTrace.export.reason
+    expect(en.limit_shards).toContain('shard limit')
+    expect(zh.limit_shards).toContain('分片数上限')
+  })
+
+  it('names a failed read as its own export outcome, never as a vanished record', () => {
+    // `read_failed` and `source_gone` are different facts: one is a read error on
+    // a record that was found, the other is a record that is no longer there.
+    // One label standing in for the other would misstate what happened.
+    const en = requestTraceEn.requestTrace.export.reason
+    const zh = requestTraceZh.requestTrace.export.reason
+    expect(en.read_failed).not.toBe(en.source_gone)
+    expect(zh.read_failed).not.toBe(zh.source_gone)
+    expect(en.read_failed).toContain('read')
+    expect(zh.read_failed).toContain('读取')
+  })
+
+  it('counts a skipped row as deleted or unreadable, not as deleted only', () => {
+    // `rows_skipped` covers both a vanished record and one that could not be
+    // read, so the label names both causes instead of implying deletion.
+    const en = requestTraceEn.requestTrace.export.progress.skippedCount
+    const zh = requestTraceZh.requestTrace.export.progress.skippedCount
+    expect(en).toBe('Skipped (deleted or unreadable)')
+    expect(en).toContain('deleted')
+    expect(en).toContain('unreadable')
+    expect(zh).toContain('已删除')
+    expect(zh).toContain('无法读取')
   })
 
   it('labels the gateway decision stage with the other stage names', () => {

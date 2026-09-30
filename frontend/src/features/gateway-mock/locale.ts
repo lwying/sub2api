@@ -41,6 +41,8 @@ export const gatewayMockEn = {
       failed: 'Unable to read mock hits. Whether any rule has fired is unknown.',
       empty: 'No mock hit has been recorded.',
       absentNote: '— means the gateway did not record that value; it is not an empty value.',
+      retentionNote: 'These hits follow the current usage-log retention policy: a hit is removed once it is older than that window, and while the usage auto-cleanup is off nothing is removed automatically. The cleanup column shows a deadline only when one was recorded; it is not the effective cleanup time.',
+      noDeadline: 'No deadline recorded',
       absent: '—',
       columns: {
         occurredAt: 'Time',
@@ -125,6 +127,8 @@ export const gatewayMockZh = {
       failed: '无法读取 mock 命中；是否有规则命中过未知。',
       empty: '尚未记录到任何 mock 命中。',
       absentNote: '— 表示网关当时没有记录该值，不代表它是空值。',
+      retentionNote: '这些命中记录跟随当前的使用记录保留策略清理：超过保留窗口即被删除；使用记录自动清理关闭时不会被自动删除。「清理截止」列只在确实记录到期限时显示日期，不代表实际清理时间。',
+      noDeadline: '未记录清理期限',
       absent: '—',
       columns: {
         occurredAt: '时间',

@@ -117,6 +117,16 @@ describe('gateway mock API', () => {
     ])
   })
 
+  it('keeps an unrecorded cleanup deadline as null instead of guessing one', async () => {
+    client.get.mockResolvedValue({
+      data: { items: [event({ cleanup_after: null })], total: 1, page: 1, page_size: 20 },
+    })
+    const page = await listEvents({ page: 1, page_size: 20 })
+
+    expect(page.items[0].cleanup_after).toBeNull()
+    expect('cleanup_after' in page.items[0]).toBe(true)
+  })
+
   it('refuses an unreadable rule set instead of reporting it as an empty, disabled one', async () => {
     for (const payload of [
       { ...status, enabled: 'false' },
@@ -135,6 +145,7 @@ describe('gateway mock API', () => {
     for (const payload of [
       { items: [{ ...event(), api_key_id: -1 }], total: 1, page: 1, page_size: 20 },
       { items: [{ ...event(), occurred_at: 'not a time' }], total: 1, page: 1, page_size: 20 },
+      { items: [{ ...event(), cleanup_after: 'not a time' }], total: 1, page: 1, page_size: 20 },
       { items: [], total: -1, page: 1, page_size: 20 },
       { items: [], total: 0, page: 0, page_size: 20 },
       { items: [], total: 0, page: 1 },

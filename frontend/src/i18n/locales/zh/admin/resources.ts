@@ -555,6 +555,21 @@ export default {
       clickToViewBalance: '点击查看充值记录',
       failedToLoadUser: '加载用户信息失败',
       userDeletedBadge: '已删除',
+      detail: {
+        title: '用量详情', viewTrace: '查看 Trace', backToUsage: '返回用量详情', traceUnavailable: '暂无可读取的 Trace（可能未采集、写入失败或已清理）',
+        forcedAudit: '强制审计元数据', forcedUnavailable: '这条强制审计证据目前不可读取',
+        forcedReasons: {
+          missing_reservation: '发送前预留缺失；最终证据不完整',
+          finalization_failed: '使用记录关联或强制审计收尾失败',
+          write_failed_after_response_started: '响应已开始后，发送前元数据写入失败；无法回滚响应',
+          reservation_missing_after_response_started: '响应已开始后，发送前预留缺失；无法回滚响应',
+          cyber_policy_audit_partial: '上游策略拒绝后，只有部分尝试事实',
+          unknown: '原因未能确认',
+        },
+        time: '时间', requestId: '请求 ID', user: '用户', apiKey: 'API Key', account: '上游账号', group: '分组',
+        model: '模型', inbound: '入站端点', upstream: '上游端点', inputTokens: '输入 Token', outputTokens: '输出 Token',
+        cacheReadTokens: '缓存读取 Token', cacheCreationTokens: '缓存创建 Token', cost: '实际费用', duration: '耗时 (ms)', firstToken: '首 Token (ms)',
+      },
       requestAudit: {
         title: '请求审计',
         viewTrace: '查看请求 Trace',

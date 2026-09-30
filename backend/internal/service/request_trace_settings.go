@@ -27,6 +27,13 @@ var (
 	ErrRequestTraceOperatorIdentityRequired    = infraerrors.Forbidden("REQUEST_TRACE_OPERATOR_SESSION_REQUIRED", "enabling request traces requires an authenticated admin session")
 	ErrRequestTraceSettingsUnavailable         = infraerrors.New(503, "REQUEST_TRACE_SETTINGS_UNAVAILABLE", "request trace settings are temporarily unavailable")
 	ErrRequestTraceDeploymentUnsupported       = infraerrors.Conflict("REQUEST_TRACE_DEPLOYMENT_UNSUPPORTED", "request trace capture cannot be enabled without verified usage ownership")
+
+	// 采集范围**提交**侧的校验错误。读取侧仍按既有归一化口径容忍旧配置，
+	// 只有新提交的范围必须自带可用的选定值。
+	ErrRequestTraceScopeKindInvalid       = infraerrors.BadRequest("REQUEST_TRACE_SCOPE_KIND_INVALID", "request trace capture scope must be all, include or exclude")
+	ErrRequestTraceScopeListEmpty         = infraerrors.BadRequest("REQUEST_TRACE_SCOPE_LIST_EMPTY", "a selected request trace capture scope requires at least one value")
+	ErrRequestTraceScopeEntryInvalid      = infraerrors.BadRequest("REQUEST_TRACE_SCOPE_ENTRY_INVALID", "request trace capture scope values must not be blank")
+	ErrRequestTraceGroupScopeEntryInvalid = infraerrors.BadRequest("REQUEST_TRACE_GROUP_SCOPE_ENTRY_INVALID", "request trace group scope requires positive group ids")
 )
 
 type RequestTraceSettings struct {
@@ -285,6 +292,81 @@ func normalizeRequestTraceGroupIDs(ids []int64) []int64 {
 	return out
 }
 
+// validateRequestTraceScopeSubmission 校验**本次提交**的采集范围，只在保存接缝上调用。
+//
+// 读取侧的 NormalizeRequestTraceSettings 会静默丢弃空白项、非正数分组 ID，并把未知取值
+// 落回 all。对"读旧配置"这是对的；但拿同一套行为当保存校验会把手滑变成两个都不是"拒绝"
+// 的结果：一次限制被悄悄放宽成"采集全部"，或者指定/排除列表被清空成"什么都不采"的静默
+// 空转（开关仍显示已开启）。所以提交侧必须显式报错，并且一个字节都不写。
+//
+// 未提交范围（ScopeProvided=false）的动作——包括必须随时可用的紧急关闭——不校验：
+// 它保留既有范围，可能正是旧版本写下的形态，不能在此被追认成非法。
+func validateRequestTraceScopeSubmission(input RequestTraceOperatorUpdateInput) error {
+	if !input.ScopeProvided {
+		return nil
+	}
+	modelScope, err := requestTraceSubmittedScope(input.ModelScope)
+	if err != nil {
+		return err
+	}
+	platformScope, err := requestTraceSubmittedScope(input.PlatformScope)
+	if err != nil {
+		return err
+	}
+	if modelScope != RequestTraceScopeAll {
+		if err := validateRequestTraceScopeValues(input.Models); err != nil {
+			return err
+		}
+	}
+	if platformScope != RequestTraceScopeAll {
+		if err := validateRequestTraceScopeValues(input.Platforms); err != nil {
+			return err
+		}
+	}
+	if !input.AllGroups {
+		if len(input.GroupIDs) == 0 {
+			return ErrRequestTraceScopeListEmpty
+		}
+		for _, id := range input.GroupIDs {
+			if id <= 0 {
+				return ErrRequestTraceGroupScopeEntryInvalid
+			}
+		}
+	}
+	return nil
+}
+
+// requestTraceSubmittedScope 收敛提交的过滤类型，取值口径与读取侧归一化一致
+// （大小写与首尾空白不参与判定），但**未知取值拒绝**而不是落回 all：
+// 落回 all 等于把一次限制静默放宽成采集全部。
+func requestTraceSubmittedScope(scope string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "", RequestTraceScopeAll:
+		return RequestTraceScopeAll, nil
+	case RequestTraceScopeInclude:
+		return RequestTraceScopeInclude, nil
+	case RequestTraceScopeExclude:
+		return RequestTraceScopeExclude, nil
+	default:
+		return "", ErrRequestTraceScopeKindInvalid
+	}
+}
+
+// validateRequestTraceScopeValues 校验一个"仅指定/排除指定"列表：
+// 必须有条目，且每个条目都不能是空白——空白项只会被归一化掉，
+// 看着像选中了什么，实际什么都没选。
+func validateRequestTraceScopeValues(values []string) error {
+	if len(values) == 0 {
+		return ErrRequestTraceScopeListEmpty
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return ErrRequestTraceScopeEntryInvalid
+		}
+	}
+	return nil
+}
+
 // RequestTraceSupportProbe must verify the trace table itself and its cascading usage FK.
 // Unlike the legacy probe, a missing trace table is not a supported deployment.
 type RequestTraceSupportProbe interface {
@@ -326,20 +408,40 @@ func (s *SettingService) requestTraceSupport(ctx context.Context) PlaintextCaptu
 	return PlaintextCaptureSupport{Reason: PlaintextCaptureSupportReasonProbeUnavailable}
 }
 
+// defaultRequestTraceSettings 是无记录或缺范围键时的读取缺省：开关关闭，范围"全部/所有"。
+//
+// 规格 2.2 要求采集范围的缺省均为全部（缺省均为全部）。这里不能靠 Go 零值当缺省：
+// `AllGroups` 的零值 false 加上空 `GroupIDs` 恰好是读取侧最严格的范围——指定分组却一个
+// 都没选，`InGroupScope` 对任何请求都不命中。旧版本写下的
+// `{"enabled":true,"risk_acknowledged":true}` 没有范围键，若按零值读取，升级后采集会在
+// 管理员什么都没改的情况下静默停止，且管理端看不出范围被收窄。
+//
+// 因此缺省必须在**解码前**预置：JSON 里没有的键保持缺省，只有键确实出现过的显式选择
+// 才覆盖它。这同样保证显式的 `all_groups:false`（含配空列表的无效历史值）原样保留。
+func defaultRequestTraceSettings() RequestTraceSettings {
+	return RequestTraceSettings{
+		AllGroups:     true,
+		ModelScope:    RequestTraceScopeAll,
+		PlatformScope: RequestTraceScopeAll,
+	}
+}
+
 func (s *SettingService) readRequestTraceSettings(ctx context.Context) (RequestTraceSettings, error) {
 	if s == nil || s.settingRepo == nil {
 		return RequestTraceSettings{}, ErrRequestTraceSettingsUnavailable
 	}
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyRequestTrace)
 	if errors.Is(err, ErrSettingNotFound) {
-		return RequestTraceSettings{}, nil
+		return defaultRequestTraceSettings(), nil
 	}
 	if err != nil {
 		return RequestTraceSettings{}, fmt.Errorf("get request trace settings: %w", err)
 	}
-	var stored RequestTraceSettings
+	// 先预置范围缺省再解码：缺失的范围键保留"全部/所有"，出现的键按存档值覆盖。
+	stored := defaultRequestTraceSettings()
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-		return RequestTraceSettings{}, nil
+		// 与"没有记录"同等对待：开关仍是关闭，范围是完整缺省，而不是零值空范围。
+		return defaultRequestTraceSettings(), nil
 	}
 	return NormalizeRequestTraceSettings(stored), nil
 }
@@ -473,6 +575,10 @@ func (s *SettingService) GetRequestTraceOperatorStatus(ctx context.Context) (Req
 func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context, input RequestTraceOperatorUpdateInput) (RequestTraceOperatorStatus, error) {
 	if s == nil || s.settingRepo == nil {
 		return RequestTraceOperatorStatus{}, ErrRequestTraceSettingsUnavailable
+	}
+	// 提交的范围必须自带可用的选定值；读取侧仍按既有归一化口径容忍旧配置。
+	if err := validateRequestTraceScopeSubmission(input); err != nil {
+		return RequestTraceOperatorStatus{}, err
 	}
 	updates := map[string]string{}
 	// 范围与开关同存一条记录：未提交范围字段时保留既有范围，避免关闭/开启动作顺手清空范围。

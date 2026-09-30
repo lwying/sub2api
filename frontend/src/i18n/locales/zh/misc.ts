@@ -717,6 +717,10 @@ export default {
       batchAdd: '一键添加',
       batchAddSummary: '已加入待授权列表 {added} 个 · 已跳过 {skipped} 个（已在待授权列表） · {failed} 个未能加入',
       batchAddPendingNotice: '保存后授权才会生效。',
+      // 保存被整批拒绝：点名服务端返回的失效账号，草稿与勾选都保留。
+      saveUnknownAccounts: '保存被拒绝：{count} 个已选账号已不存在（{ids}）。',
+      saveUnknownAccountsHint: '请移除或替换标出的账号后重新保存；当前没有任何授权生效。',
+      invalidPending: '服务端已拒绝',
       saveSuccess: '可见账号授权已更新',
       loadFailed: '加载可见账号授权失败',
       saveFailed: '保存可见账号授权失败',

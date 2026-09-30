@@ -82,7 +82,14 @@ export interface GatewayMockEvent {
   account_id: number
   client_ip: string
   trace_id: string
-  cleanup_after: string
+  /**
+   * Always `null`: the stored deadline is an internal estimate, not the effective
+   * cleanup time, so the server does not disclose it. Cleanup follows the current
+   * usage-log retention policy. The key stays in the contract so "no deadline is
+   * disclosed" is distinct from "the field is missing", and the panel never
+   * renders a value here even if an older server sends one.
+   */
+  cleanup_after: string | null
 }
 
 export interface GatewayMockEventPage {
@@ -123,9 +130,9 @@ function timestamp(value: unknown, message: string): string {
   return value
 }
 
-function optionalTimestamp(value: unknown): string | null {
+function optionalTimestamp(value: unknown, message: string): string | null {
   if (value == null) return null
-  return timestamp(value, 'Invalid gateway mock rule version')
+  return timestamp(value, message)
 }
 
 function normalizeGatewayMockRule(value: unknown): GatewayMockRule {
@@ -141,7 +148,7 @@ function normalizeGatewayMockRule(value: unknown): GatewayMockRule {
     normalized_keyword: typeof source.normalized_keyword === 'string' ? source.normalized_keyword : keyword,
     reply: boundedString(source.reply, gatewayMockReplyMaxLength, 'Invalid gateway mock rule reply'),
     enabled: source.enabled,
-    updated_at: optionalTimestamp(source.updated_at),
+    updated_at: optionalTimestamp(source.updated_at, 'Invalid gateway mock rule version'),
   }
 }
 
@@ -185,7 +192,8 @@ function normalizeGatewayMockEvent(value: unknown): GatewayMockEvent {
     account_id: count(source.account_id, 'Invalid gateway mock event account'),
     client_ip: eventString(source.client_ip, 64, 'Invalid gateway mock event client IP'),
     trace_id: eventString(source.trace_id, 64, 'Invalid gateway mock event Trace id'),
-    cleanup_after: timestamp(source.cleanup_after, 'Invalid gateway mock event cleanup time'),
+    // 只有确实记录到期限时才有值：null 是"没有记录到"，不是要被猜成某个日期的空值。
+    cleanup_after: optionalTimestamp(source.cleanup_after, 'Invalid gateway mock event cleanup time'),
   }
 }
 

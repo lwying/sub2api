@@ -323,10 +323,7 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 	require.Zero(t, log.OutputTokens)
 	require.Zero(t, log.TotalCost)
 	require.Zero(t, log.ActualCost)
-	require.NotNil(t, auditRepo.created)
-	require.Equal(t, int64(7001), auditRepo.created.UsageLogID)
-	require.Equal(t, RequestAuditCaptureNotCaptured, auditRepo.created.CaptureCompleteness)
-	require.Equal(t, RequestAuditNotCapturedReasonPhase1Uncovered, auditRepo.created.CaptureReason)
+	require.Nil(t, auditRepo.created, "Live 使用记录不再生成普通请求审计")
 }
 
 func TestGetLiveCallForIdentityRejectsMismatchedCaller(t *testing.T) {

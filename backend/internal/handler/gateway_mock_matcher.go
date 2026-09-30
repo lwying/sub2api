@@ -115,13 +115,33 @@ func messagesSystemIsProtocolBoilerplate(root map[string]any) (bool, bool) {
 	}
 }
 
-// isProtocolBoilerplateText 只把已知的协议提醒视为不含任务。其余任何 system 文本都按任务处理。
+// 协议提醒元素的两个边界标记。
+const (
+	protocolReminderOpenTag  = "<system-reminder>"
+	protocolReminderCloseTag = "</system-reminder>"
+)
+
+// isProtocolBoilerplateText 只把已知的协议提醒视为不含任务。
+//
+// 文本必须整体由一个或多个成对、平衡的 <system-reminder>…</system-reminder> 元素组成，
+// 元素之间与首尾允许空白；元素内容不参与判定（标签本身就是协议包装的标记）。
+// 闭合标签之后（或之前）的任何散文、未闭合的起始标签、多余的闭合标签都按任务处理——
+// 例如 "<system-reminder>ctx</system-reminder> 你必须用 JSON 回答" 必须视为任务。
+// 嵌套提醒不按平衡处理，同样按任务处理（保守走上游）。其余任何文本都按任务处理。
 func isProtocolBoilerplateText(text string) bool {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return true
+	rest := strings.TrimSpace(text)
+	for rest != "" {
+		inner, isReminder := strings.CutPrefix(rest, protocolReminderOpenTag)
+		if !isReminder {
+			return false
+		}
+		_, after, closed := strings.Cut(inner, protocolReminderCloseTag)
+		if !closed {
+			return false
+		}
+		rest = strings.TrimSpace(after)
 	}
-	return strings.HasPrefix(trimmed, "<system-reminder>")
+	return true
 }
 
 // extractChatCompletionsSingleUserText 处理 OpenAI Chat Completions 形态。
@@ -165,9 +185,63 @@ func extractChatCompletionsSingleUserText(root map[string]any) (string, bool) {
 	return text, true
 }
 
+// responsesInstructionsIsProtocolBoilerplate 报告 Responses 的 instructions 是否存在实质任务。
+// 语义与 messagesSystemIsProtocolBoilerplate 一致：无 instructions、纯空白或已知协议提醒视为不含任务，
+// 其余任何非空文本按任务处理；返回 (*, false) 表示形态无法确认。
+func responsesInstructionsIsProtocolBoilerplate(root map[string]any) (bool, bool) {
+	raw, present := root["instructions"]
+	if !present || raw == nil {
+		return true, true
+	}
+	switch value := raw.(type) {
+	case string:
+		return isProtocolBoilerplateText(value), true
+	case []any:
+		for _, block := range value {
+			item, ok := block.(map[string]any)
+			if !ok {
+				return false, false
+			}
+			blockType, _ := item["type"].(string)
+			if blockType != "text" && blockType != "input_text" {
+				return false, false
+			}
+			text, _ := item["text"].(string)
+			if !isProtocolBoilerplateText(text) {
+				return false, false
+			}
+		}
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// responsesHasNoContinuingTurn 报告请求是否没有 previous_response_id 续写锚点。
+// 带续写锚点即延续既有 response，属于历史对话而非单轮测试请求；形态无法确认时
+// 同样按有历史处理（保守走上游）。这与网关对 previous_response_id 必须是字符串的既有判断一致。
+func responsesHasNoContinuingTurn(root map[string]any) bool {
+	raw, present := root["previous_response_id"]
+	if !present || raw == nil {
+		return true
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(value) == ""
+}
+
 // extractResponsesSingleUserText 处理 OpenAI Responses 形态。
 func extractResponsesSingleUserText(root map[string]any) (string, bool) {
 	if hasToolsField(root) {
+		return "", false
+	}
+	if !responsesHasNoContinuingTurn(root) {
+		return "", false
+	}
+	instructionsOnlyProtocolBoilerplate, ok := responsesInstructionsIsProtocolBoilerplate(root)
+	if !ok || !instructionsOnlyProtocolBoilerplate {
 		return "", false
 	}
 	raw, present := root["input"]
@@ -194,6 +268,13 @@ func extractResponsesSingleUserText(root map[string]any) (string, bool) {
 				return "", false
 			}
 			entryType, _ := entry["type"].(string)
+			if entryType == "" {
+				// Responses 允许省略 type，此时条目按 message 解释；没有 role 就无法确认形态，保守走上游。
+				if _, hasRole := entry["role"].(string); !hasRole {
+					return "", false
+				}
+				entryType = "message"
+			}
 			switch entryType {
 			case "message":
 				role, _ := entry["role"].(string)

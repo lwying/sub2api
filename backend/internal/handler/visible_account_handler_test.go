@@ -111,6 +111,9 @@ func (f *visibleAccountHTTPRepoFake) UpdateAccountView(
 		for _, id := range f.assigned[userID] {
 			retained[id] = struct{}{}
 		}
+		// 收集全部不可用的新增 id（真实仓储同样一次返回整批失败项），
+		// 仍然在任何写入之前失败。
+		var invalid []int64
 		for _, id := range *accountIDs {
 			if _, ok := f.accounts[id]; ok {
 				continue
@@ -120,7 +123,10 @@ func (f *visibleAccountHTTPRepoFake) UpdateAccountView(
 			if _, ok := retained[id]; ok {
 				continue
 			}
-			return service.ErrUnknownVisibleAccount
+			invalid = append(invalid, id)
+		}
+		if len(invalid) > 0 {
+			return service.UnknownVisibleAccountError(invalid)
 		}
 	}
 	if enabled != nil {
@@ -608,6 +614,52 @@ func TestVisibleAccountHTTP_AdminSaveRoundTripKeepsGrant(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "UNKNOWN_ACCOUNT")
 	require.ElementsMatch(t, []int64{10, 11}, repo.assigned[1], "失败的更新不得留下部分变更")
+}
+
+// TestVisibleAccountHTTP_AdminUpdateReportsStaleAccountIDs 覆盖保存失败时的「明确失败项」：
+// 待授权账号在管理员勾选后被删除（或整批校验失败）时，整批授权都不生效，但响应必须指出
+// 具体不可用的 id，管理员才能在保留草稿的前提下就地修正，而不是只收到一句泛化的
+// UNKNOWN_ACCOUNT 而无从判断该移除哪一项。响应只出现数字 id，不得携带账号名称或凭据。
+func TestVisibleAccountHTTP_AdminUpdateReportsStaleAccountIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newVisibleAccountHTTPRepoFake()
+	for _, account := range sentinelAccounts() {
+		repo.addAccount(account)
+	}
+	repo.addUser(1, false, true)
+	repo.assign(1, 10)
+	// 12 号账号在勾选后被删除：仍可读的 10 保持不变，12 已无详情。
+	delete(repo.accounts, 12)
+	engine := visibleAccountTestRouter(repo, nil)
+
+	rec := doJSON(t, engine, http.MethodPut, "/api/v1/admin/users/1/account-view",
+		`{"enabled":true,"account_ids":[10,12,999]}`, 99)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var payload struct {
+		Reason   string            `json:"reason"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "UNKNOWN_ACCOUNT", payload.Reason, "既有错误码契约不变")
+	require.Equal(t, "12,999", payload.Metadata["invalid_account_ids"],
+		"必须指出保存前失效的具体账号 id（去重升序）")
+	require.Equal(t, "2", payload.Metadata["invalid_account_count"])
+	// 只返回 id：账号名称、状态与凭据都不得出现在失败响应里。
+	require.NotContains(t, rec.Body.String(), "sentinel-account-name")
+	require.NotContains(t, rec.Body.String(), "inactive-account")
+	require.NotContains(t, rec.Body.String(), "sentinel-access-token")
+
+	// 整批不落库：没有部分授权，开关也没有被打开。
+	require.False(t, repo.enabled[1], "failed update must not flip the capability flag")
+	require.Equal(t, []int64{10}, repo.assigned[1], "失败的更新不得留下部分变更")
+
+	// 管理员移除失效项后，同一批内容可以原样保存成功。
+	rec = doJSON(t, engine, http.MethodPut, "/api/v1/admin/users/1/account-view",
+		`{"enabled":true,"account_ids":[10]}`, 99)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, repo.enabled[1])
+	require.Equal(t, []int64{10}, repo.assigned[1])
 }
 
 // TestTruncateSearchKeepsValidUTF8 覆盖多字节搜索词：按字节截断会切断 rune，

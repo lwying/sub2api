@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"sort"
+	"strconv"
 	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -32,12 +34,83 @@ var ErrVisibleAccountNotFound = infraerrors.New(404, accountViewReasonNotFound,
 	"Account not found")
 
 // ErrUnknownVisibleAccount 表示管理员分配时引用了不存在的账号。
+// 失败响应里还会带上被拒的 id（见 UnknownVisibleAccountError），
+// 使管理员界面能指出具体失败项。
 var ErrUnknownVisibleAccount = infraerrors.New(400, "UNKNOWN_ACCOUNT",
 	"One or more account ids do not exist")
 
 // ErrAccountViewUserNotFound 表示管理员操作的目标用户不存在（或已删除）。
 var ErrAccountViewUserNotFound = infraerrors.New(404, "USER_NOT_FOUND",
 	"User not found")
+
+// 分配失败的「明确失败项」契约：失败本身仍是 400 UNKNOWN_ACCOUNT，
+// 具体的不可用账号 id 附加在错误元数据里。
+const (
+	// visibleAccountInvalidIDsMetadataKey 是失败响应里被拒账号 id 的元数据键。
+	// 只承载有界的十进制 id，不含账号名称、凭据或任何账号内部配置。
+	visibleAccountInvalidIDsMetadataKey = "invalid_account_ids"
+
+	// visibleAccountInvalidCountMetadataKey 是本次被拒账号的总数。id 列表因上限被
+	// 截断时，界面仍能说明实际有多少项失败，而不是把截断后的数量当成全部。
+	visibleAccountInvalidCountMetadataKey = "invalid_account_count"
+
+	// maxReportedInvalidVisibleAccountIDs 限制错误响应里列出的 id 数量：
+	// 「一键添加」可能一次提交上百个账号，错误载荷必须保持有界。
+	maxReportedInvalidVisibleAccountIDs = 50
+)
+
+// UnknownVisibleAccountError 构造「分配引用了不可用账号」的失败错误。
+//
+// 对外仍是 400 UNKNOWN_ACCOUNT，错误链上仍匹配 ErrUnknownVisibleAccount
+// （ApplicationError.Is 只比较 Code 与 Reason），因此既有调用方与服务端/客户端
+// 契约不变；新增的是 metadata 里被拒账号的 id：管理员在一次批量保存被整批
+// 回滚后，据此就能知道该移除或替换哪一项，并在保留草稿的前提下重试。
+//
+// 只暴露数字 id：不含账号名称、状态、凭据与内部配置。id 去重升序，超过
+// maxReportedInvalidVisibleAccountIDs 时只列前若干个，总数另由
+// invalid_account_count 给出。返回值为哨兵的副本，不改动包级哨兵本身。
+func UnknownVisibleAccountError(ids []int64) *infraerrors.ApplicationError {
+	unique := uniqueSortedAccountIDs(ids)
+	metadata := map[string]string{
+		visibleAccountInvalidCountMetadataKey: strconv.Itoa(len(unique)),
+	}
+	if len(unique) > 0 {
+		reported := unique
+		if len(reported) > maxReportedInvalidVisibleAccountIDs {
+			reported = reported[:maxReportedInvalidVisibleAccountIDs]
+		}
+		metadata[visibleAccountInvalidIDsMetadataKey] = formatAccountIDList(reported)
+	}
+	return ErrUnknownVisibleAccount.WithMetadata(metadata)
+}
+
+// uniqueSortedAccountIDs 去重并升序排序，使同一批失败项在任何调用点都得到稳定输出。
+func uniqueSortedAccountIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// formatAccountIDList 用逗号连接 id：错误元数据是 map[string]string，
+// 逗号分隔是既有错误元数据表达列表的方式。
+func formatAccountIDList(ids []int64) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
+}
 
 // AssignedVisibleAccount 是管理员视角下的已分配账号摘要。
 // 仅供管理员接口使用（含真实名称与状态），普通用户响应绝不包含这些字段。
@@ -68,6 +141,8 @@ type VisibleAccountRepository interface {
 	// 「新分配」的 account id 不存在（含软删除）时返回 ErrUnknownVisibleAccount，
 	// 且开关与分配都不落库（整体回滚）；已在分配关系里的 id 允许保留（即使账号
 	// 已被软删除），保证管理员界面原样保存不会撤销既有分配。
+	// 该错误是 UnknownVisibleAccountError 构造的副本：除错误码外还带有本次被拒的
+	// 具体 id（有界），使管理员界面能指出失败项并保留草稿修正。
 	// 用户不存在或已软删除时返回 ErrAccountViewUserNotFound。
 	// 同一用户的并发替换必须串行化，且保留的分配行不得改写 granted_by/created_at。
 	UpdateAccountView(ctx context.Context, userID int64, enabled *bool, accountIDs *[]int64, grantedBy *int64) error

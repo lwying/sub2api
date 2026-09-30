@@ -697,6 +697,10 @@ export default {
       batchAdd: 'Add selected',
       batchAddSummary: 'Added {added} to the pending list · {skipped} already pending · {failed} could not be added',
       batchAddPendingNotice: 'Nothing is granted until you save.',
+      // The save was rejected as a whole: name the accounts the server reported, keep the draft.
+      saveUnknownAccounts: 'Save rejected: {count} selected account(s) no longer exist ({ids}).',
+      saveUnknownAccountsHint: 'Remove or replace the marked accounts and save again. Nothing has been granted.',
+      invalidPending: 'Rejected by server',
       saveSuccess: 'Account view grant updated',
       loadFailed: 'Failed to load the account view grant',
       saveFailed: 'Failed to save the account view grant',

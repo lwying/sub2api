@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -197,55 +196,14 @@ func newCyberPolicyUsageInputForAuditTest() CyberPolicyUsageInput {
 	}
 }
 
-func TestRecordCyberPolicyUsageLog_AttachesPartialAuditFromWireAttempts(t *testing.T) {
+func TestRecordCyberPolicyUsageLog_OrdinaryModeDoesNotWriteAudit(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	auditRepo := &stubRequestAuditRepo{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
 	svc.requestAuditRepo = auditRepo
-
 	svc.RecordCyberPolicyUsageLog(context.Background(), newCyberPolicyUsageInputForAuditTest())
-
 	require.Equal(t, 1, usageRepo.calls)
-	require.NotNil(t, auditRepo.created, "cyber 用量行必须带审计：否则 /admin/usage 详情 404")
-	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
-	require.Equal(t, RequestAuditCaptureIncomplete, auditRepo.created.CaptureCompleteness)
-	require.NotEqual(t, RequestAuditCaptureComplete, auditRepo.created.CaptureCompleteness, "cyber 路径缺响应事实，永不 complete")
-	require.Equal(t, RequestAuditPartialReasonCyberPolicy, auditRepo.created.CaptureReason)
-	require.Len(t, auditRepo.created.Attempts, 1)
-	require.Equal(t, int64(3), auditRepo.created.Attempts[0].AccountID)
-	require.Equal(t, RequestAuditProtocolOpenAIResp, auditRepo.created.Attempts[0].Protocol)
-	require.Equal(t, RequestAuditStageWire, auditRepo.created.Attempts[0].Stage)
-	require.NotNil(t, auditRepo.created.Attempts[0].UpstreamStatus)
-	require.Equal(t, http.StatusBadRequest, *auditRepo.created.Attempts[0].UpstreamStatus)
-	require.Empty(t, auditRepo.created.Attempts[0].Model, "审计尝试不落模型名")
-	require.Equal(t, map[string]any{"present": true}, auditRepo.created.Headers["Authorization"], "凭据头只记存在")
-	require.Equal(t, map[string]any{"present": true}, auditRepo.created.Headers["User-Agent"], "自由文本头只记存在，不落值")
-
-	encoded, err := json.Marshal(auditRepo.created)
-	require.NoError(t, err)
-	dump := string(encoded)
-	require.NotContains(t, dump, "sk-cyber-secret", "审计不得出现凭据原文")
-	require.NotContains(t, dump, "codex/1.2.3", "审计不得出现未白名单头值")
-}
-
-func TestRecordCyberPolicyUsageLog_MarksNotCapturedWithoutAttemptMetadata(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-	auditRepo := &stubRequestAuditRepo{}
-	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
-	svc.requestAuditRepo = auditRepo
-
-	// WS / 插件等未覆盖传输没有传输尝试元数据：标未采集 + 第一阶段未覆盖，不伪造尝试。
-	input := newCyberPolicyUsageInputForAuditTest()
-	input.RequestAuditAttempts = nil
-	input.RequestAuditHeaders = nil
-	svc.RecordCyberPolicyUsageLog(context.Background(), input)
-
-	require.Equal(t, 1, usageRepo.calls)
-	require.NotNil(t, auditRepo.created)
-	require.Equal(t, RequestAuditCaptureNotCaptured, auditRepo.created.CaptureCompleteness)
-	require.Equal(t, RequestAuditNotCapturedReasonPhase1Uncovered, auditRepo.created.CaptureReason)
-	require.Empty(t, auditRepo.created.Attempts)
-	require.Empty(t, auditRepo.created.Headers)
+	require.Nil(t, auditRepo.created)
 }
 
 func TestRecordCyberPolicyUsageLog_ForcedReservationFinalizedIncomplete(t *testing.T) {
@@ -435,162 +393,21 @@ func max(a, b int) int {
 	return b
 }
 
-func TestOpenAIGatewayServiceRecordUsage_AttachesRequestAuditWhenUsageIDPresent(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_OrdinaryAuditNotWritten(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	auditRepo := &stubRequestAuditRepo{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
 	svc.requestAuditRepo = auditRepo
-
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result: &OpenAIForwardResult{
-			RequestID: "openai_audit",
-			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 6},
-			Model:     "gpt-5.1",
-			Duration:  time.Second,
-		},
-		APIKey:  &APIKey{ID: 501, Quota: 100, Group: &Group{RateMultiplier: 1}},
-		User:    &User{ID: 601},
-		Account: &Account{ID: 701},
-		RequestAuditHeaders: http.Header{
-			"X-Stainless-Lang": []string{"js"},
-			"Authorization":    []string{"Bearer sk-leak"},
-		},
-		RequestAuditAttempts: []RequestAuditAttempt{
-			{AccountID: 701, Model: "gpt-5.1", Protocol: RequestAuditProtocolOpenAIChat, Stage: RequestAuditStageWire},
-		},
+		Result: &OpenAIForwardResult{RequestID: "ordinary-openai", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 6}, Model: "gpt-5.1", Duration: time.Second,
+			SSEEvents: []RequestAuditSSEEvent{{Type: "response.output_text.delta", Data: []byte(`{"delta":"secret"}`)}}},
+		APIKey: &APIKey{ID: 501, Quota: 100, Group: &Group{RateMultiplier: 1}}, User: &User{ID: 601}, Account: &Account{ID: 701},
+		RequestAuditHeaders:  http.Header{"X-Stainless-Lang": []string{"js"}},
+		RequestAuditAttempts: []RequestAuditAttempt{{AccountID: 701, Protocol: RequestAuditProtocolOpenAIResp, Stage: RequestAuditStageWire}},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.calls)
-	require.NotNil(t, auditRepo.created)
-	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
-	require.Equal(t, "js", auditRepo.created.Headers["X-Stainless-Lang"])
-	require.Equal(t, map[string]any{"present": true}, auditRepo.created.Headers["Authorization"])
-	require.Len(t, auditRepo.created.Attempts, 1)
-	require.Equal(t, int64(701), auditRepo.created.Attempts[0].AccountID)
-	encoded, err := json.Marshal(auditRepo.created)
-	require.NoError(t, err)
-	dump := string(encoded)
-	require.NotContains(t, dump, "sk-leak")
-	require.NotContains(t, dump, `"messages"`)
-}
-
-func TestOpenAIGatewayServiceRecordUsage_AttachesMultipleAttemptsOnOneAudit(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-	auditRepo := &stubRequestAuditRepo{}
-	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
-	svc.requestAuditRepo = auditRepo
-
-	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result: &OpenAIForwardResult{
-			RequestID: "openai_audit_retry",
-			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 6},
-			Model:     "gpt-5.1",
-			Duration:  time.Second,
-		},
-		APIKey:  &APIKey{ID: 501, Quota: 100, Group: &Group{RateMultiplier: 1}},
-		User:    &User{ID: 601},
-		Account: &Account{ID: 702},
-		RequestAuditHeaders: http.Header{
-			"X-Stainless-Lang": []string{"js"},
-		},
-		RequestAuditAttempts: []RequestAuditAttempt{
-			{AccountID: 701, Model: "gpt-5.1", Protocol: RequestAuditProtocolOpenAIChat, Stage: RequestAuditStageWire},
-			{AccountID: 702, Model: "gpt-5.1", Protocol: RequestAuditProtocolOpenAIChat, Stage: RequestAuditStageWire},
-		},
-	})
-	require.NoError(t, err)
-	require.Equal(t, 1, usageRepo.calls)
-	require.NotNil(t, auditRepo.created)
-	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
-	require.Len(t, auditRepo.created.Attempts, 2)
-	require.Equal(t, int64(701), auditRepo.created.Attempts[0].AccountID)
-	require.Equal(t, int64(702), auditRepo.created.Attempts[1].AccountID)
-	encoded, err := json.Marshal(auditRepo.created)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "secret prompt")
-}
-
-func TestOpenAIGatewayServiceRecordUsage_AttachesRequestAuditSSEEventsWithoutDelta(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-	auditRepo := &stubRequestAuditRepo{}
-	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
-	svc.requestAuditRepo = auditRepo
-
-	delta := []byte(`{"type":"response.output_text.delta","delta":"secret delta"}`)
-	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result: &OpenAIForwardResult{
-			RequestID: "openai_audit_sse",
-			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 6},
-			Model:     "gpt-5.1",
-			Duration:  time.Second,
-			Stream:    true,
-			SSEEvents: []RequestAuditSSEEvent{
-				{Type: "response.created", Bytes: 12},
-				{Type: "response.output_text.delta", Bytes: len(delta), Data: delta},
-				{Type: "response.completed", Bytes: 8},
-			},
-		},
-		APIKey:  &APIKey{ID: 501, Quota: 100, Group: &Group{RateMultiplier: 1}},
-		User:    &User{ID: 601},
-		Account: &Account{ID: 701},
-		RequestAuditHeaders: http.Header{
-			"X-Stainless-Lang": []string{"js"},
-		},
-		RequestAuditAttempts: []RequestAuditAttempt{
-			{AccountID: 701, Model: "gpt-5.1", Protocol: RequestAuditProtocolOpenAIResp, Stage: RequestAuditStageWire},
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, auditRepo.created)
-	require.Equal(t, int64(42), auditRepo.created.UsageLogID)
-	require.Len(t, auditRepo.created.Events, 3)
-	require.Equal(t, "response.created", auditRepo.created.Events[0].Type)
-	require.Equal(t, 0, auditRepo.created.Events[0].Index)
-	require.Equal(t, "response.output_text.delta", auditRepo.created.Events[1].Type)
-	require.Equal(t, 1, auditRepo.created.Events[1].Index)
-	require.Equal(t, len(delta), auditRepo.created.Events[1].Bytes)
-	require.Equal(t, "response.completed", auditRepo.created.Events[2].Type)
-	encoded, err := json.Marshal(auditRepo.created)
-	require.NoError(t, err)
-	dump := string(encoded)
-	require.NotContains(t, dump, "secret delta")
-	require.NotContains(t, dump, `"data"`)
-}
-
-func TestOpenAIGatewayServiceRecordUsage_MarksPluginHandledResultNotCaptured(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-	auditRepo := &stubRequestAuditRepo{}
-	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
-	svc.requestAuditRepo = auditRepo
-
-	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result: &OpenAIForwardResult{
-			RequestID:        "openai_plugin_audit_excluded",
-			Usage:            OpenAIUsage{InputTokens: 10, OutputTokens: 6},
-			Model:            "gpt-5.4",
-			Duration:         time.Second,
-			Stream:           true,
-			ClientDisconnect: true,
-			SSEEvents: []RequestAuditSSEEvent{{
-				Type: "response.output_text.delta", Bytes: 12,
-			}},
-		},
-		APIKey:            &APIKey{ID: 501, Quota: 100, Group: &Group{RateMultiplier: 1}},
-		User:              &User{ID: 601},
-		Account:           &Account{ID: 701},
-		NotCapturedReason: RequestAuditNotCapturedReasonPhase1Uncovered,
-		RequestAuditHeaders: http.Header{
-			"X-Stainless-Lang": []string{"js"},
-		},
-		RequestAuditAttempts: []RequestAuditAttempt{{
-			AccountID: 701, Model: "gpt-5.4", Protocol: RequestAuditProtocolOpenAIResp, Stage: RequestAuditStageWire,
-		}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, 1, usageRepo.calls)
-	require.NotNil(t, auditRepo.created)
-	require.Equal(t, RequestAuditCaptureNotCaptured, auditRepo.created.CaptureCompleteness)
-	require.Equal(t, RequestAuditNotCapturedReasonPhase1Uncovered, auditRepo.created.CaptureReason)
+	require.Nil(t, auditRepo.created, "ordinary OpenAI requests must not write legacy audit records")
 }
 
 func TestOpenAIGatewayServiceRecordUsage_DoesNotAttachEmptyCompleteAuditWhenUncollected(t *testing.T) {

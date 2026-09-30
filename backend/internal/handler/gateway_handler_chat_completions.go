@@ -248,6 +248,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		// 平台事实紧跟选号成功记录：已实际选中具体账号的平台是已知事实，即使随后
+		// 并发准入、利润终检或下游测试请求 mock 让这次请求没能发出上游，采集范围
+		// 也要能按它复核（首次可确定的平台决定整条结论）。
+		markRequestTraceSelectedPlatform(c, account.Platform)
 
 		// 4. Acquire account concurrency slot
 		accountReleaseFunc := selection.ReleaseFunc
@@ -304,7 +308,6 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-		markRequestTraceSelectedPlatform(c, account.Platform)
 		markGatewayMockStream(c, reqStream)
 		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolChatCompletions, reqModel, account.ID, body) {
 			if accountReleaseFunc != nil {

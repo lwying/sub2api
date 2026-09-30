@@ -683,6 +683,11 @@ type UsageLog struct {
 type AdminUsageLog struct {
 	UsageLog
 
+	// Only server-confirmed readable diagnostics are linked; no client request ID is used.
+	RequestTraceID              *string `json:"request_trace_id,omitempty"`
+	RequestTraceAvailable       bool    `json:"request_trace_available"`
+	RequestAuditForcedAvailable bool    `json:"request_audit_forced_available"`
+
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`

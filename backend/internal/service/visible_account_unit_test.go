@@ -5,6 +5,8 @@ package service
 import (
 	"context"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -451,4 +453,51 @@ func TestVisibleAccountServiceAdminUpdateIsAtomicAndDefaultOff(t *testing.T) {
 	require.Empty(t, view.AccountIDs)
 	_, err = svc.Get(ctx, 7, 21)
 	require.ErrorIs(t, err, ErrVisibleAccountNotFound)
+}
+
+// TestUnknownVisibleAccountErrorCarriesBoundedMissingIDs 覆盖「整批拒绝时指出具体失败项」的
+// 错误契约：失败仍是 400 UNKNOWN_ACCOUNT、错误链上仍匹配既有哨兵（既有调用方与客户端契约
+// 不变），但 metadata 给出被拒账号的数字 id，使管理员界面能就地高亮修正，而不是把整批
+// 失败笼统归因于「某个账号不存在」。id 去重升序、数量有界，且不改动包级哨兵。
+func TestUnknownVisibleAccountErrorCarriesBoundedMissingIDs(t *testing.T) {
+	t.Parallel()
+
+	// 单个失效（已删除）id：必须能读到具体是哪一个。
+	err := UnknownVisibleAccountError([]int64{4242})
+	require.ErrorIs(t, err, ErrUnknownVisibleAccount)
+	require.Equal(t, 400, int(err.Code))
+	require.Equal(t, "UNKNOWN_ACCOUNT", err.Reason)
+	require.Equal(t, "4242", err.Metadata[visibleAccountInvalidIDsMetadataKey])
+	require.Equal(t, "1", err.Metadata[visibleAccountInvalidCountMetadataKey])
+
+	// 重复与乱序：去重升序，同一批输入得到稳定输出。
+	err = UnknownVisibleAccountError([]int64{12, 9, 12, 9, 11})
+	require.Equal(t, "9,11,12", err.Metadata[visibleAccountInvalidIDsMetadataKey])
+	require.Equal(t, "3", err.Metadata[visibleAccountInvalidCountMetadataKey])
+	// 只承载数字 id，不携带账号名称、凭据或其它账号内部配置。
+	require.Len(t, err.Metadata, 2)
+
+	// 空输入：仍是一次明确的失败，只是没有可指的失败项。
+	err = UnknownVisibleAccountError(nil)
+	require.ErrorIs(t, err, ErrUnknownVisibleAccount)
+	require.Equal(t, "", err.Metadata[visibleAccountInvalidIDsMetadataKey])
+	require.Equal(t, "0", err.Metadata[visibleAccountInvalidCountMetadataKey])
+
+	// 上限：一次批量添加可能提交上百个账号，错误载荷必须有界，总数另行说明。
+	oversized := make([]int64, 0, maxReportedInvalidVisibleAccountIDs+7)
+	for i := 0; i < maxReportedInvalidVisibleAccountIDs+7; i++ {
+		oversized = append(oversized, int64(i+1))
+	}
+	err = UnknownVisibleAccountError(oversized)
+	reported := strings.Split(err.Metadata[visibleAccountInvalidIDsMetadataKey], ",")
+	require.Len(t, reported, maxReportedInvalidVisibleAccountIDs)
+	require.Equal(t, "1", reported[0])
+	require.Equal(t, strconv.Itoa(maxReportedInvalidVisibleAccountIDs),
+		reported[maxReportedInvalidVisibleAccountIDs-1])
+	require.Equal(t, strconv.Itoa(len(oversized)),
+		err.Metadata[visibleAccountInvalidCountMetadataKey])
+
+	// 包级哨兵不得被污染：构造出的错误必须与既有哨兵相互独立。
+	require.Nil(t, ErrUnknownVisibleAccount.Metadata)
+	require.False(t, err == ErrUnknownVisibleAccount)
 }

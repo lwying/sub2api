@@ -280,14 +280,14 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 }
 
 /**
- * Get request-audit metadata for a usage log (admin only).
- * Never includes model body or credential plaintext.
+ * Read server-verified forced-audit metadata for a usage log (admin login session only).
+ * Historical audits with unknown origin are intentionally unavailable.
  */
-export async function getRequestAudit(
+export async function getForcedRequestAudit(
   id: number,
   options?: { signal?: AbortSignal }
 ): Promise<RequestAudit> {
-  const { data } = await apiClient.get<RequestAudit>(`/admin/usage/${id}/request-audit`, {
+  const { data } = await apiClient.get<RequestAudit>(`/admin/usage/${id}/request-audit/forced`, {
     signal: options?.signal
   })
   return data
@@ -301,7 +301,7 @@ export const adminUsageAPI = {
   listCleanupTasks,
   createCleanupTask,
   cancelCleanupTask,
-  getRequestAudit
+  getForcedRequestAudit
 }
 
 export default adminUsageAPI

@@ -766,8 +766,8 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
   })
 })
 
-describe('admin UsageTable request audit', () => {
-  it('emits openRequestAudit with the usage log id when a row is clicked', async () => {
+describe('admin UsageTable record detail', () => {
+  it('emits the usage record when a row is clicked', async () => {
     const DataTableClickStub = {
       props: ['data'],
       emits: ['rowClick'],
@@ -799,7 +799,7 @@ describe('admin UsageTable request audit', () => {
     })
 
     await wrapper.get('[data-testid="usage-row"]').trigger('click')
-    expect(wrapper.emitted('openRequestAudit')).toEqual([[7]])
+    expect(wrapper.emitted('openUsageDetail')).toEqual([[{ id: 7, request_id: 'req-audit-1', model: 'gpt-5.1' }]])
   })
 })
 

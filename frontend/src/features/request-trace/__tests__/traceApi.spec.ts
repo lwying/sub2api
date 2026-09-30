@@ -26,7 +26,7 @@ describe('Trace list and detail API', () => {
     client.get.mockResolvedValue({ data: { items: [{ ...row, payload_text: 'PRIVATE_BODY', extra: { authorization: 'Bearer TOKEN' } }], total: 1, page: 1, page_size: 20 } })
     const result = await listTraces({ page: 1, page_size: 20, trace_id: row.trace_id })
     expect(client.get).toHaveBeenCalledWith('/admin/request-traces', expect.objectContaining({
-      params: { page: 1, page_size: 20, trace_id: row.trace_id },
+      params: { page: 1, page_size: 20, trace_id: row.trace_id, include_stats: true },
       headers: expect.objectContaining({ 'Cache-Control': 'no-store' }),
     }))
     expect(result.items).toHaveLength(1)
@@ -128,21 +128,33 @@ describe('Trace batch export API', () => {
     expect(exportParams()).toEqual({ group_unknown: true, model_unknown: true, platform_unknown: true })
   })
 
-  it('sends the checked set as a comma-separated scope with no filter beside it', async () => {
+  it('sends the checked set as a bounded structured body, never as a URL query', async () => {
     client.post.mockResolvedValue({ data: exportTask() })
     const first = 'a'.repeat(32)
     const second = 'c'.repeat(32)
     await createTraceExport({ trace_ids: [first, second], route_family: 'messages', client_status: 500 })
 
-    // The server ANDs the two scopes, so a selected export must not carry a query
-    // the operator may not have been looking at.
-    expect(exportParams()).toEqual({ trace_ids: `${first},${second}` })
-    expect(exportParams()).not.toHaveProperty('route_family')
+    // The checked set is one bounded JSON body: the id set never rides in the URL,
+    // and no metadata filter is sent beside it (the two scopes are exclusive).
+    const [url, body, config] = client.post.mock.calls[0] as [string, unknown, { params?: Record<string, unknown> }]
+    expect(url).toBe('/admin/request-traces/exports')
+    expect(body).toEqual({ trace_ids: [first, second] })
+    expect(config.params ?? {}).toEqual({})
+    expect(JSON.stringify(config.params ?? {})).not.toContain(first)
   })
 
   it('refuses a checked set above the server bound instead of exporting part of it', async () => {
     const ids = Array.from({ length: 2001 }, (_, index) => index.toString(16).padStart(32, '0'))
     await expect(createTraceExport({ trace_ids: ids })).rejects.toMatchObject({ refusal: 'selection_too_large' })
+    expect(client.post).not.toHaveBeenCalled()
+  })
+
+  it('refuses a checked set that is empty, malformed or repeated before calling the server', async () => {
+    // An explicitly empty selection is an invalid scope, never a silent "export all".
+    await expect(createTraceExport({ trace_ids: [] })).rejects.toMatchObject({ refusal: 'invalid_filter' })
+    await expect(createTraceExport({ trace_ids: ['not-a-trace-id'] })).rejects.toMatchObject({ refusal: 'invalid_filter' })
+    const repeated = 'a'.repeat(32)
+    await expect(createTraceExport({ trace_ids: [repeated, repeated] })).rejects.toMatchObject({ refusal: 'invalid_filter' })
     expect(client.post).not.toHaveBeenCalled()
   })
 

@@ -282,9 +282,6 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 		CreatedAt:             createdAt,
 	}
 	writeUsageLogBestEffort(ctx, s.UsageLogRepo, usageLog, "service.batch_image_settlement")
-	attachRequestAuditBestEffort(ctx, s.RequestAuditRepo, usageLog, RequestAuditInput{
-		NotCapturedReason: RequestAuditNotCapturedReasonPhase1Uncovered,
-	})
 }
 
 func (s *BatchImageSettlementService) invalidateAuthCache(ctx context.Context, userID int64) {

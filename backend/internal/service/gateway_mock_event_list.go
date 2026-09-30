@@ -35,19 +35,20 @@ type GatewayMockEventListFilter struct {
 
 // GatewayMockEventRecord 是列表投影：字段与落库的最小事实一一对应。
 // 这里刻意不含数据库主键：管理端按时间倒序读，行标识不是它需要的事实。
+// 这里也不含 cleanup_after：该列是 legacy 内部字段，写入时的估算不是可披露的实际清理
+// 时间，因此没有把它读进投影、再转手给管理端的路径。
 type GatewayMockEventRecord struct {
-	OccurredAt   time.Time
-	RuleID       string
-	RuleVersion  string
-	Protocol     string
-	Model        string
-	APIKeyID     int64
-	UserID       int64
-	GroupID      int64
-	AccountID    int64
-	ClientIP     string
-	TraceID      string
-	CleanupAfter time.Time
+	OccurredAt  time.Time
+	RuleID      string
+	RuleVersion string
+	Protocol    string
+	Model       string
+	APIKeyID    int64
+	UserID      int64
+	GroupID     int64
+	AccountID   int64
+	ClientIP    string
+	TraceID     string
 }
 
 // GatewayMockEventReader 只提供"新到在前"的最小事件分页读取。

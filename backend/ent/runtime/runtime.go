@@ -1791,15 +1791,15 @@ func init() {
 	// requestaudit.DefaultCaptureReason holds the default value on creation for the capture_reason field.
 	requestaudit.DefaultCaptureReason = requestauditDescCaptureReason.Default.(string)
 	// requestauditDescFingerprintKeyVersion is the schema descriptor for fingerprint_key_version field.
-	requestauditDescFingerprintKeyVersion := requestauditFields[7].Descriptor()
+	requestauditDescFingerprintKeyVersion := requestauditFields[8].Descriptor()
 	// requestaudit.DefaultFingerprintKeyVersion holds the default value on creation for the fingerprint_key_version field.
 	requestaudit.DefaultFingerprintKeyVersion = requestauditDescFingerprintKeyVersion.Default.(int)
 	// requestauditDescMetadata is the schema descriptor for metadata field.
-	requestauditDescMetadata := requestauditFields[9].Descriptor()
+	requestauditDescMetadata := requestauditFields[10].Descriptor()
 	// requestaudit.DefaultMetadata holds the default value on creation for the metadata field.
 	requestaudit.DefaultMetadata = requestauditDescMetadata.Default.(map[string]interface{})
 	// requestauditDescCreatedAt is the schema descriptor for created_at field.
-	requestauditDescCreatedAt := requestauditFields[10].Descriptor()
+	requestauditDescCreatedAt := requestauditFields[11].Descriptor()
 	// requestaudit.DefaultCreatedAt holds the default value on creation for the created_at field.
 	requestaudit.DefaultCreatedAt = requestauditDescCreatedAt.Default.(func() time.Time)
 	requestauditreservationFields := schema.RequestAuditReservation{}.Fields()

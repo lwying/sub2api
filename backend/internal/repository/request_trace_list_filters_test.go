@@ -32,7 +32,7 @@ func TestRequestTraceRepositoryBindsOptionalUsageAndAccountFilters(t *testing.T)
 			_, _, err := repo.ListRequestTraces(ctx, tc.filter)
 			require.Error(t, err, "the stub returns no rows")
 			require.Len(t, stub.args, 1)
-			require.Len(t, stub.args[0], 14)
+			require.Len(t, stub.args[0], 19)
 
 			boundUsage, usageOptional := stub.args[0][6].(*int64)
 			require.True(t, usageOptional, "usage_log_id must be bound as an optional value")
@@ -104,6 +104,9 @@ func TestRequestTraceRepositoryBindsGroupAndModelScopeFilters(t *testing.T) {
 				require.True(t, ok, "a present platform filter must bind a value")
 				require.Equal(t, "antigravity", *&boundPlatform)
 				require.Contains(t, query, "s2.metadata @> jsonb_build_object('platform', $13::text)")
+				// 并集：真实发出的尝试（wire_attempt）与信封上的实际选中平台历史都必须匹配，
+				// 否则"选中但未发出"的错误 Trace 会漏检（规格 §2.2/§2.3）。
+				require.Contains(t, query, "OR observed_platforms @> jsonb_build_array($13::text)")
 				require.NotContains(t, query, "antigravity")
 			},
 		},
@@ -116,6 +119,8 @@ func TestRequestTraceRepositoryBindsGroupAndModelScopeFilters(t *testing.T) {
 				require.True(t, ok, "a present platform-unknown flag must bind a boolean")
 				require.True(t, boundUnknown)
 				require.Contains(t, query, "s3.metadata ? 'platform'")
+				// 未知必须两处都没有平台事实：没有带 platform 的 wire_attempt，且信封为 NULL。
+				require.Contains(t, query, "AND observed_platforms IS NULL")
 			},
 		},
 	} {
@@ -126,20 +131,29 @@ func TestRequestTraceRepositoryBindsGroupAndModelScopeFilters(t *testing.T) {
 			require.Error(t, err, "the stub returns no rows")
 			require.Len(t, stub.args, 1)
 			args := stub.args[0]
-			require.Len(t, args, 14)
+			require.Len(t, args, 19)
 
 			query := stub.queries[0]
 			require.Contains(t, query, "$9::bigint IS NULL OR group_id = $9")
 			require.Contains(t, query, "$10::boolean IS NULL OR (group_id IS NULL) = $10")
 			require.Contains(t, query, "lower(requested_model) = lower($11)")
 			require.Contains(t, query, "$12::boolean IS NULL OR (requested_model IS NULL) = $12")
-			require.Contains(t, query, "$13::text IS NULL OR EXISTS (")
-			require.Contains(t, query, "$14::boolean IS NULL OR (NOT EXISTS (")
+			require.Contains(t, query, "$13::text IS NULL OR (")
+			require.Contains(t, query, "$14::boolean IS NULL OR ((NOT EXISTS (")
 			require.NotContains(t, query, "91")
 			require.NotContains(t, query, "Claude-Sonnet-4-5")
 			tc.assert(t, args, query)
 		})
 	}
+}
+
+func TestRequestTraceListSkipsRedundantCountWhenAggregateSuppliesTotal(t *testing.T) {
+	stub := &recordingRequestTraceQueryer{}
+	repo := &requestTraceRepository{q: stub}
+	_, _, err := repo.ListRequestTraces(context.Background(), service.RequestTraceListFilter{Page: 1, PageSize: 20, SkipCount: true})
+	require.Error(t, err)
+	require.Len(t, stub.queries, 1)
+	require.NotContains(t, stub.queries[0], "COUNT(*)")
 }
 
 // 可选化不等于放宽校验：0 或负数是无效的 ID，必须在进 SQL 之前拒绝。

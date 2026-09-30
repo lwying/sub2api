@@ -31,6 +31,8 @@ type RequestAudit struct {
 	CaptureCompleteness string `json:"capture_completeness,omitempty"`
 	// 采集原因码；phase1_uncovered 表示第一阶段未覆盖
 	CaptureReason string `json:"capture_reason,omitempty"`
+	// 新强制审计产生的证据为 forced；历史 NULL 表示来源未知
+	ForcedProvenance *string `json:"forced_provenance,omitempty"`
 	// RequestFingerprint holds the value of the "request_fingerprint" field.
 	RequestFingerprint *string `json:"request_fingerprint,omitempty"`
 	// FingerprintKeyVersion holds the value of the "fingerprint_key_version" field.
@@ -76,7 +78,7 @@ func (*RequestAudit) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case requestaudit.FieldID, requestaudit.FieldUsageLogID, requestaudit.FieldFingerprintKeyVersion:
 			values[i] = new(sql.NullInt64)
-		case requestaudit.FieldCaptureCompleteness, requestaudit.FieldCaptureReason, requestaudit.FieldRequestFingerprint:
+		case requestaudit.FieldCaptureCompleteness, requestaudit.FieldCaptureReason, requestaudit.FieldForcedProvenance, requestaudit.FieldRequestFingerprint:
 			values[i] = new(sql.NullString)
 		case requestaudit.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -142,6 +144,13 @@ func (_m *RequestAudit) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field capture_reason", values[i])
 			} else if value.Valid {
 				_m.CaptureReason = value.String
+			}
+		case requestaudit.FieldForcedProvenance:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field forced_provenance", values[i])
+			} else if value.Valid {
+				_m.ForcedProvenance = new(string)
+				*_m.ForcedProvenance = value.String
 			}
 		case requestaudit.FieldRequestFingerprint:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -234,6 +243,11 @@ func (_m *RequestAudit) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("capture_reason=")
 	builder.WriteString(_m.CaptureReason)
+	builder.WriteString(", ")
+	if v := _m.ForcedProvenance; v != nil {
+		builder.WriteString("forced_provenance=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.RequestFingerprint; v != nil {
 		builder.WriteString("request_fingerprint=")

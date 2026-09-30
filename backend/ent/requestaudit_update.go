@@ -101,6 +101,26 @@ func (_u *RequestAuditUpdate) SetNillableCaptureReason(v *string) *RequestAuditU
 	return _u
 }
 
+// SetForcedProvenance sets the "forced_provenance" field.
+func (_u *RequestAuditUpdate) SetForcedProvenance(v string) *RequestAuditUpdate {
+	_u.mutation.SetForcedProvenance(v)
+	return _u
+}
+
+// SetNillableForcedProvenance sets the "forced_provenance" field if the given value is not nil.
+func (_u *RequestAuditUpdate) SetNillableForcedProvenance(v *string) *RequestAuditUpdate {
+	if v != nil {
+		_u.SetForcedProvenance(*v)
+	}
+	return _u
+}
+
+// ClearForcedProvenance clears the value of the "forced_provenance" field.
+func (_u *RequestAuditUpdate) ClearForcedProvenance() *RequestAuditUpdate {
+	_u.mutation.ClearForcedProvenance()
+	return _u
+}
+
 // SetRequestFingerprint sets the "request_fingerprint" field.
 func (_u *RequestAuditUpdate) SetRequestFingerprint(v string) *RequestAuditUpdate {
 	_u.mutation.SetRequestFingerprint(v)
@@ -248,6 +268,12 @@ func (_u *RequestAuditUpdate) sqlSave(ctx context.Context) (_node int, err error
 	if value, ok := _u.mutation.CaptureReason(); ok {
 		_spec.SetField(requestaudit.FieldCaptureReason, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.ForcedProvenance(); ok {
+		_spec.SetField(requestaudit.FieldForcedProvenance, field.TypeString, value)
+	}
+	if _u.mutation.ForcedProvenanceCleared() {
+		_spec.ClearField(requestaudit.FieldForcedProvenance, field.TypeString)
+	}
 	if value, ok := _u.mutation.RequestFingerprint(); ok {
 		_spec.SetField(requestaudit.FieldRequestFingerprint, field.TypeString, value)
 	}
@@ -387,6 +413,26 @@ func (_u *RequestAuditUpdateOne) SetNillableCaptureReason(v *string) *RequestAud
 	if v != nil {
 		_u.SetCaptureReason(*v)
 	}
+	return _u
+}
+
+// SetForcedProvenance sets the "forced_provenance" field.
+func (_u *RequestAuditUpdateOne) SetForcedProvenance(v string) *RequestAuditUpdateOne {
+	_u.mutation.SetForcedProvenance(v)
+	return _u
+}
+
+// SetNillableForcedProvenance sets the "forced_provenance" field if the given value is not nil.
+func (_u *RequestAuditUpdateOne) SetNillableForcedProvenance(v *string) *RequestAuditUpdateOne {
+	if v != nil {
+		_u.SetForcedProvenance(*v)
+	}
+	return _u
+}
+
+// ClearForcedProvenance clears the value of the "forced_provenance" field.
+func (_u *RequestAuditUpdateOne) ClearForcedProvenance() *RequestAuditUpdateOne {
+	_u.mutation.ClearForcedProvenance()
 	return _u
 }
 
@@ -566,6 +612,12 @@ func (_u *RequestAuditUpdateOne) sqlSave(ctx context.Context) (_node *RequestAud
 	}
 	if value, ok := _u.mutation.CaptureReason(); ok {
 		_spec.SetField(requestaudit.FieldCaptureReason, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ForcedProvenance(); ok {
+		_spec.SetField(requestaudit.FieldForcedProvenance, field.TypeString, value)
+	}
+	if _u.mutation.ForcedProvenanceCleared() {
+		_spec.ClearField(requestaudit.FieldForcedProvenance, field.TypeString)
 	}
 	if value, ok := _u.mutation.RequestFingerprint(); ok {
 		_spec.SetField(requestaudit.FieldRequestFingerprint, field.TypeString, value)

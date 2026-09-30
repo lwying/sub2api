@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   normalizeRequestTraceDetail,
+  normalizeRequestTraceExportTask,
   normalizeRequestTraceOperatorStatus,
   normalizeRequestTraceStageDecision,
   normalizeRequestTraceSummary,
@@ -10,6 +11,8 @@ import {
   requestTraceDecisionOutcomes,
   requestTraceDecisionSources,
   requestTraceDecisionStage,
+  requestTraceExportIncompleteReasons,
+  requestTraceExportSkipReasons,
   requestTraceStageNames,
   requestTraceStageReasons,
   requestTraceStageStates,
@@ -32,14 +35,49 @@ const status = {
   models: ['claude-sonnet-4-5'],
   platform_scope: 'exclude',
   platforms: ['antigravity'],
-  platform_exclude_unknown: true,
   risk_acknowledgement: {
     version: 'v2026.09.27', admin_user_id: 9, accepted_at: '2026-09-28T00:00:00Z',
     ip_address: '192.0.2.1', user_agent: 'CANARY_AGENT', phrase: 'CANARY_PHRASE',
   },
 }
 
+/**
+ * The exact JSON `service.RequestTraceOperatorStatus` marshals for
+ * `GET /admin/settings/request-trace`, field for field from the Go struct's json
+ * tags. There is no "exclude unknown platform" flag in that contract: under
+ * "only" and "except" an unknown platform is never captured, and only
+ * "all platforms" covers it, so the server has no such field to send.
+ */
+const goOperatorStatusJSON = {
+  enabled: true,
+  risk_acknowledged: true,
+  risk_acknowledgement_current: true,
+  risk_version: 'v2026.09.28',
+  risk_phrase_en: 'New statement',
+  risk_phrase_zh: '新版语句',
+  capture_allowed: true,
+  plaintext_capture_supported: true,
+  plaintext_capture_support_reason: 'supported',
+  all_groups: false,
+  group_ids: [4, 7],
+  model_scope: 'include',
+  models: ['claude-sonnet-4-5'],
+  platform_scope: 'exclude',
+  platforms: ['antigravity'],
+}
+
 describe('operator status boundary', () => {
+  it('reads the status the Go handler actually sends, without a phantom unknown-platform flag', () => {
+    // Round-tripped through JSON so this is exactly a wire record, not a literal.
+    const normalized = normalizeRequestTraceOperatorStatus(JSON.parse(JSON.stringify(goOperatorStatusJSON)))
+    expect(Object.keys(normalized).sort()).toEqual([
+      'all_groups', 'capture_allowed', 'enabled', 'group_ids', 'model_scope', 'models',
+      'plaintext_capture_support_reason', 'plaintext_capture_supported', 'platform_scope', 'platforms',
+      'risk_acknowledged', 'risk_acknowledgement_current', 'risk_phrase_en', 'risk_phrase_zh', 'risk_version',
+    ])
+    expect(normalized).toMatchObject({ platform_scope: 'exclude', platforms: ['antigravity'] })
+  })
+
   it('retains only the server gate verdict and safe acknowledgement metadata', () => {
     const normalized = normalizeRequestTraceOperatorStatus({ ...status, body: 'CANARY_BODY', headers: { Authorization: 'CANARY_KEY' } })
     expect(normalized).toMatchObject({ enabled: true, capture_allowed: false, plaintext_capture_supported: false })
@@ -57,7 +95,7 @@ describe('operator status boundary', () => {
     const normalized = normalizeRequestTraceOperatorStatus(status)
     expect(normalized).toMatchObject({
       all_groups: false, group_ids: [4, 7], model_scope: 'include', models: ['claude-sonnet-4-5'],
-      platform_scope: 'exclude', platforms: ['antigravity'], platform_exclude_unknown: true,
+      platform_scope: 'exclude', platforms: ['antigravity'],
     })
   })
 
@@ -71,7 +109,6 @@ describe('operator status boundary', () => {
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: ['4'] })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, models: ['claude', ''] })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, platforms: 'antigravity' })).toThrow()
-    expect(() => normalizeRequestTraceOperatorStatus({ ...status, platform_exclude_unknown: 'yes' })).toThrow()
     expect(() => normalizeRequestTraceOperatorStatus({ ...status, group_ids: new Array(1001).fill(1) })).toThrow()
   })
 })
@@ -85,6 +122,8 @@ const attemptFacts = {
   response_headers_omitted: 0,
   account_id: 42,
   model: 'claude-sonnet-4-5',
+  // The selected account platform, as migrations 266+ record it on a real attempt.
+  platform: 'anthropic',
   protocol: 'messages',
   value_protocol: 'anthropic',
   status: 200,
@@ -123,6 +162,14 @@ describe('request-time fact boundary', () => {
     }))).toMatchObject({ group_id: 7, requested_model: 'claude-sonnet-4-5' })
   })
 
+  it('keeps request-time identity IDs and current names without inferring unknown history', () => {
+    const observed = normalizeRequestTraceSummary(summaryRecord({ user_id: 23, api_key_id: 19, user_email: 'current@example.test', api_key_name: 'current-key' }))
+    expect(observed).toMatchObject({ user_id: 23, api_key_id: 19, user_email: 'current@example.test', api_key_name: 'current-key' })
+    expect(normalizeRequestTraceSummary(summaryRecord({}))).toMatchObject({ user_id: null, api_key_id: null })
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ user_id: 23 }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ user_email: 'guessed@example.test' }))).toThrow()
+  })
+
   it('reports an unobserved fact as unknown instead of an empty or zero value', () => {
     // Absent and the wire's own empty string both mean "not observed".
     const missing = normalizeRequestTraceDetail(traceDetail())
@@ -131,6 +178,31 @@ describe('request-time fact boundary', () => {
     const empty = normalizeRequestTraceDetail(traceDetail({ group_id: null, requested_model: '' }))
     expect(empty.group_id).toBeNull()
     expect(empty.requested_model).toBeNull()
+  })
+
+  it('keeps the request-time platform history, including a platform that was never sent', () => {
+    // An account selected but never sent upstream (for example a concurrency-slot
+    // wait that timed out) is still an observed platform: it stays in the history.
+    const summary = normalizeRequestTraceSummary(summaryRecord({
+      observed_platforms: ['anthropic', 'opencode_go'],
+    }))
+    expect(summary.observed_platforms).toEqual(['anthropic', 'opencode_go'])
+  })
+
+  it('reports an unobserved platform history as unknown, never as an empty list', () => {
+    expect(normalizeRequestTraceSummary(summaryRecord({})).observed_platforms).toBeNull()
+    expect(normalizeRequestTraceSummary(summaryRecord({ observed_platforms: null })).observed_platforms).toBeNull()
+  })
+
+  it('refuses a platform history the server could not have recorded', () => {
+    // An empty array is not "unknown" and would misstate an observed empty value.
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ observed_platforms: [] }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ observed_platforms: ['anthropic', 'anthropic'] }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ observed_platforms: ['bad platform'] }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({ observed_platforms: 'anthropic' }))).toThrow()
+    expect(() => normalizeRequestTraceSummary(summaryRecord({
+      observed_platforms: Array.from({ length: 17 }, (_, index) => `platform_${index}`),
+    }))).toThrow()
   })
 
   it('refuses a fact that cannot be an observed fact', () => {
@@ -154,7 +226,7 @@ describe('stage facts boundary', () => {
       request_headers_omitted: 2,
       response_headers: { 'Content-Type': ['application/json'] },
       response_headers_omitted: 0,
-      account_id: 42, model: 'claude-sonnet-4-5', protocol: 'messages', value_protocol: 'anthropic',
+      account_id: 42, model: 'claude-sonnet-4-5', platform: 'anthropic', protocol: 'messages', value_protocol: 'anthropic',
       status: 200, started_at: attemptFacts.started_at, ended_at: attemptFacts.ended_at,
     })
     expect(Object.keys(facts.request_headers)).toEqual(['Authorization', 'X-Trace'])
@@ -184,10 +256,10 @@ describe('stage facts boundary', () => {
     })
     expect(facts).toEqual({
       method: null, url: null, url_omitted: true, request_headers: {}, request_headers_omitted: 0,
-      response_headers: {}, response_headers_omitted: 0, account_id: null, model: null, protocol: null,
-      value_protocol: null, status: null, started_at: null, ended_at: null,
+      response_headers: {}, response_headers_omitted: 0, account_id: null, model: null, platform: null,
+      protocol: null, value_protocol: null, status: null, started_at: null, ended_at: null,
     })
-    expect(Object.keys(facts)).toHaveLength(14)
+    expect(Object.keys(facts)).toHaveLength(15)
   })
 
   it('refuses any fact key that is not part of the typed projection', () => {
@@ -206,10 +278,30 @@ describe('stage facts boundary', () => {
   })
 
   it('refuses response-side facts on the client metadata stage', () => {
-    for (const key of ['response_headers', 'account_id', 'model', 'protocol', 'value_protocol', 'status', 'started_at', 'ended_at']) {
+    for (const key of ['response_headers', 'account_id', 'model', 'platform', 'protocol', 'value_protocol', 'status', 'started_at', 'ended_at']) {
       expect(() => normalizeRequestTraceStageFacts('client_metadata', { method: 'POST', [key]: attemptFacts[key as keyof typeof attemptFacts] })).toThrow()
     }
     expect(normalizeRequestTraceStageFacts('client_metadata', { method: 'POST', request_headers: { Authorization: ['[REDACTED]'] } }).method).toBe('POST')
+  })
+
+  it('reads the selected account platform the backend has emitted since migration 266', () => {
+    // A real wire_attempt carries `platform`; refusing it as an unknown key would
+    // make the whole Trace detail unparseable.
+    const facts = normalizeRequestTraceStageFacts('wire_attempt', { ...attemptFacts, platform: 'anthropic' })
+    expect(facts.platform).toBe('anthropic')
+    expect(normalizeRequestTraceDetail(traceDetail({
+      stage: 'wire_attempt', attempt_index: 1, facts: { ...attemptFacts, platform: 'opencode_go' },
+    })).stages[0].facts?.platform).toBe('opencode_go')
+  })
+
+  it('reports an unobserved platform as absent and refuses one that is not a platform token', () => {
+    const withoutPlatform: Record<string, unknown> = { ...attemptFacts }
+    delete withoutPlatform.platform
+    expect(normalizeRequestTraceStageFacts('wire_attempt', withoutPlatform).platform).toBeNull()
+    expect(normalizeRequestTraceStageFacts('wire_attempt', { ...attemptFacts, platform: '' }).platform).toBeNull()
+    expect(() => normalizeRequestTraceStageFacts('wire_attempt', { ...attemptFacts, platform: 'ant hropic' })).toThrow()
+    expect(() => normalizeRequestTraceStageFacts('wire_attempt', { ...attemptFacts, platform: 7 })).toThrow()
+    expect(() => normalizeRequestTraceStageFacts('wire_attempt', { ...attemptFacts, platform: '-bad' })).toThrow()
   })
 
   it('bounds the URL and refuses a URL that claims to be omitted at the same time', () => {
@@ -283,7 +375,7 @@ describe('gateway decision stage boundary', () => {
   it('pins the closed sets to the backend contract', () => {
     // The drawer's label maps are keyed by these lists, so a change here is a
     // contract change that must be acknowledged on both sides.
-    expect([...requestTraceDecisionKinds]).toEqual(['auth', 'route', 'model_mapping', 'account_switch', 'identity'])
+    expect([...requestTraceDecisionKinds]).toEqual(['auth', 'route', 'model_mapping', 'account_switch', 'identity', 'mock'])
     expect([...requestTraceDecisionOutcomes]).toEqual([
       'accepted', 'rejected', 'selected', 'unchanged', 'rewritten', 'not_sent', 'unsupported',
     ])
@@ -302,6 +394,25 @@ describe('gateway decision stage boundary', () => {
     for (const source of requestTraceDecisionSources) {
       expect(normalizeRequestTraceStageDecision('gateway_decision', { ...decisionFacts, source }).source).toBe(source)
     }
+  })
+
+  it('parses the local mock decision that replaces an upstream attempt', () => {
+    // A downstream test request answered by the local mock records a gateway
+    // decision, not a wire attempt. If this value fell outside the closed set the
+    // detail parser would refuse the whole Trace, so the mock decision must parse
+    // on its own and with no transport fact attached.
+    const mock = { decision: 'mock', outcome: 'not_sent', source: 'inbound', sequence: 1 }
+    const decision = normalizeRequestTraceStageDecision('gateway_decision', mock)
+    expect(decision).toEqual({
+      decision: 'mock', outcome: 'not_sent', source: 'inbound', sequence: 1,
+      model_from: null, model_to: null, protocol_from: null, protocol_to: null, account_id: null, decided_at: null,
+    })
+
+    const detail = normalizeRequestTraceDetail(decisionDetail(mock))
+    expect(detail.stages[0].decision?.decision).toBe('mock')
+    expect(detail.stages[0].decision?.outcome).toBe('not_sent')
+    expect(detail.stages[0].decision?.source).toBe('inbound')
+    expect(detail.stages[0].facts).toBeUndefined()
   })
 
   it('normalizes a typed gateway decision and keeps every enum verbatim', () => {
@@ -419,6 +530,80 @@ describe('gateway decision stage boundary', () => {
     const withoutDecision = normalizeRequestTraceDetail(decisionDetail(undefined, { decision: undefined, metadata: { authorization: 'Bearer SECRET' } }))
     expect(withoutDecision.stages[0].decision).toBeUndefined()
     expect(JSON.stringify(withoutDecision)).not.toContain('Bearer SECRET')
+  })
+})
+
+describe('export incomplete reasons', () => {
+  it('pins the closed reason set to the backend contract, including a failed read', () => {
+    // Mirrors `service.RequestTraceExportIncomplete*`. The drawer's label map is
+    // keyed off this list, so a change here is a contract change.
+    expect([...requestTraceExportIncompleteReasons]).toEqual([
+      'limit_rows', 'limit_bytes', 'limit_runtime', 'limit_shards', 'source_gone', 'read_failed',
+    ])
+  })
+
+  it('carries a failed read through as its own reason, not as a vanished record', () => {
+    const task = normalizeRequestTraceExportTask({
+      id: 'a'.repeat(32), status: 'completed', filter: { trace_id: 'b'.repeat(32) },
+      rows_exported: 2, rows_skipped: 1, bytes_exported: 10,
+      created_at: '2026-09-28T00:00:00Z', completed_at: '2026-09-28T00:00:01Z',
+      download_until: null, downloadable: true, shard_count: 1, truncated: true,
+      incomplete_reason: 'read_failed',
+    })
+    expect(task.incomplete_reason).toBe('read_failed')
+    // The same task is still incomplete, never rendered as a full result.
+    expect(task.truncated).toBe(true)
+  })
+})
+
+describe('export skip counts', () => {
+  /** The server task view, with the typed breakdown the drawer reads. */
+  const task = (overrides: Record<string, unknown> = {}) => ({
+    id: 'a'.repeat(32), status: 'completed', filter: {},
+    rows_exported: 0, rows_skipped: 5, bytes_exported: 10,
+    created_at: '2026-09-28T00:00:00Z', completed_at: null,
+    download_until: null, downloadable: false, shard_count: 1,
+    truncated: true, incomplete_reason: 'read_failed', ...overrides,
+  })
+
+  it('pins the closed skip-reason set to reasons the incomplete set already names', () => {
+    // Mirrors `service.requestTraceExportSkipReasonCodes`. A `limit_*` code says why
+    // the task stopped, not how many rows it dropped, so it can never carry a count.
+    expect([...requestTraceExportSkipReasons]).toEqual(['read_failed', 'source_gone'])
+    for (const reason of requestTraceExportSkipReasons) {
+      expect(requestTraceExportIncompleteReasons).toContain(reason)
+    }
+  })
+
+  it('keeps a failed read and a vanished record apart instead of collapsing them into the total', () => {
+    const parsed = normalizeRequestTraceExportTask(task({ skipped_by_reason: { read_failed: 2, source_gone: 3 } }))
+    expect(parsed.skipped_by_reason).toEqual({ read_failed: 2, source_gone: 3 })
+    // The breakdown explains the aggregate; it never replaces or inflates it.
+    expect(parsed.rows_skipped).toBe(5)
+    // And it never turns an incomplete task back into a complete one.
+    expect(parsed.truncated).toBe(true)
+    expect(parsed.incomplete_reason).toBe('read_failed')
+  })
+
+  it('reads an absent breakdown as a real zero of every reason', () => {
+    expect(normalizeRequestTraceExportTask(task()).skipped_by_reason).toEqual({ read_failed: 0, source_gone: 0 })
+    expect(normalizeRequestTraceExportTask(task({ skipped_by_reason: { read_failed: 5 } })).skipped_by_reason)
+      .toEqual({ read_failed: 5, source_gone: 0 })
+    expect(normalizeRequestTraceExportTask(task({ skipped_by_reason: null })).skipped_by_reason)
+      .toEqual({ read_failed: 0, source_gone: 0 })
+  })
+
+  it('drops a reason code this version cannot name and refuses a count that is not a count', () => {
+    const parsed = normalizeRequestTraceExportTask(task({ skipped_by_reason: { read_failed: 1, some_new_reason: 9 } }))
+    expect(parsed.skipped_by_reason).toEqual({ read_failed: 1, source_gone: 0 })
+    expect(JSON.stringify(parsed)).not.toContain('some_new_reason')
+
+    for (const bad of [
+      { read_failed: -1 }, { read_failed: 1.5 }, { read_failed: '2' }, { read_failed: null },
+      [], 'read_failed:1',
+    ]) {
+      expect(() => normalizeRequestTraceExportTask(task({ skipped_by_reason: bad })), JSON.stringify(bad)).toThrow()
+    }
   })
 })
 

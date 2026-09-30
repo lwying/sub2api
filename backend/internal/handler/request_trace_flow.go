@@ -26,6 +26,11 @@ type requestTraceFlow struct {
 	rejectReason          string
 	decisions             []requestTraceDecisionEvent
 	decisionDropped       int
+	// localMockServed 标记本次逻辑请求由本地 mock 应答。它让"没有上游尝试"从
+	// 采集缺口变成网关的决定：finish 不再补写通用的 attempt_not_observed 阶段，
+	// 否则一次成功的本地 mock 会被谎报为 partial。真实"一次都没发出"的错误链路
+	// 不受影响——那时没有任何 mock 决策。
+	localMockServed bool
 	// selectedPlatform 是本次逻辑请求**首次**选中的上游账号平台，用于采集范围判定；
 	// observedPlatforms 列出本次请求实际选中过的所有平台（去重），用于给每条尝试标注平台。
 	// 两者必须分开：重试可能切到别的账号，判定只认首个，记录要完整。
@@ -100,6 +105,24 @@ func (f *requestTraceFlow) platformSnapshot() string {
 	return f.observedPlatforms[len(f.observedPlatforms)-1]
 }
 
+// observedPlatformSnapshot 报告本次逻辑请求实际选中过的全部平台（去重、按首次观察顺序）。
+//
+// 它比 platformSnapshot（只服务"当次尝试"标注）和采集范围判定用的首个平台都更完整：
+// 账号已选中、但还没发出上游就失败（例如并发槽位等待超时）的平台同样要被计为已观察事实，
+// 否则这条没有上游尝试的 Trace 会在平台筛选里既匹配不上具体平台、又被当成"未知"。
+// 从不猜值：没有选中过任何账号时返回 nil（未知）。
+func (f *requestTraceFlow) observedPlatformSnapshot() []string {
+	if f == nil {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.observedPlatforms) == 0 {
+		return nil
+	}
+	return append([]string(nil), f.observedPlatforms...)
+}
+
 func (f *requestTraceFlow) recordDecision(attemptIndex int, reason string, facts service.RequestTraceDecisionFacts) {
 	if f == nil || len(reason) == 0 || len(reason) > 96 || attemptIndex < 0 || attemptIndex > 1000 {
 		return
@@ -119,6 +142,9 @@ func (f *requestTraceFlow) recordDecision(attemptIndex int, reason string, facts
 		return
 	}
 	f.decisions = append(f.decisions, requestTraceDecisionEvent{attemptIndex: attemptIndex, reason: reason, facts: facts})
+	if facts.Decision == service.RequestTraceDecisionMock {
+		f.localMockServed = true
+	}
 }
 
 // RecordRequestTraceDecision records only an actually observed, bounded gateway
@@ -416,6 +442,7 @@ func (f *requestTraceFlow) finish(id string, authenticated bool) []service.Reque
 	facts := append([]requestTraceAttemptFacts(nil), f.attempts...)
 	decisions := append([]requestTraceDecisionEvent(nil), f.decisions...)
 	decisionDropped := f.decisionDropped
+	localMockServed := f.localMockServed
 	hijacked := f.hijacked
 	inboundFacts := f.clientFacts
 	rejectReason := f.rejectReason
@@ -447,7 +474,9 @@ func (f *requestTraceFlow) finish(id string, authenticated bool) []service.Reque
 	} else if len(body) == 0 {
 		stages = append(stages, service.RequestTraceStage{TraceID: id, Stage: "client_entry", State: service.RequestTraceNotObserved, Reason: "body_not_observed"})
 	}
-	if authenticated && len(facts) == 0 {
+	// 一次由本地 mock 应答的逻辑请求本来就不该有上游尝试：它是网关的决定，不是
+	// 采集缺口。只有真正"一次都没发出却没有任何决定解释"的链路才补这个通用缺口。
+	if authenticated && len(facts) == 0 && !localMockServed {
 		stages = append(stages, service.RequestTraceStage{
 			TraceID: id, Stage: "wire_attempt", State: service.RequestTraceNotObserved,
 			Reason: "attempt_not_observed",

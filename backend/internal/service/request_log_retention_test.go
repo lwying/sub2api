@@ -58,15 +58,64 @@ func TestRequestLogRetention_RuntimePolicy(t *testing.T) {
 	}
 }
 
+// mock 事件没有 usage 外键，所以它的清理必须动态跟随当次使用记录保留策略：
+// 策略生效时用同一 cutoff 清理；策略被停用（0 天 = 永久保留）时不得再用任何兜底期限
+// 删除，否则会违背"使用记录自动清理关闭时此类事件也不自动清理"的已确认行为。
+func TestRequestLogRetention_MockEventsFollowUsagePolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		enabled     bool
+		raw         string
+		wantDeleted bool
+		wantDays    int
+	}{
+		{"cleans with the usage cutoff", true, `{"request_retention_days":30}`, true, 30},
+		{"forever keeps mock events", true, `{"request_retention_days":0}`, false, 0},
+		{"aggregation disabled keeps mock events", false, `{"retention_days":30}`, false, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := newRuntimeSettingRepoStub()
+			settings.values[SettingKeyOpsRuntimeLogConfig] = tt.raw
+			repo := &dashboardAggregationRepoTestStub{}
+			svc := NewDashboardAggregationService(repo, nil, &config.Config{DashboardAgg: config.DashboardAggregationConfig{
+				Enabled:   tt.enabled,
+				Retention: config.DashboardAggregationRetentionConfig{UsageLogsDays: 90, UsageBillingDedupDays: 365, HourlyDays: 180, DailyDays: 730},
+			}})
+			svc.settingRepo = settings
+			var mockCutoffs []time.Time
+			svc.SetGatewayMockEventCleaner(func(_ context.Context, cutoff time.Time, _ int) (int64, error) {
+				mockCutoffs = append(mockCutoffs, cutoff)
+				return 0, nil
+			})
+
+			now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+			svc.maybeCleanupRetention(context.Background(), now)
+
+			if tt.wantDeleted {
+				require.Equal(t, []time.Time{now.AddDate(0, 0, -tt.wantDays)}, mockCutoffs)
+			} else {
+				require.Empty(t, mockCutoffs, "使用记录自动清理关闭时不得删除 mock 事件")
+			}
+		})
+	}
+}
+
 func TestRequestLogRetention_ReadFailureSkipsDeletion(t *testing.T) {
 	for _, raw := range []string{`{broken`, `{"request_retention_days":-1}`, `{"request_retention_days":3651}`} {
 		settings := newRuntimeSettingRepoStub()
 		settings.values[SettingKeyOpsRuntimeLogConfig] = raw
 		repo := &dashboardAggregationRepoTestStub{}
 		svc := &DashboardAggregationService{repo: repo, settingRepo: settings}
+		var mockCleanerCalls int
+		svc.SetGatewayMockEventCleaner(func(context.Context, time.Time, int) (int64, error) {
+			mockCleanerCalls++
+			return 0, nil
+		})
 		svc.runScheduledRetention()
 		require.Zero(t, repo.cleanupUsageCalls)
 		require.Zero(t, repo.cleanupDedupCalls)
+		// 读设置失败时同样不能用兜底期限删 mock 事件。
+		require.Zero(t, mockCleanerCalls)
 		require.Nil(t, svc.lastRetentionCleanup.Load())
 	}
 	settings := newRuntimeSettingRepoStub()

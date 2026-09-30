@@ -91,6 +91,68 @@ func (l RequestTraceExportLimits) Runtime() time.Duration {
 	return time.Duration(l.MaxRuntimeSec) * time.Second
 }
 
+// RequestTraceExportLimitsFromOptions 把构造时的缺省值表达成一份上限，供没有
+// 注入配置来源的部署使用。
+func RequestTraceExportLimitsFromOptions(opts RequestTraceExportOptions) RequestTraceExportLimits {
+	return RequestTraceExportLimits{
+		MaxRows:       opts.MaxRows,
+		MaxBytes:      opts.MaxBytes,
+		MaxRuntimeSec: int64(opts.MaxRuntime / time.Second),
+		MaxShardRows:  opts.MaxShardRows,
+		MaxShardBytes: opts.MaxShardBytes,
+	}
+}
+
+// requestTraceExportBounds 是一次任务实际使用的资源预算。
+//
+// 它按任务取值，而不是挂在服务上共用一个可变字段：一个任务执行期间另一个任务
+// （或另一个管理员会话）不该改变它的边界。取值来源见 boundsForTask。
+type requestTraceExportBounds struct {
+	MaxRows       int64
+	MaxBytes      int64
+	MaxRuntime    time.Duration
+	MaxShardRows  int64
+	MaxShardBytes int64
+}
+
+// boundsFromLimits 归一化一份上限并换算成执行预算。
+//
+// 归一化同时是护栏：无论快照来自落库值还是当前配置，落到执行路径上的上限都被
+// 夹在允许区间内，永远是有限正数。单分片上限不得超过整任务上限，否则分片永远
+// 写不满，上限形同虚设。
+func boundsFromLimits(limits RequestTraceExportLimits) requestTraceExportBounds {
+	limits = NormalizeRequestTraceExportLimits(limits)
+	bounds := requestTraceExportBounds{
+		MaxRows:       limits.MaxRows,
+		MaxBytes:      limits.MaxBytes,
+		MaxRuntime:    limits.Runtime(),
+		MaxShardRows:  limits.MaxShardRows,
+		MaxShardBytes: limits.MaxShardBytes,
+	}
+	if bounds.MaxShardRows > bounds.MaxRows {
+		bounds.MaxShardRows = bounds.MaxRows
+	}
+	if bounds.MaxShardBytes > bounds.MaxBytes {
+		bounds.MaxShardBytes = bounds.MaxBytes
+	}
+	return bounds
+}
+
+// boundsFromOptions 把构造时的缺省值当作执行预算。
+//
+// 这条路径不归一化：缺省值属于部署自己给定的配置，构造时已经补齐并保证分片
+// 上限不超过整任务上限，服务不该在这里悄悄改写它（例如把一个小到足以立刻
+// 触发截断的测试预算抬到下限之上）。
+func boundsFromOptions(opts RequestTraceExportOptions) requestTraceExportBounds {
+	return requestTraceExportBounds{
+		MaxRows:       opts.MaxRows,
+		MaxBytes:      opts.MaxBytes,
+		MaxRuntime:    opts.MaxRuntime,
+		MaxShardRows:  opts.MaxShardRows,
+		MaxShardBytes: opts.MaxShardBytes,
+	}
+}
+
 // readRequestTraceExportLimits 读取已存的上限；缺省、损坏或读取失败都按缺省处理，
 // 因为这里给的是"能写多少"，不是"能不能写"——权限边界由确认与部署条件决定。
 func (s *SettingService) readRequestTraceExportLimits(ctx context.Context) RequestTraceExportLimits {

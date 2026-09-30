@@ -34,34 +34,37 @@ func NewGatewayMockEventHandler(reader gatewayMockEventReader) *GatewayMockEvent
 // gatewayMockEventView 是列表投影：字段与落库的最小事实一一对应。
 // 关键词、回复正文与数据库主键都不在这里，因此也不会出现在响应里。
 type gatewayMockEventView struct {
-	OccurredAt   time.Time `json:"occurred_at"`
-	RuleID       string    `json:"rule_id"`
-	RuleVersion  string    `json:"rule_version"`
-	Protocol     string    `json:"protocol"`
-	Model        string    `json:"model"`
-	APIKeyID     int64     `json:"api_key_id"`
-	UserID       int64     `json:"user_id"`
-	GroupID      int64     `json:"group_id"`
-	AccountID    int64     `json:"account_id"`
-	ClientIP     string    `json:"client_ip"`
-	TraceID      string    `json:"trace_id"`
-	CleanupAfter time.Time `json:"cleanup_after"`
+	OccurredAt  time.Time `json:"occurred_at"`
+	RuleID      string    `json:"rule_id"`
+	RuleVersion string    `json:"rule_version"`
+	Protocol    string    `json:"protocol"`
+	Model       string    `json:"model"`
+	APIKeyID    int64     `json:"api_key_id"`
+	UserID      int64     `json:"user_id"`
+	GroupID     int64     `json:"group_id"`
+	AccountID   int64     `json:"account_id"`
+	ClientIP    string    `json:"client_ip"`
+	TraceID     string    `json:"trace_id"`
+	// CleanupAfter 恒为 null：落库的 cleanup_after 只是 legacy 内部字段（写入时的估算），
+	// 不是可披露的实际清理时间。键保留下来是为了让管理端能区分"没有披露期限"与
+	// "服务端漏了这个字段"；实际清理按 occurred_at 与当次保留策略决定。
+	CleanupAfter *time.Time `json:"cleanup_after"`
 }
 
 func gatewayMockEventViewOf(record service.GatewayMockEventRecord) gatewayMockEventView {
+	// CleanupAfter 不在这里赋值：落库的期限是内部估算，任何对外投影都不披露它。
 	return gatewayMockEventView{
-		OccurredAt:   record.OccurredAt,
-		RuleID:       record.RuleID,
-		RuleVersion:  record.RuleVersion,
-		Protocol:     record.Protocol,
-		Model:        record.Model,
-		APIKeyID:     record.APIKeyID,
-		UserID:       record.UserID,
-		GroupID:      record.GroupID,
-		AccountID:    record.AccountID,
-		ClientIP:     record.ClientIP,
-		TraceID:      record.TraceID,
-		CleanupAfter: record.CleanupAfter,
+		OccurredAt:  record.OccurredAt,
+		RuleID:      record.RuleID,
+		RuleVersion: record.RuleVersion,
+		Protocol:    record.Protocol,
+		Model:       record.Model,
+		APIKeyID:    record.APIKeyID,
+		UserID:      record.UserID,
+		GroupID:     record.GroupID,
+		AccountID:   record.AccountID,
+		ClientIP:    record.ClientIP,
+		TraceID:     record.TraceID,
 	}
 }
 

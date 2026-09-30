@@ -43,6 +43,8 @@ func (RequestAudit) Fields() []ent.Field {
 		field.String("capture_reason").
 			Default("").
 			Comment("采集原因码；phase1_uncovered 表示第一阶段未覆盖"),
+		field.String("forced_provenance").Optional().Nillable().
+			Comment("新强制审计产生的证据为 forced；历史 NULL 表示来源未知"),
 		field.String("request_fingerprint").Optional().Nillable(),
 		field.Int("fingerprint_key_version").Default(0),
 		field.Bytes("fingerprint_salt").Optional().Nillable().StructTag(`json:"-"`).SchemaType(map[string]string{dialect.Postgres: "bytea"}).Comment("Internal per-record random salt; never exposed in audit DTOs"),

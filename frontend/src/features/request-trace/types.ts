@@ -57,7 +57,8 @@ export const requestTraceStageReasons = [
   'incomplete_event', 'incomplete_read', 'decode_failed', 'read_failed',
   'stage_budget_exceeded', 'decision_budget_exceeded',
   'decision_recorded', 'auth_accepted', 'auth_rejected', 'route_selected',
-  'account_switch', 'model_rewritten', 'identity_sent', 'identity_rewritten', 'identity_not_sent',
+  'account_switch', 'model_rewritten', 'mock_served',
+  'identity_sent', 'identity_rewritten', 'identity_not_sent',
 ] as const
 
 export interface RequestTraceSummary {
@@ -79,6 +80,23 @@ export interface RequestTraceSummary {
    */
   group_id: number | null
   requested_model: string | null
+  /**
+   * The upstream account platforms this logical request **actually selected**,
+   * deduplicated in first-observation order and bounded. It includes an account
+   * that was selected but never sent upstream (for example a concurrency-slot
+   * wait that timed out): that is still an observed fact, so a request filtered
+   * by one of its platforms matches, and it is not "platform unknown".
+   *
+   * It is a request-time fact, not the account's current platform. `null` means
+   * no account was ever selected — the fact was not observed — and must never be
+   * rendered as a value or a guess. An empty array is not a valid value: unknown
+   * is only ever `null`.
+   */
+  observed_platforms: string[] | null
+  user_id: number | null
+  api_key_id: number | null
+  user_email: string | null
+  api_key_name: string | null
 }
 
 export interface RequestTraceStage {
@@ -117,6 +135,13 @@ export interface RequestTraceStageFacts {
   response_headers_omitted: number
   account_id: number | null
   model: string | null
+  /**
+   * The upstream account platform this attempt was actually sent through. It is
+   * a request-time fact and only a real wire attempt has one: selecting an
+   * account records it even when the attempt never reaches the upstream, so it
+   * is absent only when no account was ever selected.
+   */
+  platform: string | null
   protocol: string | null
   value_protocol: string | null
   status: number | null
@@ -131,9 +156,12 @@ export interface RequestTraceStageFacts {
  * contract gains or drops cannot silently keep or lose a label.
  *
  * These mirror the Go contract's enum constants (`RequestTraceDecisionKind`,
- * `RequestTraceDecisionOutcome`, `RequestTraceDecisionSource`).
+ * `RequestTraceDecisionOutcome`, `RequestTraceDecisionSource`). `mock` is the
+ * gateway serving a downstream test request with a local mock reply instead of
+ * sending upstream: a decision (`not_sent`), never an upstream attempt, so the
+ * detail parser must recognize it rather than treat the whole Trace as unparseable.
  */
-export const requestTraceDecisionKinds = ['auth', 'route', 'model_mapping', 'account_switch', 'identity'] as const
+export const requestTraceDecisionKinds = ['auth', 'route', 'model_mapping', 'account_switch', 'identity', 'mock'] as const
 
 export type RequestTraceDecisionKind = (typeof requestTraceDecisionKinds)[number]
 
@@ -177,11 +205,19 @@ export interface RequestTraceDetail extends RequestTraceSummary {
   stages: RequestTraceStage[]
 }
 
+export interface RequestTraceQueryStats {
+  matched_total: number
+  status: { '2xx': number; '3xx': number; '4xx': number; '5xx': number; other: number }
+  capture: { not_observed: number; stored: number; partial: number; write_failed: number }
+  usage: { linked: number; unlinked: number }
+}
+
 export interface RequestTracePage {
   items: RequestTraceSummary[]
   total: number
   page: number
   page_size: number
+  stats?: RequestTraceQueryStats
 }
 
 export interface RequestTraceListParams {
@@ -218,6 +254,11 @@ export interface RequestTraceListParams {
   model_unknown?: boolean
   platform?: string
   platform_unknown?: boolean
+  user_id?: number
+  user_unknown?: boolean
+  api_key_id?: number
+  api_key_unknown?: boolean
+  q?: string
 }
 
 const traceIDPattern = /^[0-9a-f]{32}$/
@@ -233,18 +274,27 @@ const scopeKinds = new Set<string>(requestTraceScopes)
 const maxScopeEntries = 1000
 const maxScopeEntryLength = 256
 
+/**
+ * Mirror of the server-side bound on the request-time platform history
+ * (`service.RequestTraceObservedPlatformLimit`). Above it the server refuses the
+ * write outright, so a longer list is not a history this backend can have
+ * recorded.
+ */
+const maxObservedPlatforms = 16
+
 // Mirror of the server-side stage fact budget and per-field bounds. The client
 // re-checks them so a compromised or buggy server cannot push unbounded or
 // untyped values into the detail view.
 const factStages = new Set(['client_metadata', 'wire_attempt'])
 const factKeys = new Set([
   'method', 'url', 'url_omitted', 'request_headers', 'request_headers_omitted', 'response_headers',
-  'response_headers_omitted', 'account_id', 'model', 'protocol', 'value_protocol', 'status', 'started_at', 'ended_at',
+  'response_headers_omitted', 'account_id', 'model', 'platform', 'protocol', 'value_protocol', 'status',
+  'started_at', 'ended_at',
 ])
 /** Facts the server can only attach to a real wire attempt, never to client metadata. */
 const attemptOnlyFactKeys = [
-  'response_headers', 'response_headers_omitted', 'account_id', 'model', 'protocol', 'value_protocol',
-  'status', 'started_at', 'ended_at',
+  'response_headers', 'response_headers_omitted', 'account_id', 'model', 'platform', 'protocol',
+  'value_protocol', 'status', 'started_at', 'ended_at',
 ] as const
 /**
  * The gateway records decisions on their own stage. That stage is not a wire
@@ -304,6 +354,42 @@ function optionalObservedScalar(value: unknown, max = maxScopeEntryLength): stri
   return value
 }
 
+/**
+ * The request-time platform history: absent (`null`), or a non-empty bounded
+ * list of platform tokens, deduplicated in first-observation order. An empty
+ * array, a duplicate or a malformed token is refused rather than normalized —
+ * "unknown" is only ever `null`, and a value the server could not have written
+ * must not be rendered as an observed platform.
+ */
+function observedPlatformHistory(value: unknown): string[] | null {
+  if (value == null) return null
+  if (!Array.isArray(value) || value.length === 0 || value.length > maxObservedPlatforms) {
+    throw new Error('Invalid request Trace platform history')
+  }
+  const seen = new Set<string>()
+  const platforms: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || !factTokenPattern.test(item) || seen.has(item)) {
+      throw new Error('Invalid request Trace platform history')
+    }
+    seen.add(item)
+    platforms.push(item)
+  }
+  return platforms
+}
+
+function observedPositiveID(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) throw new Error('Invalid request Trace identity')
+  return value as number
+}
+
+function safeIdentityLabel(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value !== 'string' || value.length > 320 || [...value].some(character => character.codePointAt(0)! < 32) || malformedTextPattern.test(value)) throw new Error('Invalid request Trace identity label')
+  return value
+}
+
 export function normalizeRequestTraceSummary(value: unknown): RequestTraceSummary {
   const source = traceRecord(value)
   if (typeof source.trace_id !== 'string' || !traceIDPattern.test(source.trace_id)) throw new Error('Invalid request Trace id')
@@ -316,6 +402,12 @@ export function normalizeRequestTraceSummary(value: unknown): RequestTraceSummar
   // rather than shown as an observed group.
   const groupID = source.group_id == null ? null : nonnegativeInt(source.group_id)
   if (groupID === 0) throw new Error('Invalid request Trace group')
+  const userID = observedPositiveID(source.user_id)
+  const keyID = observedPositiveID(source.api_key_id)
+  if ((userID === null) !== (keyID === null)) throw new Error('Invalid request Trace identity')
+  const userEmail = safeIdentityLabel(source.user_email)
+  const keyName = safeIdentityLabel(source.api_key_name)
+  if ((!userID && userEmail) || (!keyID && keyName)) throw new Error('Invalid request Trace identity label')
   return {
     trace_id: source.trace_id,
     route_family: source.route_family as RequestTraceSummary['route_family'],
@@ -328,7 +420,32 @@ export function normalizeRequestTraceSummary(value: unknown): RequestTraceSummar
     cleanup_after: optionalTimestamp(source.cleanup_after),
     group_id: groupID,
     requested_model: optionalObservedScalar(source.requested_model),
+    observed_platforms: observedPlatformHistory(source.observed_platforms),
+    user_id: userID,
+    api_key_id: keyID,
+    user_email: userEmail,
+    api_key_name: keyName,
   }
+}
+
+function normalizeTraceStats(value: unknown): RequestTraceQueryStats {
+  const source = traceRecord(value)
+  const status = traceRecord(source.status)
+  const capture = traceRecord(source.capture)
+  const usage = traceRecord(source.usage)
+  const count = (v: unknown) => nonnegativeInt(v)
+  const stats: RequestTraceQueryStats = {
+    matched_total: count(source.matched_total),
+    status: { '2xx': count(status['2xx']), '3xx': count(status['3xx']), '4xx': count(status['4xx']), '5xx': count(status['5xx']), other: count(status.other) },
+    capture: { not_observed: count(capture.not_observed), stored: count(capture.stored), partial: count(capture.partial), write_failed: count(capture.write_failed) },
+    usage: { linked: count(usage.linked), unlinked: count(usage.unlinked) },
+  }
+  if (Object.values(stats.status).reduce((sum, value) => sum + value, 0) !== stats.matched_total ||
+      Object.values(stats.capture).reduce((sum, value) => sum + value, 0) !== stats.matched_total ||
+      Object.values(stats.usage).reduce((sum, value) => sum + value, 0) !== stats.matched_total) {
+    throw new Error('Invalid request Trace query statistics')
+  }
+  return stats
 }
 
 export function normalizeRequestTracePage(value: unknown): RequestTracePage {
@@ -337,7 +454,10 @@ export function normalizeRequestTracePage(value: unknown): RequestTracePage {
   const page = nonnegativeInt(source.page)
   const pageSize = nonnegativeInt(source.page_size, 200)
   if (!page || !pageSize) throw new Error('Invalid request Trace pagination')
-  return { items: source.items.map(normalizeRequestTraceSummary), total: nonnegativeInt(source.total), page, page_size: pageSize }
+  const total = nonnegativeInt(source.total)
+  const stats = source.stats == null ? undefined : normalizeTraceStats(source.stats)
+  if (stats && stats.matched_total !== total) throw new Error('Invalid request Trace query total')
+  return { items: source.items.map(normalizeRequestTraceSummary), total, page, page_size: pageSize, ...(stats ? { stats } : {}) }
 }
 
 export function normalizeRequestTraceDetail(value: unknown): RequestTraceDetail {
@@ -497,6 +617,7 @@ export function normalizeRequestTraceStageFacts(stage: string, value: unknown): 
     response_headers_omitted: factOmittedCount(source, 'response_headers_omitted'),
     account_id: factCount(source.account_id),
     model: factToken(source.model),
+    platform: factToken(source.platform),
     protocol: factToken(source.protocol),
     value_protocol: factToken(source.value_protocol),
     status,
@@ -597,6 +718,11 @@ export interface RequestTraceOperatorStatus {
    * rewrites Traces that were already stored. A scope of `all` (all groups, all
    * models, all platforms) is the only one that covers a request whose fact
    * could not be determined.
+   *
+   * The platform scope has no separate "unknown" flag, mirroring the Go
+   * contract: an unknown platform is never captured under `include` or
+   * `exclude`, and only `all` covers it. Sending a flag would claim a rule the
+   * server does not have.
    */
   all_groups: boolean
   group_ids: number[]
@@ -604,8 +730,6 @@ export interface RequestTraceOperatorStatus {
   models: string[]
   platform_scope: RequestTraceScope
   platforms: string[]
-  /** Only meaningful with `platform_scope: 'exclude'`; unknown stays captured otherwise. */
-  platform_exclude_unknown: boolean
 }
 
 /** The complete scope object, as it is stored and submitted. */
@@ -616,7 +740,6 @@ export interface RequestTraceScopeInput {
   models: string[]
   platform_scope: RequestTraceScope
   platforms: string[]
-  platform_exclude_unknown: boolean
 }
 
 /**
@@ -695,7 +818,7 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
   // The capture scope is part of the same record as the switch: a missing or
   // wrong-typed scope is not rendered as an empty (i.e. permissive-looking)
   // scope, because that would misstate what is being captured.
-  if (typeof source.all_groups !== 'boolean' || typeof source.platform_exclude_unknown !== 'boolean') {
+  if (typeof source.all_groups !== 'boolean') {
     throw new Error('Trace capture scope is unavailable')
   }
   const status: RequestTraceOperatorStatus = {
@@ -714,7 +837,6 @@ export function normalizeRequestTraceOperatorStatus(raw: unknown): RequestTraceO
     models: scopeEntryList(source.models),
     platform_scope: scopeKind(source.platform_scope),
     platforms: scopeEntryList(source.platforms),
-    platform_exclude_unknown: source.platform_exclude_unknown,
   }
   if (source.risk_acknowledgement !== undefined && source.risk_acknowledgement !== null) {
     const ack = record(source.risk_acknowledgement)
@@ -752,6 +874,11 @@ export interface RequestTraceExportFilter {
   model_unknown?: boolean
   platform?: string
   platform_unknown?: boolean
+  user_id?: number
+  user_unknown?: boolean
+  api_key_id?: number
+  api_key_unknown?: boolean
+  q?: string
   trace_ids?: string[]
 }
 
@@ -770,10 +897,31 @@ export const requestTraceExportMaxShards = 1000
  * The closed set of reasons a completed export is marked incomplete. It is a
  * closed set of codes, not free text: an unknown code renders through the
  * generic fallback label, never as the raw server string.
+ *
+ * `read_failed` and `source_gone` are two different facts and neither may stand
+ * for the other: a record that was enumerated and could not be read is not a
+ * record that had already been deleted.
  */
-export const requestTraceExportIncompleteReasons = ['limit_rows', 'limit_bytes', 'limit_runtime', 'source_gone'] as const
+export const requestTraceExportIncompleteReasons = [
+  'limit_rows', 'limit_bytes', 'limit_runtime', 'limit_shards', 'source_gone', 'read_failed',
+] as const
 
 export type RequestTraceExportIncompleteReason = (typeof requestTraceExportIncompleteReasons)[number]
+
+/**
+ * The closed set of reasons a **row** can be counted as skipped under, as a
+ * runtime list and a union type. It is a strict subset of the incomplete
+ * reasons: `limit_*` says why the task stopped, not how many rows it dropped, so
+ * it can never carry a per-row count.
+ *
+ * The set is the single source of truth for the parser and for the breakdown
+ * labels the task drawer renders, so a reason the backend gains or drops cannot
+ * silently keep or lose a label. `read_failed` and `source_gone` are two
+ * different facts and the counts must never be merged back into one number.
+ */
+export const requestTraceExportSkipReasons = ['read_failed', 'source_gone'] as const
+
+export type RequestTraceExportSkipReason = (typeof requestTraceExportSkipReasons)[number]
 
 /**
  * Server-owned task view. Completion and download deadlines are absent until the
@@ -792,6 +940,13 @@ export interface RequestTraceExportTask {
   filter: RequestTraceExportFilter
   rows_exported: number
   rows_skipped: number
+  /**
+   * The typed breakdown of `rows_skipped`, keyed by the closed skip-reason set.
+   * `rows_skipped` stays the authoritative total; a reason with no entry is a
+   * real zero, not an unobserved fact, and reading the breakdown can never turn
+   * an incomplete task back into a complete one.
+   */
+  skipped_by_reason: Record<RequestTraceExportSkipReason, number>
   bytes_exported: number
   created_at: string
   completed_at: string | null
@@ -851,19 +1006,23 @@ function normalizeRequestTraceExportFilter(value: unknown): RequestTraceExportFi
     const parsed = optionalTimestamp(source[key])
     if (parsed !== null) filter[key] = parsed
   }
-  for (const key of ['usage_log_id', 'account_id', 'group_id'] as const) {
+  for (const key of ['usage_log_id', 'account_id', 'group_id', 'user_id', 'api_key_id'] as const) {
     const parsed = optionalPositiveInt(source[key])
     if (parsed !== undefined) filter[key] = parsed
   }
   // Each request-time fact is queried as a concrete value or as an explicit
   // "not observed", never both: the server refuses the pair.
-  for (const key of ['group_unknown', 'model_unknown', 'platform_unknown'] as const) {
+  for (const key of ['group_unknown', 'model_unknown', 'platform_unknown', 'user_unknown', 'api_key_unknown'] as const) {
     const parsed = optionalBoolean(source[key])
     if (parsed !== undefined) filter[key] = parsed
   }
   for (const key of ['requested_model', 'platform'] as const) {
     const parsed = optionalObservedScalar(source[key])
     if (parsed !== null) filter[key] = parsed
+  }
+  if (source.q != null) {
+    if (typeof source.q !== 'string' || source.q.length < 3 || source.q.length > 128 || /[\r\n\0]/.test(source.q)) throw new Error('Invalid request Trace keyword')
+    filter.q = source.q
   }
   if (source.trace_ids != null) {
     if (!Array.isArray(source.trace_ids) || source.trace_ids.length === 0) throw new Error('Invalid request Trace export filter')
@@ -1092,6 +1251,7 @@ export function normalizeRequestTraceExportTask(value: unknown): RequestTraceExp
     filter: normalizeRequestTraceExportFilter(source.filter),
     rows_exported: nonnegativeInt(source.rows_exported),
     rows_skipped: nonnegativeInt(source.rows_skipped),
+    skipped_by_reason: normalizeRequestTraceExportSkipCounts(source.skipped_by_reason),
     bytes_exported: nonnegativeInt(source.bytes_exported),
     created_at: source.created_at,
     completed_at: optionalTimestamp(source.completed_at),
@@ -1104,6 +1264,28 @@ export function normalizeRequestTraceExportTask(value: unknown): RequestTraceExp
     // label instead of being silently reported as "complete".
     incomplete_reason: optionalObservedScalar(source.incomplete_reason),
   }
+}
+
+const skipReasons = new Set<string>(requestTraceExportSkipReasons)
+
+/**
+ * Normalizes the typed skip counts against the closed set, zero-filling a reason
+ * the task did not report. A key outside the set is dropped rather than rendered
+ * as a category this version cannot name — `rows_skipped` still reports it — and
+ * a count that is not a bounded non-negative integer is refused, so a broken
+ * server cannot inflate a displayed figure.
+ */
+function normalizeRequestTraceExportSkipCounts(value: unknown): Record<RequestTraceExportSkipReason, number> {
+  const counts = Object.fromEntries(
+    requestTraceExportSkipReasons.map(reason => [reason, 0]),
+  ) as Record<RequestTraceExportSkipReason, number>
+  if (value === undefined || value === null) return counts
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid request Trace export skip counts')
+  for (const [reason, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!skipReasons.has(reason)) continue
+    counts[reason as RequestTraceExportSkipReason] = nonnegativeInt(raw)
+  }
+  return counts
 }
 
 /**

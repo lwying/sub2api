@@ -73,6 +73,38 @@ describe('admin gateway mock hit list', () => {
     expect(wrapper.get('[data-testid="gateway-mock-events-page"]').text()).toBe('admin.gatewayMock.events.page')
   })
 
+  it('discloses that hits follow the usage-retention policy and are kept while it is off', async () => {
+    const wrapper = await mountLoaded()
+    expect(wrapper.get('[data-testid="gateway-mock-events-retention-note"]').text())
+      .toBe('admin.gatewayMock.events.retentionNote')
+  })
+
+  it('says a hit has no recorded cleanup deadline instead of inventing a date', async () => {
+    const wrapper = await mountLoaded(page({ items: [event({ cleanup_after: null })] }))
+
+    const cell = wrapper.get('[data-testid="gateway-mock-events-cleanup"]')
+    expect(cell.text()).toBe('admin.gatewayMock.events.noDeadline')
+    // 那不是"未观察到该字段"的占位，也不是被猜成某个日期的空白。
+    expect(cell.text()).not.toBe('admin.gatewayMock.events.absent')
+    expect(Number.isNaN(Date.parse(cell.text()))).toBe(true)
+  })
+
+  it('never renders the stored deadline, even when the answer still carries one', async () => {
+    // 服务端不再披露该列（落库值只是内部估算）。旧实例仍可能回一个日期：
+    // 面板必须继续按"未记录清理期限"呈现，而不是把它当成实际清理时间。
+    const wrapper = await mountLoaded(page({ items: [event({ cleanup_after: '2026-12-29T03:04:05Z' })] }))
+
+    const cell = wrapper.get('[data-testid="gateway-mock-events-cleanup"]')
+    expect(cell.text()).toBe('admin.gatewayMock.events.noDeadline')
+    expect(wrapper.text()).not.toContain(new Date('2026-12-29T03:04:05Z').toLocaleDateString())
+  })
+
+  it('shows the retention disclosure even when nothing has been recorded', async () => {
+    const wrapper = await mountLoaded({ items: [], total: 0, page: 1, page_size: 20 })
+    expect(wrapper.get('[data-testid="gateway-mock-events-retention-note"]').text())
+      .toBe('admin.gatewayMock.events.retentionNote')
+  })
+
   it('renders every value the gateway did not record as explicitly absent, never blank', async () => {
     const wrapper = await mountLoaded(page({
       items: [event({

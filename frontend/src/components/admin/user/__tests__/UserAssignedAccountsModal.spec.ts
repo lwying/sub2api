@@ -942,6 +942,99 @@ describe('UserAssignedAccountsModal', () => {
     wrapper.unmount()
   })
 
+  // --- 保存被整批拒绝：必须点名具体失败项，草稿与勾选保留 ---
+
+  it('marks the exact pending accounts the server rejected and keeps the draft', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 13]))
+    // 12 在保存前被删除：服务端整批回滚，并在错误元数据里点名具体的失效 id。
+    updateAccountView.mockRejectedValue({
+      status: 400,
+      code: 400,
+      reason: 'UNKNOWN_ACCOUNT',
+      message: 'One or more account ids do not exist',
+      metadata: { invalid_account_ids: '12,999', invalid_account_count: '2' }
+    })
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="candidate-select-13"]').setValue(true)
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    expect(updateAccountView).toHaveBeenCalledWith(42, { enabled: true, account_ids: [11, 12, 13] })
+    // 整批都没有落地：不报成功、不关闭弹窗。
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.get('[data-test="grant-dialog"]').exists()).toBe(true)
+
+    // 只有服务端点名的 12 被标出：13 与既有 11 不受牵连。
+    expect(wrapper.get('[data-test="assigned-invalid-12"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="assigned-invalid-13"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="assigned-invalid-11"]').exists()).toBe(false)
+    const notice = wrapper.get('[data-test="save-invalid-accounts"]').text()
+    expect(notice).toContain('assignedAccounts.admin.saveUnknownAccounts')
+    expect(notice).toContain('"ids":"12"')
+
+    // 草稿原样保留（包含被点名的 12），管理员可以就地移除它后重试。
+    expect(wrapper.get('[data-test="assigned-12"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-13"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="assigned-count"]').text()).toContain('"count":3')
+    expect(wrapper.get('[data-test="save-grant"]').attributes('disabled')).toBeUndefined()
+
+    // 移除被点名的账号后提示随之消失，重试只提交剩下的内容。
+    await wrapper.get('[data-test="remove-12"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="save-invalid-accounts"]').exists()).toBe(false)
+
+    updateAccountView.mockResolvedValue({ user_id: 42, enabled: true, account_ids: [11, 13], accounts: [] })
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+    expect(updateAccountView).toHaveBeenLastCalledWith(42, { enabled: true, account_ids: [11, 13] })
+    expect(showSuccess).toHaveBeenCalledWith('assignedAccounts.admin.saveSuccess')
+    wrapper.unmount()
+  })
+
+  it('falls back to the generic failure notice when the server names no account', async () => {
+    updateAccountView.mockRejectedValue({ status: 500, message: 'boom' })
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="save-grant"]').trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test="save-invalid-accounts"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="assigned-11"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('clears a stale batch-add summary once the pending list is edited by hand', async () => {
+    listAccounts.mockResolvedValue(candidateList([11, 12, 13]))
+
+    const wrapper = mountModal()
+    await settleModal()
+
+    await wrapper.get('[data-test="candidate-select-12"]').setValue(true)
+    await wrapper.get('[data-test="batch-add-selected"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="batch-add-summary"]').exists()).toBe(true)
+
+    // 逐行添加改动了待授权列表：上一次合并的计数不再描述当前草稿。
+    await wrapper.get('[data-test="add-13"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="batch-add-summary"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="assigned-13"]').exists()).toBe(true)
+    expect(updateAccountView).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
   it('never drops server-side assignments that are outside the current candidate filter', async () => {
     getAccountView.mockResolvedValue({
       user_id: 42,

@@ -30,6 +30,12 @@ const (
 	RequestTraceDecisionModelMapping  RequestTraceDecisionKind = "model_mapping"
 	RequestTraceDecisionAccountSwitch RequestTraceDecisionKind = "account_switch"
 	RequestTraceDecisionIdentity      RequestTraceDecisionKind = "identity"
+	// RequestTraceDecisionMock records the gateway serving a 下游测试请求 with a
+	// 本地 mock reply instead of sending upstream. It is a gateway decision, not an
+	// upstream attempt: the outcome is not_sent and the decision's input is the
+	// inbound request. Adding a value to this closed enum needs no migration --
+	// migration 262 bounds the JSONB *keys* per stage, not the enumerated values.
+	RequestTraceDecisionMock RequestTraceDecisionKind = "mock"
 )
 
 // RequestTraceDecisionOutcome is the observed result of one decision.
@@ -58,7 +64,8 @@ const (
 )
 
 // RequestTraceDecisionFacts is the only persisted projection of a gateway decision
-// event (auth, route, model mapping, account switch or identity rewrite). It has no
+// event (auth, route, model mapping, account switch, identity rewrite or the local
+// mock reply that replaces an upstream send). It has no
 // free-form field: a caller cannot attach a header, a body fragment, a raw URL or an
 // arbitrary map to a decision, and the enums above are closed sets. An absent value
 // is omitted (model/protocol/account/instant) or rejected (enum, sequence) rather
@@ -79,7 +86,7 @@ type RequestTraceDecisionFacts struct {
 func requestTraceDecisionKindValid(kind RequestTraceDecisionKind) bool {
 	switch kind {
 	case RequestTraceDecisionAuth, RequestTraceDecisionRoute, RequestTraceDecisionModelMapping,
-		RequestTraceDecisionAccountSwitch, RequestTraceDecisionIdentity:
+		RequestTraceDecisionAccountSwitch, RequestTraceDecisionIdentity, RequestTraceDecisionMock:
 		return true
 	default:
 		return false

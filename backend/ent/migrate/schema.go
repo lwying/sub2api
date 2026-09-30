@@ -1517,6 +1517,7 @@ var (
 		{Name: "attempts", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "capture_completeness", Type: field.TypeString, Default: "complete"},
 		{Name: "capture_reason", Type: field.TypeString, Default: ""},
+		{Name: "forced_provenance", Type: field.TypeString, Nullable: true},
 		{Name: "request_fingerprint", Type: field.TypeString, Nullable: true},
 		{Name: "fingerprint_key_version", Type: field.TypeInt, Default: 0},
 		{Name: "fingerprint_salt", Type: field.TypeBytes, Nullable: true, SchemaType: map[string]string{"postgres": "bytea"}},
@@ -1532,7 +1533,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "request_audits_usage_logs_request_audit",
-				Columns:    []*schema.Column{RequestAuditsColumns[11]},
+				Columns:    []*schema.Column{RequestAuditsColumns[12]},
 				RefColumns: []*schema.Column{UsageLogsColumns[0]},
 				OnDelete:   schema.Cascade,
 			},

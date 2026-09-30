@@ -3,7 +3,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -122,7 +121,7 @@ func TestHandleAnthropicStreamingResponseRequestAuditSkeleton(t *testing.T) {
 			}
 
 			repo := &stubRequestAuditRepo{}
-			require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 1}, openAIMessagesAuditInputFromResult(result)))
+			recordAuditProjectionForTest(repo, openAIMessagesAuditInputFromResult(result))
 			require.NotNil(t, repo.created)
 			require.Equal(t, tt.wantCompleteness, repo.created.CaptureCompleteness)
 			require.NotEmpty(t, repo.created.Events)
@@ -173,7 +172,7 @@ func TestHandleAnthropicStreamingResponseRequestAuditSkeletonTruncatesAtEventCap
 	require.Equal(t, "truncated", marker.Type)
 
 	repo := &stubRequestAuditRepo{}
-	require.NoError(t, AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 2}, openAIMessagesAuditInputFromResult(result)))
+	recordAuditProjectionForTest(repo, openAIMessagesAuditInputFromResult(result))
 	require.NotNil(t, repo.created)
 	require.Equal(t, RequestAuditCaptureTruncated, repo.created.CaptureCompleteness)
 

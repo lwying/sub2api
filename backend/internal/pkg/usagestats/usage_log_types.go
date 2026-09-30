@@ -291,6 +291,9 @@ type UsageLogFilters struct {
 	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
+	// IncludeAdminDiagnostics hydrates Trace/forced-audit links only for an admin
+	// login session. Ordinary user metering must never depend on those tables.
+	IncludeAdminDiagnostics bool
 }
 
 // UsageStats represents usage statistics

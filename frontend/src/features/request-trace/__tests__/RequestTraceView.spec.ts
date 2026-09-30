@@ -148,11 +148,30 @@ describe('admin Request Trace list', () => {
     expect(mocks.listTraces).toHaveBeenCalledTimes(1)
   })
 
-  it('opens the selected trace without fetching another body automatically', async () => {
+  it('opens the selected trace on row click or keyboard, but not on checkbox', async () => {
     const wrapper = await mountLoaded()
-    await wrapper.get('[data-testid="request-trace-view"]').trigger('click')
+    await wrapper.get(`[data-testid="request-trace-select-${TRACE_ID}"]`).trigger('click')
+    expect(wrapper.get('[data-testid="trace-detail-stub"]').attributes('data-show')).toBe('false')
+    await wrapper.get('[data-testid="request-trace-row"]').trigger('click')
     expect(wrapper.get('[data-testid="trace-detail-stub"]').attributes('data-id')).toBe(TRACE_ID)
     expect(mocks.getTrace).not.toHaveBeenCalled()
+  })
+
+  it('shows current-query statistics without changing scope when the draft is edited', async () => {
+    mocks.listTraces.mockResolvedValue({ ...page([trace()]), total: 2, stats: {
+      matched_total: 2,
+      status: { '2xx': 1, '3xx': 0, '4xx': 1, '5xx': 0, other: 0 },
+      capture: { stored: 1, partial: 1, not_observed: 0, write_failed: 0 },
+      usage: { linked: 0, unlinked: 2 },
+    } })
+    const wrapper = await mountLoaded()
+    expect(wrapper.get('[data-testid="request-trace-query-stats"]').text()).toContain('2')
+    await wrapper.get('[data-testid="request-trace-keyword"]').setValue('claude')
+    expect(mocks.listTraces).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-testid="request-trace-query-stats"]').text()).toContain('2')
+    await wrapper.get('[data-testid="request-trace-search"]').trigger('click')
+    await flushPromises()
+    expect(mocks.listTraces).toHaveBeenLastCalledWith({ page: 1, page_size: 20, q: 'claude' }, expect.anything())
   })
 
   it('renders the export task drawer closed and starts no export on load', async () => {

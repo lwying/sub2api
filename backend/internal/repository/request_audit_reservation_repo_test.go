@@ -149,7 +149,7 @@ func TestRequestAuditReservationMissingFinalizesIncompleteAudit(t *testing.T) {
 	require.NoError(t, err)
 
 	err = repo.FinalizeReservation(ctx, "missing-forced-reservation", usage.ID, &service.RequestAuditRecord{
-		Attempts: []service.RequestAuditAttempt{{AccountID: 11, Model: "untrusted-model", Protocol: service.RequestAuditProtocolOpenAIResp, Stage: service.RequestAuditStageWire}},
+		Attempts:            []service.RequestAuditAttempt{{AccountID: 11, Model: "untrusted-model", Protocol: service.RequestAuditProtocolOpenAIResp, Stage: service.RequestAuditStageWire}},
 		CaptureCompleteness: service.RequestAuditCaptureComplete,
 	})
 	require.NoError(t, err)
@@ -159,6 +159,7 @@ func TestRequestAuditReservationMissingFinalizesIncompleteAudit(t *testing.T) {
 	require.NotNil(t, rec)
 	require.Equal(t, service.RequestAuditCaptureIncomplete, rec.CaptureCompleteness)
 	require.Equal(t, "missing_reservation", rec.CaptureReason)
+	require.Equal(t, service.RequestAuditForcedProvenance, rec.ForcedProvenance, "强制预留缺失后的不完整证据仍标记来源")
 	require.Len(t, rec.Attempts, 1)
 	require.Empty(t, rec.Attempts[0].Model)
 }
@@ -198,6 +199,7 @@ func TestRequestAuditReservationRepositoryReservesAndFinalizes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	require.Equal(t, service.RequestAuditCaptureComplete, rec.CaptureCompleteness)
+	require.Equal(t, service.RequestAuditForcedProvenance, rec.ForcedProvenance, "只有新强制审计证据可在高级入口核查")
 	require.Len(t, rec.Attempts, 2)
 	require.Equal(t, int64(11), rec.Attempts[0].AccountID)
 	require.Equal(t, int64(22), rec.Attempts[1].AccountID)

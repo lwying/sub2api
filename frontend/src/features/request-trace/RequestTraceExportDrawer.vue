@@ -36,6 +36,23 @@
             <dd data-testid="request-trace-export-rows">{{ task.rows_exported }}</dd>
             <dt class="text-gray-500 dark:text-dark-300">{{ t('admin.requestTrace.export.progress.skippedCount') }}</dt>
             <dd data-testid="request-trace-export-skipped">{{ task.rows_skipped }}</dd>
+            <!-- 跳过不是一个总数：管理员要能分辨"读取失败"与"记录消失"各多少条。
+                 没有任何分类型计数时这一行不出现，聚合数仍在上一行。 -->
+            <template v-if="skipBreakdown.length">
+              <dt class="text-gray-500 dark:text-dark-300">{{ t('admin.requestTrace.export.progress.skippedByReason') }}</dt>
+              <dd data-testid="request-trace-export-skipped-by-reason">
+                <ul class="space-y-1">
+                  <li
+                    v-for="entry in skipBreakdown"
+                    :key="entry.reason"
+                    :data-testid="`request-trace-export-skipped-reason-${entry.reason}`"
+                    :data-reason="entry.reason"
+                  >
+                    {{ t(`admin.requestTrace.export.reason.${entry.reason}`) }}: {{ entry.count }}
+                  </li>
+                </ul>
+              </dd>
+            </template>
             <dt class="text-gray-500 dark:text-dark-300">{{ t('admin.requestTrace.export.progress.bytes') }}</dt>
             <dd data-testid="request-trace-export-bytes">{{ task.bytes_exported }}</dd>
             <dt class="text-gray-500 dark:text-dark-300">{{ t('admin.requestTrace.export.progress.shards') }}</dt>
@@ -54,7 +71,7 @@
             A truncated task is not a smaller success: it delivered the shards it
             wrote and the manifest says which part of the source it never saw.
           -->
-          <p v-if="task.truncated" role="alert" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200" data-testid="request-trace-export-incomplete">
+          <p v-if="task.truncated && !manifestUnreadable" role="alert" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200" data-testid="request-trace-export-incomplete">
             {{ t('admin.requestTrace.export.progress.incompleteNote') }}
             <span class="font-mono" data-testid="request-trace-export-incomplete-reason">{{ reasonLabel }}</span>
           </p>
@@ -66,7 +83,9 @@
           <p v-if="displayState === 'expired'" class="mt-3 text-amber-700 dark:text-amber-300" data-testid="request-trace-export-expired">
             {{ t('admin.requestTrace.export.progress.expiredNote') }}
           </p>
-          <p v-if="manifestLost" class="mt-3 text-amber-700 dark:text-amber-300" data-testid="request-trace-export-file-lost">
+          <!-- 清单已丢失：要么服务端读回任务时就这么说，要么一次下载被这样拒绝。
+               两条路说的是同一件事，因此渲染同一句话。 -->
+          <p v-if="manifestLost || manifestUnreadable" class="mt-3 text-amber-700 dark:text-amber-300" data-testid="request-trace-export-file-lost">
             {{ t('admin.requestTrace.export.progress.fileLost') }}
           </p>
           <p v-if="expectedShards.length && downloadable" class="mt-3 text-xs text-gray-500 dark:text-dark-300" data-testid="request-trace-export-shards-note">
@@ -126,6 +145,7 @@ import {
   requestTraceExportDisplayStates,
   requestTraceExportIDPattern,
   requestTraceExportIncompleteReasons,
+  requestTraceExportSkipReasons,
   type RequestTraceExportDisplayState,
   type RequestTraceExportTask,
 } from './types'
@@ -161,10 +181,31 @@ function isActive(status: RequestTraceExportTask['status']): boolean {
   return status === 'pending' || status === 'running'
 }
 
+/**
+ * The server's own code for "this task's manifest could not be read": the file
+ * that lists the shards and states whether the delivery was whole is itself
+ * gone. Nothing is known about what was delivered, so the row is neither
+ * complete nor a smaller success, and the truncation sentence — which says which
+ * part of the *source* was never seen — would be a different claim entirely.
+ */
+const manifestLostReason = 'manifest_lost'
+
+/**
+ * True when the server reported the manifest unreadable for this task. A server
+ * that says so also says the task is not complete, and the download is refused,
+ * so this is a verdict about the file, not a guess about it.
+ */
+const manifestUnreadable = computed(() =>
+  task.value?.truncated === true && task.value?.incomplete_reason === manifestLostReason,
+)
+
 const displayState = computed<RequestTraceExportDisplayState>(() => {
   const current = task.value
   if (!current) return 'pending'
   if (current.status !== 'completed') return current.status
+  // A delivery whose own record is gone has its own state: it is not "incomplete"
+  // (nothing was observed to be missing) and it is not "done".
+  if (manifestUnreadable.value) return 'file_lost'
   // Incompleteness is not a footnote on success: it is its own state.
   if (current.truncated) return 'incomplete'
   return current.downloadable ? 'completed' : 'expired'
@@ -189,6 +230,18 @@ const reasonLabel = computed(() => {
   const known = reasonKeys.has(code) ? code : 'unknown'
   return t(`admin.requestTrace.export.reason.${known}`)
 })
+
+/**
+ * The typed skip counts, in the closed set's own order so the breakdown reads the
+ * same every time. Only a reason with a count is listed: an absent class is a
+ * real zero and the aggregate row above already states the total, and the labels
+ * are the same closed-set labels the task's own reason code renders through.
+ */
+const skipBreakdown = computed(() =>
+  requestTraceExportSkipReasons
+    .map(reason => ({ reason, count: task.value?.skipped_by_reason?.[reason] ?? 0 }))
+    .filter(entry => entry.count > 0),
+)
 
 /** The shard indexes the task says it wrote, 1-based, exactly as the download expects them. */
 const expectedShards = computed(() => {

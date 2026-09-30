@@ -3,7 +3,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -673,129 +672,6 @@ func TestBuildRequestAuditRecordMarksIncompleteOnClientDisconnect(t *testing.T) 
 	encoded, err := json.Marshal(rec)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "secret")
-}
-
-func TestAttachRequestAuditAfterUsageLogPersistsNotCapturedWithoutMetadata(t *testing.T) {
-	repo := &stubRequestAuditRepo{}
-	err := AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 12}, RequestAuditInput{
-		NotCapturedReason: RequestAuditNotCapturedReasonPhase1Uncovered,
-		ClientDisconnect:  true,
-		SSEEvents: []RequestAuditSSEEvent{{
-			Type: "response.output_text.delta", Bytes: 42,
-		}},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, repo.created)
-	require.Equal(t, int64(12), repo.created.UsageLogID)
-	require.Equal(t, RequestAuditCaptureNotCaptured, repo.created.CaptureCompleteness)
-	require.Equal(t, RequestAuditNotCapturedReasonPhase1Uncovered, repo.created.CaptureReason)
-	require.Empty(t, repo.created.Headers)
-	require.Empty(t, repo.created.Events)
-	require.Empty(t, repo.created.Attempts)
-}
-
-func TestAttachRequestAuditAfterUsageLogUsesLinkedUsageTokenCountsOnly(t *testing.T) {
-	repo := &stubRequestAuditRepo{}
-	usage := &UsageLog{ID: 13, InputTokens: 123, OutputTokens: 45}
-	// The record is only attached when the logical request captured something;
-	// caller-supplied token counts are untrusted facts that never attach on their own.
-	err := AttachRequestAuditAfterUsageLog(context.Background(), repo, usage, RequestAuditInput{
-		Body:    []byte(`{"messages":[{"content":"do not persist this prompt"}]}`),
-		Headers: http.Header{"X-Stainless-Lang": []string{"js"}},
-		Metadata: RequestAuditMetadata{Tokens: map[string]int{
-			"input_tokens":  999,
-			"output_tokens": 999,
-		}},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, repo.created)
-	require.Equal(t, map[string]int{"input_tokens": 123, "output_tokens": 45}, repo.created.Metadata.Tokens)
-	encoded, err := json.Marshal(repo.created)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "do not persist this prompt")
-}
-
-func TestAttachRequestAuditAfterUsageLogWritesWhenIDPresent(t *testing.T) {
-	repo := &stubRequestAuditRepo{}
-	err := AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 11}, RequestAuditInput{
-		Headers: http.Header{
-			"X-Stainless-Lang": []string{"js"},
-			"Authorization":    []string{"Bearer sk-leak"},
-		},
-		Body: []byte(`{"messages":[{"content":"secret prompt"}]}`),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, repo.created)
-	require.Equal(t, int64(11), repo.created.UsageLogID)
-	require.Equal(t, "js", repo.created.Headers["X-Stainless-Lang"])
-	require.Equal(t, map[string]any{"present": true}, repo.created.Headers["Authorization"])
-	encoded, err := json.Marshal(repo.created)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "secret prompt")
-	require.NotContains(t, string(encoded), "sk-leak")
-}
-
-func TestAttachRequestAuditAfterUsageLogSkipsWhenUsageIDZero(t *testing.T) {
-	repo := &stubRequestAuditRepo{}
-	err := AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 0}, RequestAuditInput{
-		Headers: http.Header{"X-Stainless-Lang": []string{"js"}},
-	})
-	require.NoError(t, err)
-	require.Nil(t, repo.created)
-}
-
-func TestAttachRequestAuditAfterUsageLogRecordsWriteFailureWhenStoreRecovers(t *testing.T) {
-	repo := &recoveringRequestAuditRepo{}
-	err := AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 91}, RequestAuditInput{
-		Headers:   http.Header{"Authorization": []string{"Bearer sk-sensitive"}},
-		SSEEvents: []RequestAuditSSEEvent{{Type: "message_delta", Data: []byte(`{"delta":"secret completion"}`)}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, 2, repo.calls)
-	require.NotNil(t, repo.marker)
-	require.Equal(t, int64(91), repo.marker.UsageLogID)
-	require.Equal(t, RequestAuditCaptureWriteFailed, repo.marker.CaptureCompleteness)
-	require.Equal(t, "audit_write_failed", repo.marker.CaptureReason)
-	require.Empty(t, repo.marker.Headers)
-	require.Empty(t, repo.marker.Events)
-	require.Empty(t, repo.marker.Attempts)
-	encoded, err := json.Marshal(repo.marker)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "secret completion")
-	require.NotContains(t, string(encoded), "sk-sensitive")
-}
-
-type recoveringRequestAuditRepo struct {
-	calls  int
-	marker *RequestAuditRecord
-}
-
-func (s *recoveringRequestAuditRepo) CreateRequestAudit(_ context.Context, rec *RequestAuditRecord) error {
-	s.calls++
-	if s.calls == 1 {
-		return fmt.Errorf("store temporarily unavailable")
-	}
-	s.marker = rec
-	return nil
-}
-
-func (s *recoveringRequestAuditRepo) GetByUsageLogID(_ context.Context, usageLogID int64) (*RequestAuditRecord, error) {
-	if s.marker != nil && s.marker.UsageLogID == usageLogID {
-		return s.marker, nil
-	}
-	return nil, nil
-}
-
-func TestAttachRequestAuditAfterUsageLogFailOpen(t *testing.T) {
-	before := RequestAuditOrdinaryWriteFailureCount()
-	repo := &stubRequestAuditRepo{err: fmt.Errorf("audit store down")}
-	err := AttachRequestAuditAfterUsageLog(context.Background(), repo, &UsageLog{ID: 9}, RequestAuditInput{
-		Headers: http.Header{"X-Stainless-Lang": []string{"js"}},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, repo.created)
-	require.Equal(t, int64(9), repo.created.UsageLogID)
-	require.Equal(t, before+1, RequestAuditOrdinaryWriteFailureCount())
 }
 
 func TestRequestAuditModelDigestUsesOneRecordDomainAcrossStages(t *testing.T) {

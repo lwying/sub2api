@@ -1,6 +1,10 @@
 <template>
-  <BaseDialog :show="show" :title="title" width="full" :close-on-click-outside="true" @close="close">
-    <div v-if="loading" class="flex items-center justify-center py-16">
+  <BaseDialog :show="show" :title="showTrace ? t('admin.requestTrace.detail.title') : title" width="full" :close-on-click-outside="true" @close="close">
+    <div v-if="showTrace" class="space-y-4 p-6" data-testid="ops-error-trace-panel">
+      <button type="button" class="btn btn-secondary btn-sm" data-testid="ops-error-trace-back" @click="showTrace = false">{{ t('admin.ops.errorDetail.backToError') }}</button>
+      <RequestTraceDetailContent :show="show && showTrace" :trace-id="requestTraceID" />
+    </div>
+    <div v-else-if="loading" class="flex items-center justify-center py-16">
       <div class="flex flex-col items-center gap-3">
         <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600"></div>
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ t('admin.ops.errorDetail.loading') }}</div>
@@ -12,6 +16,12 @@
     </div>
 
     <div v-else class="space-y-6 p-6">
+      <div class="flex justify-end">
+        <button v-if="requestTraceID" type="button" data-testid="ops-error-trace-link" class="btn btn-secondary btn-sm" @click="showTrace = true">
+          {{ t('admin.ops.errorDetail.viewRequestTrace') }}
+        </button>
+        <p v-else class="text-xs text-gray-500 dark:text-gray-400" data-testid="ops-error-trace-unavailable">{{ t('admin.usage.detail.traceUnavailable') }}</p>
+      </div>
       <!-- Summary -->
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
@@ -19,15 +29,6 @@
           <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">
             {{ requestId || '—' }}
           </div>
-          <!-- 只有在对应的请求 Trace 现在确实可读时才提供直达，避免死链接。 -->
-          <RouterLink
-            v-if="requestTraceTarget"
-            :to="requestTraceTarget"
-            class="mt-2 inline-block text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
-            data-testid="ops-error-trace-link"
-          >
-            {{ t('admin.ops.errorDetail.viewRequestTrace') }}
-          </RouterLink>
         </div>
 
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
@@ -237,6 +238,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import RequestTraceDetailContent from '@/features/request-trace/RequestTraceDetailContent.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
@@ -263,6 +265,7 @@ const appStore = useAppStore()
 
 const loading = ref(false)
 const detail = ref<OpsErrorDetail | null>(null)
+const showTrace = ref(false)
 
 const showUpstreamList = computed(() => props.errorType === 'request')
 
@@ -275,12 +278,11 @@ const requestId = computed(() => detail.value?.request_id || detail.value?.clien
  * 记录了 ID 但写入失败或已被清理时给链接会把管理员带到空页面。这里也绝不拿
  * 客户端可重复的 request_id 去猜——那不是 Trace 身份。
  */
-const requestTraceTarget = computed(() => {
+const requestTraceID = computed(() => {
   const current = detail.value
   if (!current?.request_trace_available) return null
   const traceId = (current.request_trace_id ?? '').trim()
-  if (!/^[0-9a-f]{32}$/.test(traceId)) return null
-  return { path: '/admin/request-traces', query: { trace_id: traceId } }
+  return /^[0-9a-f]{32}$/.test(traceId) ? traceId : null
 })
 
 type DiagnosticPayloadKey = 'client' | 'upstream_message' | 'upstream_detail' | 'upstream_events'
@@ -396,10 +398,12 @@ async function fetchCorrelatedUpstreamErrors(requestErrorId: number) {
 }
 
 function close() {
+  showTrace.value = false
   emit('update:show', false)
 }
 
 function goBack() {
+  showTrace.value = false
   emit('update:show', false)
   emit('back')
 }
@@ -413,17 +417,21 @@ function prettyJSON(raw?: string): string {
   }
 }
 
+let detailRevision = 0
 async function fetchDetail(id: number) {
+  const revision = ++detailRevision
   loading.value = true
+  detail.value = null
   try {
-    const kind = props.errorType || (detail.value?.phase === 'upstream' ? 'upstream' : 'request')
+    const kind = props.errorType || 'request'
     const d = kind === 'upstream' ? await opsAPI.getUpstreamErrorDetail(id) : await opsAPI.getRequestErrorDetail(id)
-    detail.value = d
+    if (revision === detailRevision && props.show && props.errorId === id) detail.value = d
   } catch (err: any) {
+    if (revision !== detailRevision || !props.show) return
     detail.value = null
     appStore.showError(err?.message || t('admin.ops.failedToLoadErrorDetail'))
   } finally {
-    loading.value = false
+    if (revision === detailRevision) loading.value = false
   }
 }
 
@@ -431,10 +439,13 @@ watch(
   () => [props.show, props.errorId] as const,
   ([show, id]) => {
     if (!show) {
+      detailRevision += 1
+      showTrace.value = false
       detail.value = null
       return
     }
     if (typeof id === 'number' && id > 0) {
+      showTrace.value = false
       expandedUpstreamDetailIds.value = new Set()
       fetchDetail(id)
       if (props.errorType === 'request') {
