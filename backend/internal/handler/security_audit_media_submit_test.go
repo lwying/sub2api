@@ -86,7 +86,7 @@ func TestAsyncImagePromptGuardRunsBeforeTaskCreation(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 
-	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Contains(t, recorder.Body.String(), securityaudit.ErrorCodeBlocked)
 	require.Empty(t, store.tasks, "no asynchronous task may exist after a blocking decision")
 	require.Zero(t, executions)
@@ -161,7 +161,7 @@ func TestBatchImagePromptGuardRunsBeforePersistenceOrBilling(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	require.NotPanics(t, func() { router.ServeHTTP(recorder, request) }, "nil service would panic if Submit were reached")
-	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	evaluated, _, requests := engine.snapshot()
 	require.Equal(t, 1, evaluated)
 	require.Len(t, requests, 1)

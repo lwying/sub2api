@@ -188,7 +188,7 @@ type Decision struct {
 稳定优先级：
 
 1. Legacy content moderation Block：完全复用原状态码、文案和 `content_policy_violation`。
-2. Prompt Block：403 + `prompt_guard_blocked`。
+2. Prompt Block：400 + `prompt_guard_blocked`。
 3. Prompt Invalid：503 + `prompt_guard_invalid_response`。
 4. Prompt Unavailable：503 + `prompt_guard_unavailable`。
 5. 其他：Allow；Flag 只记录，不阻断。
@@ -426,14 +426,14 @@ input_limit, enabled, has_token, token_status
 
 | 情况 | HTTP/SSE | WS close | reason/code |
 | --- | ---: | ---: | --- |
-| Prompt Block | 403 | 4403 | `prompt_guard_blocked` |
+| Prompt Block | 400 | 4403 | `prompt_guard_blocked` |
 | Guard Unavailable | 503 | 1013 | `prompt_guard_unavailable` |
 | Guard Invalid response | 503 | 1013 | `prompt_guard_invalid_response` |
 
 - HTTP/SSE 必须保留各协议 envelope，不能所有协议统一成 Gin `{"error":"..."}`。
 - OpenAI Chat/Responses 在 error 对象添加稳定 `code`；Claude 保留 permission_error/api_error type 并添加可选 `code`。
 - Gemini 保留数值 HTTP `error.code` 和 canonical status，只在 `google.rpc.ErrorInfo.reason` 放稳定代码；metadata 仅 request_id。
-- SSE 在 Guard 结果前不得写 status/header/data/comment/keepalive；否则无法返回 403/503。
+- SSE 在 Guard 结果前不得写 status/header/data/comment/keepalive；否则无法返回 400/503。
 - WS 握手本身没有 Prompt，不扫描。首个 `response.create` 在任何本轮资源/上游副作用前扫描。
 - 后续每个 `response.create` 重新提取本轮输入并标记 `subsequent_turn`。
 - WS close reason 长度必须在协议限制内，只使用稳定短码；详细内部错误只进脱敏指标/日志。

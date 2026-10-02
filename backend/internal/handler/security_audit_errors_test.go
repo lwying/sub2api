@@ -17,7 +17,7 @@ func promptGuardDecision(kind securityaudit.DecisionKind) *securityaudit.Decisio
 	decision := &securityaudit.Decision{Kind: kind, AllowNextStage: false}
 	switch kind {
 	case securityaudit.DecisionBlock:
-		decision.HTTPStatus = http.StatusForbidden
+		decision.HTTPStatus = http.StatusBadRequest
 		decision.ErrorCode = securityaudit.ErrorCodeBlocked
 		decision.ClientMessage = "提示词安全审计拒绝了该请求，请调整输入后重试"
 	case securityaudit.DecisionInvalid:
@@ -118,8 +118,8 @@ func TestPromptGuardGeminiErrorEnvelopeGolden(t *testing.T) {
 		payload := decodeErrorJSON(t, recorder)
 		errorObject := requireObject(t, payload["error"])
 		require.Equal(t, float64(decision.HTTPStatus), errorObject["code"], "Gemini code must remain numeric")
-		if decision.HTTPStatus == http.StatusForbidden {
-			require.Equal(t, "PERMISSION_DENIED", errorObject["status"])
+		if decision.HTTPStatus == http.StatusBadRequest {
+			require.Equal(t, "INVALID_ARGUMENT", errorObject["status"])
 		} else {
 			require.Equal(t, "UNAVAILABLE", errorObject["status"])
 		}

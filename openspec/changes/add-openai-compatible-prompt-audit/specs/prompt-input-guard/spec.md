@@ -108,12 +108,12 @@
 
 #### Scenario: HTTP Block
 - **WHEN** 同步 Guard 判定为 Block
-- **THEN** HTTP 状态 MUST 为 403
+- **THEN** HTTP 状态 MUST 为 400
 - **THEN** error_code MUST 为 `prompt_guard_blocked`
 
 #### Scenario: Gemini HTTP Block
 - **WHEN** Gemini 入口的同步 Guard 判定为 Block
-- **THEN** Google error envelope 的 `error.code` MUST 保持数值 403 且 status MUST 为对应 canonical status
+- **THEN** Google error envelope 的 `error.code` MUST 保持数值 400 且 status MUST 为对应 canonical status（INVALID_ARGUMENT）
 - **THEN** `error.details` 中 ErrorInfo reason MUST 为 `prompt_guard_blocked`
 
 #### Scenario: HTTP Guard 不可用

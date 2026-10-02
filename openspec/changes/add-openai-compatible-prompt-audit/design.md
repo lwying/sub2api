@@ -145,7 +145,7 @@ Coordinator 只承担：
 优先级：
 
 1. 现有内容审核 Block：保留原状态、错误码和文案。
-2. Prompt Guard Block：403 + `prompt_guard_blocked`。
+2. Prompt Guard Block：400 + `prompt_guard_blocked`。
 3. Prompt Guard Invalid：503 + `prompt_guard_invalid_response`。
 4. Prompt Guard Unavailable：503 + `prompt_guard_unavailable`。
 5. 否则 Allow。
@@ -510,7 +510,7 @@ HTTP 错误：
 
 | 情况 | HTTP | error_code |
 | --- | ---: | --- |
-| Block | 403 | prompt_guard_blocked |
+| Block | 400 | prompt_guard_blocked |
 | Unavailable | 503 | prompt_guard_unavailable |
 | Invalid response | 503 | prompt_guard_invalid_response |
 

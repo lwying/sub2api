@@ -56,7 +56,7 @@ ok github.com/mt21625457/aicodex/internal/gatewayadapter/transport 3.233s
 | 30 | config active/expected version 和失效通知；`config.go`、`runtime.go` | prompt-input-guard：版本化热路径快照 | `prompt_config.go`、`prompt_runtime.go` | G10、C07 |
 | 31 | 同步 evaluator 不依赖 Worker；`synchronous_guard.go` | prompt-input-guard：同步门禁/结果复用 | `prompt_guard.go` | G03、G09 |
 | 32 | 总 deadline、ordered failover、bulkhead；`synchronous_guard.go` | prompt-input-guard：共享预算/故障切换 | `prompt_guard.go` | G05、G06 |
-| 33 | HTTP fail-closed 403/503；`prompt_guard.go`、router 接线 | prompt-input-guard：HTTP 稳定错误 | Handler helper + OpenAI/Claude code、Gemini ErrorInfo adapter | G03、G07 |
+| 33 | HTTP fail-closed 400/503；`prompt_guard.go`、router 接线 | prompt-input-guard：HTTP 稳定错误 | Handler helper + OpenAI/Claude code、Gemini ErrorInfo adapter | G03、G07 |
 | 34 | WS 4403/1013；`ws_responses.go` | prompt-input-guard：每轮 WS 门禁 | Responses WS Handler | G08 |
 | 35 | 同步结果轻量记录、不重复 Guard；`synchronous_guard.go` | prompt-input-guard：结果复用 | `prompt_guard.go`、Repository | G09 |
 | 36 | Guard metrics Allow/Flag/Block/Unavailable/timeout/failover/bulkhead；`synchronous_guard.go`、`runtime.go` | prompt-input-guard：可观测；console：运行态 | `prompt_runtime.go`、metrics adapter | G11、C07 |
