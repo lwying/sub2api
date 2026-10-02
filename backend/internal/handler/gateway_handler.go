@@ -163,6 +163,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	setOpsRequestContext(c, "", false)
 
+	// 保留客户端原始请求体用于严格 Mock 判定：解析／规范化不得洗掉工具、历史等
+	// 实质任务字段，否则带任务的请求可能被误判为下游测试请求。
+	mockMatchBody := append([]byte(nil), body...)
+
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
 	if err != nil {
@@ -229,6 +233,68 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by composite groups")
+		return
+	}
+
+	// 严格 Mock 优先于内容审计：命中即本地应答，跳过两类内容审计、不选号；
+	// 未命中无副作用，保持原有审计 -> 计费 -> 选号 -> 转发顺序。
+	if outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:        service.GatewayMockProtocolMessages,
+		model:           reqModel,
+		rawBody:         mockMatchBody,
+		stream:          reqStream,
+		settingService:  h.settingService,
+		events:          h.gatewayMockEvents,
+		concurrency:     h.concurrencyHelper,
+		apiKeyID:        apiKey.ID,
+		userID:          subject.UserID,
+		userConcurrency: subject.Concurrency,
+		cooldown:        claude429Cooldown,
+		billingCheck:    h.mockBillingCheck(c, apiKey),
+		metadataReject: func() bool {
+			return !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteMessages, true)
+		},
+		precheckReject: func() bool {
+			// strict thinking 策略：命中分支不得跳过 thinking-disabled 形态校验。
+			thinkingMode := service.ThinkingDisabledFormModeNormalize
+			if apiKey.Group != nil && apiKey.Group.ThinkingDisabledStrict {
+				thinkingMode = service.ThinkingDisabledFormModeStrict
+			}
+			if _, formErr := service.ApplyThinkingDisabledForm(mockMatchBody, thinkingMode); formErr != nil {
+				var thinkingFormErr *service.ThinkingDisabledFormError
+				if errors.As(formErr, &thinkingFormErr) {
+					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+					h.errorResponse(c, http.StatusBadRequest, thinkingFormErr.Type, thinkingFormErr.Message)
+					return true
+				}
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+				return true
+			}
+			// ClaudeCodeOnly 是权限约束：提前 Mock 分支也必须复用与选号一致的
+			// 分组限制语义（含降级分组），只是不选号。
+			allowed, checkErr := h.gatewayService.CheckClaudeCodeDispatchAllowed(c.Request.Context(), apiKey.GroupID)
+			if checkErr != nil {
+				reqLog.Warn("gateway.mock_claude_code_check_failed", zap.Error(checkErr))
+			}
+			if checkErr != nil || !allowed {
+				h.errorResponse(c, http.StatusForbidden, "permission_error",
+					"This group is restricted to Claude Code clients (/v1/messages only)")
+				return true
+			}
+			return false
+		},
+		writeCooldownReject: func(int) {
+			h.errorResponseWithCode(c, http.StatusTooManyRequests, "rate_limit_error", claude429CooldownCode, claude429CooldownMessage)
+		},
+		writeConcurrencyReject: func(err error) {
+			h.handleConcurrencyError(c, err, "user", false)
+		},
+		writeBillingReject: func(err error) {
+			gatewayMockBillingReject(c, err, func(status int, code, message string) {
+				h.handleStreamingAwareError(c, status, code, message, false)
+			})
+		},
+	}); outcome != gatewayMockGateMiss {
 		return
 	}
 
@@ -523,18 +589,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 账号槽位/等待计数需要在超时或断开时安全回收
 			accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
-
-			// 下游测试请求：分组平台是 Gemini 时，本入口承接的仍然是下游的 Anthropic
-			// Messages 协议，mock 判定只看下游协议，不因选中的账号平台不同而漏拦。
-			// 命中即归还账号槽位后返回，不发上游、不写使用记录、不构造 wire 尝试；
-			// 旧预热拦截在更早位置已经优先处理。
-			markGatewayMockStream(c, reqStream)
-			if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, reqModel, account.ID, body) {
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
-				}
-				return
-			}
 
 			// 转发请求 - 根据账号平台分流
 			var result *service.ForwardResult
@@ -959,19 +1013,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				return
 			}
 			attemptBody := attemptParsedReq.Body.Bytes()
-
-			// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-			// 命中即不写使用记录、不构造 wire 尝试；旧预热拦截在更早位置已经优先处理。
-			markGatewayMockStream(c, reqStream)
-			if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, reqModel, account.ID, attemptBody) {
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
-				}
-				if queueRelease != nil {
-					queueRelease()
-				}
-				return
-			}
 
 			// 转发请求 - 根据账号平台分流
 			c.Set("parsed_request", attemptParsedReq)

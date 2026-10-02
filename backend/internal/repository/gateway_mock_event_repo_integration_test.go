@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,4 +120,55 @@ func TestGatewayMockEventLegacyDeadlineColumnStaysWritable(t *testing.T) {
 		INSERT INTO gateway_mock_events (rule_id, protocol, cleanup_after)
 		VALUES ($1, 'messages', NULL)`, prefix+"null")
 	require.Error(t, err, "the NOT NULL column must reject a NULL write")
+}
+
+// 内容审计状态列（274）的真实迁移行为：本进程写入的 skipped_local_mock 能原样读回；
+// 旧实例/旧数据不带该列时落成默认 unknown，绝不回填成 skipped。
+func TestGatewayMockEventContentAuditStateRoundTripsAndDefaultsToUnknown(t *testing.T) {
+	ctx := context.Background()
+	prefix := fmt.Sprintf("gmr_it_auditstate_%d_", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(context.Background(),
+			`DELETE FROM gateway_mock_events WHERE rule_id LIKE $1`, prefix+"%")
+		require.NoError(t, err)
+	})
+
+	repo := NewGatewayMockEventRepo(integrationDB)
+	// 新早期命中：显式写 skipped_local_mock。
+	require.NoError(t, repo.RecordGatewayMockEvent(ctx, service.GatewayMockEventInput{
+		RuleID: prefix + "skipped", Protocol: "messages",
+		ContentAuditState: service.GatewayMockContentAuditSkippedLocalMock,
+	}))
+	// 旧调用方不传状态：落成 unknown，不能被伪造成 skipped。
+	require.NoError(t, repo.RecordGatewayMockEvent(ctx, service.GatewayMockEventInput{
+		RuleID: prefix + "legacy", Protocol: "messages",
+	}))
+
+	readState := func(ruleID string) string {
+		t.Helper()
+		var state string
+		require.NoError(t, integrationDB.QueryRowContext(ctx,
+			`SELECT content_audit_state FROM gateway_mock_events WHERE rule_id = $1`, ruleID).Scan(&state))
+		return state
+	}
+	require.Equal(t, service.GatewayMockContentAuditSkippedLocalMock, readState(prefix+"skipped"))
+	require.Equal(t, service.GatewayMockContentAuditUnknown, readState(prefix+"legacy"))
+
+	// 约束必须拒绝闭集之外的写入（含被误用的伪状态）。
+	_, err := integrationDB.ExecContext(ctx, `
+		INSERT INTO gateway_mock_events (rule_id, protocol, content_audit_state)
+		VALUES ($1, 'messages', 'made_up')`, prefix+"bad")
+	require.Error(t, err, "the content audit state column must be a closed set")
+
+	// 读取投影也走同一列：settle 后能读到刚才写入的 skipped。
+	records, _, err := repo.ListGatewayMockEvents(ctx, service.GatewayMockEventListFilter{Page: 1, PageSize: service.GatewayMockEventMaxPageSize})
+	require.NoError(t, err)
+	seen := map[string]string{}
+	for _, record := range records {
+		if strings.HasPrefix(record.RuleID, prefix) {
+			seen[record.RuleID] = record.ContentAuditState
+		}
+	}
+	require.Equal(t, service.GatewayMockContentAuditSkippedLocalMock, seen[prefix+"skipped"])
+	require.Equal(t, service.GatewayMockContentAuditUnknown, seen[prefix+"legacy"])
 }

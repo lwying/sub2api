@@ -49,6 +49,9 @@ type GatewayMockEventRecord struct {
 	AccountID   int64
 	ClientIP    string
 	TraceID     string
+	// ContentAuditState 是这次命中时内容审计是否执行的有界状态：旧记录为 unknown，
+	// 新的早期严格命中为 skipped_local_mock。它只描述审计动作，不含任何审计结论或正文。
+	ContentAuditState string
 }
 
 // GatewayMockEventReader 只提供"新到在前"的最小事件分页读取。

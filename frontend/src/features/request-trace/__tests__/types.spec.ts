@@ -1422,6 +1422,19 @@ describe("closed state and stage label sets", () => {
     expect([...requestTraceStageNames]).toContain(requestTraceDecisionStage);
   });
 
+  it("recognizes the without-content-audit mock reason and keeps the old one", () => {
+    // 新 reason 是闭集的一部分（早期严格命中未执行内容审计）；旧的 mock_served 保留，
+    // 不能被新语义吸收。
+    expect([...requestTraceStageReasons]).toContain(
+      "mock_served_without_content_audit",
+    );
+    expect([...requestTraceStageReasons]).toContain("mock_served");
+    expect(
+      new Set(requestTraceStageReasons).size,
+      "reason codes must stay unique",
+    ).toBe(requestTraceStageReasons.length);
+  });
+
   it("names only bounded, pattern-safe stage names, views and reason codes", () => {
     // The client refuses anything that is not a bounded token, so a label set
     // value that could never travel the wire would be a dead label.

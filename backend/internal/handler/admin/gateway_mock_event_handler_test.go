@@ -63,6 +63,7 @@ func TestGatewayMockEventHandlerListsOnlyMinimalFactsWithinBounds(t *testing.T) 
 			OccurredAt: occurred, RuleID: "gmr_0123456789abcdef", RuleVersion: "2026-09-30T03:00:00Z",
 			Protocol: "messages", Model: "claude-sonnet-4-5", APIKeyID: 7, UserID: 3, GroupID: 2,
 			AccountID: 11, ClientIP: "203.0.113.7", TraceID: "0123456789abcdef0123456789abcdef",
+			ContentAuditState: service.GatewayMockContentAuditSkippedLocalMock,
 		}},
 	}
 
@@ -89,12 +90,13 @@ func TestGatewayMockEventHandlerListsOnlyMinimalFactsWithinBounds(t *testing.T) 
 	}
 	sort.Strings(keys)
 	require.Equal(t, []string{
-		"account_id", "api_key_id", "cleanup_after", "client_ip", "group_id", "model",
-		"occurred_at", "protocol", "rule_id", "rule_version", "trace_id", "user_id",
+		"account_id", "api_key_id", "cleanup_after", "client_ip", "content_audit_state", "group_id",
+		"model", "occurred_at", "protocol", "rule_id", "rule_version", "trace_id", "user_id",
 	}, keys, "the list projection is exactly the stored minimal facts")
 
 	require.Equal(t, "gmr_0123456789abcdef", body.Data.Items[0]["rule_id"])
 	require.Equal(t, "203.0.113.7", body.Data.Items[0]["client_ip"])
+	require.Equal(t, service.GatewayMockContentAuditSkippedLocalMock, body.Data.Items[0]["content_audit_state"])
 
 	// 没有记录到清理期限时给 null：当前策略下的实际清理时间由 occurred_at 与当次保留
 	// 策略决定，编一个期限、或落成 0001-01-01 的零值时间，都是在冒充真实清理时间。

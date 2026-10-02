@@ -224,6 +224,51 @@ describe("admin gateway mock hit list", () => {
     expect(wrapper.text()).not.toContain("invented_protocol");
   });
 
+  it("distinguishes a hit that skipped the content audit from one that did not record it", async () => {
+    const wrapper = await mountLoaded(
+      page({
+        items: [
+          event({ content_audit_state: "skipped_local_mock" }),
+          event({ content_audit_state: "unknown" }),
+        ],
+      }),
+    );
+    const cells = wrapper.findAll(
+      '[data-testid="gateway-mock-events-content-audit"]',
+    );
+    expect(cells).toHaveLength(2);
+    expect(cells[0].text()).toBe(
+      "admin.gatewayMock.events.contentAudit.skipped_local_mock",
+    );
+    expect(cells[1].text()).toBe(
+      "admin.gatewayMock.events.contentAudit.unknown",
+    );
+    expect(cells[0].text()).not.toBe(cells[1].text());
+  });
+
+  it("treats a missing or unrecognised content-audit state as not recorded, never as skipped", async () => {
+    // 旧服务响应缺该字段；未来枚举/损坏值也不回显，一律安全降级为 unknown。
+    const wrapper = await mountLoaded(
+      page({
+        items: [
+          event(),
+          event({ content_audit_state: "invented_audit_state" }),
+        ],
+      }),
+    );
+    const cells = wrapper.findAll(
+      '[data-testid="gateway-mock-events-content-audit"]',
+    );
+    expect(cells[0].text()).toBe(
+      "admin.gatewayMock.events.contentAudit.unknown",
+    );
+    expect(cells[1].text()).toBe(
+      "admin.gatewayMock.events.contentAudit.unknown",
+    );
+    expect(wrapper.text()).not.toContain("invented_audit_state");
+    expect(wrapper.text()).not.toContain("skipped_local_mock");
+  });
+
   it("renders no configured keyword and no reply text even if the answer carries them", async () => {
     const wrapper = await mountLoaded(
       page({

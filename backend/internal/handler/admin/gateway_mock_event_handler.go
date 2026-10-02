@@ -45,6 +45,10 @@ type gatewayMockEventView struct {
 	AccountID   int64     `json:"account_id"`
 	ClientIP    string    `json:"client_ip"`
 	TraceID     string    `json:"trace_id"`
+	// ContentAuditState 是这次命中时内容审计是否执行的有界状态：新的早期严格命中为
+	// skipped_local_mock，旧记录为 unknown。它只说明审计动作，不含审计结论或正文；
+	// 未知取值在投影处收敛为 unknown，绝不回显。
+	ContentAuditState string `json:"content_audit_state"`
 	// CleanupAfter 恒为 null：落库的 cleanup_after 只是 legacy 内部字段（写入时的估算），
 	// 不是可披露的实际清理时间。键保留下来是为了让管理端能区分"没有披露期限"与
 	// "服务端漏了这个字段"；实际清理按 occurred_at 与当次保留策略决定。
@@ -65,6 +69,8 @@ func gatewayMockEventViewOf(record service.GatewayMockEventRecord) gatewayMockEv
 		AccountID:   record.AccountID,
 		ClientIP:    record.ClientIP,
 		TraceID:     record.TraceID,
+		// 投影侧再收敛一次：即使存储层给出了未知取值，管理端也只会看到闭集内的状态。
+		ContentAuditState: service.NormalizeGatewayMockContentAuditState(record.ContentAuditState),
 	}
 }
 

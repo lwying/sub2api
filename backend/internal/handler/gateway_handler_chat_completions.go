@@ -116,6 +116,41 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// 严格 Mock 优先于内容审计：命中即本地应答，跳过两类内容审计、不选号；
+	// 未命中无副作用，保持原有顺序。body 此处仍是客户端原始请求体。
+	if outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:        service.GatewayMockProtocolChatCompletions,
+		model:           reqModel,
+		rawBody:         body,
+		stream:          reqStream,
+		settingService:  h.settingService,
+		events:          h.gatewayMockEvents,
+		concurrency:     h.concurrencyHelper,
+		apiKeyID:        apiKey.ID,
+		userID:          subject.UserID,
+		userConcurrency: subject.Concurrency,
+		cooldown:        claude429Cooldown,
+		billingCheck:    h.mockBillingCheck(c, apiKey),
+		metadataReject: func() bool {
+			return !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteChatCompletions, false)
+		},
+		writeCooldownReject: func(int) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+				"type": "rate_limit_error", "code": claude429CooldownCode, "message": claude429CooldownMessage,
+			}})
+		},
+		writeConcurrencyReject: func(err error) {
+			h.handleConcurrencyError(c, err, "user", false)
+		},
+		writeBillingReject: func(err error) {
+			gatewayMockBillingReject(c, err, func(status int, code, message string) {
+				h.chatCompletionsErrorResponse(c, status, code, message)
+			})
+		},
+	}); outcome != gatewayMockGateMiss {
+		return
+	}
+
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.openAISecurityAuditError(c, decision)
 		return
@@ -305,15 +340,6 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 			fs.FailedAccountIDs[account.ID] = struct{}{}
 			continue
-		}
-
-		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-		markGatewayMockStream(c, reqStream)
-		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolChatCompletions, reqModel, account.ID, body) {
-			if accountReleaseFunc != nil {
-				accountReleaseFunc()
-			}
-			return
 		}
 
 		// 5. Forward request

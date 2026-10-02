@@ -1,4 +1,9 @@
-import { gatewayMockProtocols, type GatewayMockProtocol } from "./types";
+import {
+  gatewayMockContentAuditStates,
+  gatewayMockProtocols,
+  type GatewayMockContentAuditState,
+  type GatewayMockProtocol,
+} from "./types";
 
 /**
  * The one key a protocol renders through: its own label, or the generic fallback
@@ -8,6 +13,18 @@ import { gatewayMockProtocols, type GatewayMockProtocol } from "./types";
 export function gatewayMockProtocolKey(protocol: string): string {
   const known = (gatewayMockProtocols as readonly string[]).includes(protocol);
   return `admin.gatewayMock.events.protocol.${known ? (protocol as GatewayMockProtocol) : "unknown"}`;
+}
+
+/**
+ * The one key a content-audit state renders through: its own label, or the generic
+ * `unknown` label when the value is outside the set this build knows about. The raw
+ * token is never the visible text.
+ */
+export function gatewayMockContentAuditKey(state: string): string {
+  const known = (gatewayMockContentAuditStates as readonly string[]).includes(
+    state,
+  );
+  return `admin.gatewayMock.events.contentAudit.${known ? (state as GatewayMockContentAuditState) : "unknown"}`;
 }
 
 /**

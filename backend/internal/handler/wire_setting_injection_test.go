@@ -39,22 +39,41 @@ func TestSettingServiceInjectionMakesTheMockGateLive(t *testing.T) {
 	startGatewayMockRules(t, settingRepo, "hi", "本地回复")
 	settingService := gatewayMockSettingService(t, settingRepo)
 
+	// 用真实 early seam 构造请求：其余准入依赖都注入真实对象/放行桩，只把
+	// settingService 留给被测的注入路径，从而观察注入是否真的让判定生效。
+	buildRequest := func(setting *service.SettingService) earlyMockServeRequest {
+		return earlyMockServeRequest{
+			protocol:               service.GatewayMockProtocolMessages,
+			model:                  "claude-sonnet-4-5",
+			rawBody:                body,
+			settingService:         setting,
+			concurrency:            NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatClaude, 0),
+			apiKeyID:               1,
+			userID:                 1,
+			userConcurrency:        10,
+			billingCheck:           func() error { return nil },
+			writeCooldownReject:    func(int) {},
+			writeConcurrencyReject: func(error) {},
+			writeBillingReject:     func(error) {},
+		}
+	}
+
 	t.Run("openai handler", func(t *testing.T) {
 		handler := NewOpenAIGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple})
-		require.False(t, handler.maybeServeDownstreamTestMock(newContext(), service.GatewayMockProtocolMessages, "claude-sonnet-4-5", 1, body),
+		require.Equal(t, gatewayMockGateMiss, serveEarlyDownstreamTestMock(newContext(), buildRequest(handler.settingService)),
 			"未注入设置服务时必须按关闭处理")
 
 		handler.SetSettingService(settingService)
-		require.True(t, handler.maybeServeDownstreamTestMock(newContext(), service.GatewayMockProtocolMessages, "claude-sonnet-4-5", 1, body),
+		require.Equal(t, gatewayMockGateServed, serveEarlyDownstreamTestMock(newContext(), buildRequest(handler.settingService)),
 			"注入启用规则的设置服务后必须真正命中——只断言签名会让漏转发再次静默失效")
 	})
 
 	t.Run("anthropic handler", func(t *testing.T) {
 		handler := &GatewayHandler{}
-		require.False(t, handler.maybeServeDownstreamTestMock(newContext(), service.GatewayMockProtocolMessages, "claude-sonnet-4-5", 1, body))
+		require.Equal(t, gatewayMockGateMiss, serveEarlyDownstreamTestMock(newContext(), buildRequest(handler.settingService)))
 
 		handler.settingService = settingService
-		require.True(t, handler.maybeServeDownstreamTestMock(newContext(), service.GatewayMockProtocolMessages, "claude-sonnet-4-5", 1, body))
+		require.Equal(t, gatewayMockGateServed, serveEarlyDownstreamTestMock(newContext(), buildRequest(handler.settingService)))
 	})
 }
 
@@ -102,8 +121,21 @@ func TestProvideOpenAIGatewayHandlerForwardsTheSettingService(t *testing.T) {
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-	require.True(t, handler.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, "claude-sonnet-4-5", 1,
-		[]byte(gatewayMockMessagesBody("hi", false))),
+	outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:               service.GatewayMockProtocolMessages,
+		model:                  "claude-sonnet-4-5",
+		rawBody:                []byte(gatewayMockMessagesBody("hi", false)),
+		settingService:         handler.settingService,
+		concurrency:            NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatClaude, 0),
+		apiKeyID:               1,
+		userID:                 1,
+		userConcurrency:        10,
+		billingCheck:           func() error { return nil },
+		writeCooldownReject:    func(int) {},
+		writeConcurrencyReject: func(error) {},
+		writeBillingReject:     func(error) {},
+	})
+	require.Equal(t, gatewayMockGateServed, outcome,
 		"装配函数必须把设置服务转发给处理器：否则 OpenAI 侧三个入口在生产上又会变成空操作")
 }
 

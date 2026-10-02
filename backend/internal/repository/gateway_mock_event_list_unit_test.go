@@ -33,10 +33,11 @@ func TestGatewayMockEventListIsBoundedAndProjectsOnlyStoredFacts(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"occurred_at", "rule_id", "rule_version", "protocol", "model",
 			"api_key_id", "user_id", "group_id", "account_id", "client_ip", "trace_id",
+			"content_audit_state",
 		}).AddRow(
 			occurred, "gmr_0123456789abcdef", "2026-09-30T03:00:00Z", "messages", "claude-sonnet-4-5",
 			int64(7), int64(3), int64(2), int64(11), "203.0.113.7",
-			"0123456789abcdef0123456789abcdef",
+			"0123456789abcdef0123456789abcdef", service.GatewayMockContentAuditSkippedLocalMock,
 		))
 
 	repo := NewGatewayMockEventRepo(db)
@@ -50,6 +51,7 @@ func TestGatewayMockEventListIsBoundedAndProjectsOnlyStoredFacts(t *testing.T) {
 	require.Equal(t, int64(11), records[0].AccountID)
 	require.Equal(t, "203.0.113.7", records[0].ClientIP)
 	require.True(t, records[0].OccurredAt.Equal(occurred))
+	require.Equal(t, service.GatewayMockContentAuditSkippedLocalMock, records[0].ContentAuditState)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// 投影不得点名配置内容：关键词与回复正文根本没有落库列可读；legacy 的清理期限
@@ -58,6 +60,48 @@ func TestGatewayMockEventListIsBoundedAndProjectsOnlyStoredFacts(t *testing.T) {
 		for _, forbidden := range []string{"keyword", "reply", "request_digest", "cleanup_after"} {
 			require.NotContains(t, statement, forbidden, "the list must not read %q", forbidden)
 		}
+	}
+}
+
+// 读侧把内容审计状态收敛到闭集：旧记录（列默认 unknown）保持 unknown 不回填，
+// 未来新增或损坏的取值也安全降级为 unknown，绝不回显未知枚举。
+func TestGatewayMockEventListNormalizesContentAuditState(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"legacy default stays unknown, not skipped", service.GatewayMockContentAuditUnknown, service.GatewayMockContentAuditUnknown},
+		{"skipped is preserved", service.GatewayMockContentAuditSkippedLocalMock, service.GatewayMockContentAuditSkippedLocalMock},
+		{"unknown enum degrades to unknown", "invented_state", service.GatewayMockContentAuditUnknown},
+		{"empty degrades to unknown", "", service.GatewayMockContentAuditUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+
+			mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM gateway_mock_events`)).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+			mock.ExpectQuery(regexp.QuoteMeta(`ORDER BY occurred_at DESC, id DESC`)).
+				WithArgs(20, 0).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"occurred_at", "rule_id", "rule_version", "protocol", "model",
+					"api_key_id", "user_id", "group_id", "account_id", "client_ip", "trace_id",
+					"content_audit_state",
+				}).AddRow(
+					time.Now().UTC(), "gmr_x", "", "messages", "",
+					int64(0), int64(0), int64(0), int64(0), "", "", tc.raw,
+				))
+
+			records, _, err := NewGatewayMockEventRepo(db).ListGatewayMockEvents(context.Background(),
+				service.GatewayMockEventListFilter{Page: 1, PageSize: 20})
+			require.NoError(t, err)
+			require.Len(t, records, 1)
+			require.Equal(t, tc.want, records[0].ContentAuditState)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
 	}
 }
 

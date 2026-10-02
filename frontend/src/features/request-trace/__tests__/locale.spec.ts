@@ -343,6 +343,31 @@ describe("request Trace locale", () => {
     expect(zh.reasonLabel.mock_served).toContain("未发出上游尝试");
   });
 
+  it("adds the without-content-audit mock reason without changing the old mock wording", () => {
+    // 新早期严格命中在内容审计之前本地应答：新 reason 明确说出"未执行内容审计、未发上游"，
+    // 旧 mock_served 的文案保持不变，两者不能合并成一句话。
+    const en = requestTraceEn.requestTrace.detail;
+    const zh = requestTraceZh.requestTrace.detail;
+    expect(en.reasonLabel.mock_served_without_content_audit).toContain(
+      "without a content audit",
+    );
+    expect(en.reasonLabel.mock_served_without_content_audit).toContain(
+      "no upstream attempt",
+    );
+    expect(zh.reasonLabel.mock_served_without_content_audit).toContain(
+      "未执行内容审计",
+    );
+    expect(zh.reasonLabel.mock_served_without_content_audit).toContain(
+      "未发上游",
+    );
+    expect(en.reasonLabel.mock_served_without_content_audit).not.toBe(
+      en.reasonLabel.mock_served,
+    );
+    expect(zh.reasonLabel.mock_served_without_content_audit).not.toBe(
+      zh.reasonLabel.mock_served,
+    );
+  });
+
   it("labels the shard cap as an incomplete export, not a failed task", () => {
     const en = requestTraceEn.requestTrace.export.reason;
     const zh = requestTraceZh.requestTrace.export.reason;

@@ -78,6 +78,9 @@
                 {{ t("admin.gatewayMock.events.columns.traceId") }}
               </th>
               <th class="px-3 py-2">
+                {{ t("admin.gatewayMock.events.columns.contentAudit") }}
+              </th>
+              <th class="px-3 py-2">
                 {{ t("admin.gatewayMock.events.columns.cleanup") }}
               </th>
             </tr>
@@ -163,6 +166,12 @@
                 {{ observed(row.trace_id) }}
               </td>
               <td
+                class="px-3 py-2 text-xs"
+                data-testid="gateway-mock-events-content-audit"
+              >
+                {{ t(gatewayMockContentAuditKey(row.content_audit_state)) }}
+              </td>
+              <td
                 class="whitespace-nowrap px-3 py-2 text-xs"
                 data-testid="gateway-mock-events-cleanup"
               >
@@ -215,7 +224,7 @@ import { useI18n } from "vue-i18n";
 import Pagination from "@/components/common/Pagination.vue";
 import { getConfiguredTablePageSizeOptions } from "@/utils/tablePreferences";
 import { listEvents } from "./api";
-import { gatewayMockProtocolKey } from "./labels";
+import { gatewayMockContentAuditKey, gatewayMockProtocolKey } from "./labels";
 import { gatewayMockEventMaxPageSize, type GatewayMockEvent } from "./types";
 
 const { t } = useI18n();

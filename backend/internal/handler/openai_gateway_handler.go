@@ -455,6 +455,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	// 保留规范化（compact/Codex bootstrap 等）之前的客户端原始请求体用于严格 Mock
+	// 判定：规范化不得洗掉工具／历史字段，否则带任务的请求可能被误判为测试请求。
+	mockMatchBody := append([]byte(nil), body...)
 	claude429Cooldown := claude429CooldownRequest{}
 	if !service.IsOpenAIResponsesInputTokensRequestPath(c) {
 		claude429Cooldown = captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
@@ -476,14 +479,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 与真实 Codex 线型一致（网关链剥头后本级负责恢复，#5586）。
 		service.MarkOpenAINativeCompactionV2(c)
 	}
-	// body-signal compact：上游 unary 等待期间向下游发 SSE 注释行心跳，防止
-	// 反向代理空闲超时掐断长压缩连接（#3887）。首拍延迟一个心跳间隔，快速
-	// 失败仍走 JSON+状态码链路；未标记客户端流式或间隔为 0 时是 no-op。
-	stopCompactKeepalive := func() {}
-	if !requestAuditIsForced(c) {
-		stopCompactKeepalive = service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
-	}
-	defer stopCompactKeepalive()
+	// body-signal compact 心跳的启动点下移到必要校验与早期 Mock 分支之后（见
+	// 下方 stopCompactKeepalive）：命中本地 mock 的请求绝不发心跳，未命中的请求
+	// 仍在上游 unary 等待前启动，保持等待期防超时有效。
 
 	// 校验请求体 JSON 合法性
 	if !gjson.ValidBytes(body) {
@@ -573,6 +571,51 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+
+	// 严格 Mock 优先于内容审计：必要 model/stream/tier 校验与 previous_response_id
+	// 归属校验已通过，命中即本地应答，跳过两类内容审计、不选号、不发心跳；
+	// 未命中无副作用，保持原有顺序。
+	if outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:        service.GatewayMockProtocolResponses,
+		model:           reqModel,
+		rawBody:         mockMatchBody,
+		stream:          reqStream,
+		settingService:  h.settingService,
+		events:          h.gatewayMockEvents,
+		concurrency:     h.concurrencyHelper,
+		apiKeyID:        apiKey.ID,
+		userID:          subject.UserID,
+		userConcurrency: subject.Concurrency,
+		cooldown:        claude429Cooldown,
+		billingCheck:    h.mockBillingCheck(c, apiKey),
+		precheckReject: func() bool {
+			// 已封禁的 cyber 会话属权限拒绝，命中分支必须先拒绝。
+			return h.rejectIfCyberSessionBlocked(c, apiKey, mockMatchBody, reqModel, cyberBlockFormatResponses)
+		},
+		writeCooldownReject: func(int) {
+			h.errorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		},
+		writeConcurrencyReject: func(err error) {
+			h.handleConcurrencyError(c, err, "user", false)
+		},
+		writeBillingReject: func(err error) {
+			gatewayMockBillingReject(c, err, func(status int, code, message string) {
+				h.handleStreamingAwareError(c, status, code, message, false)
+			})
+		},
+	}); outcome != gatewayMockGateMiss {
+		return
+	}
+
+	// body-signal compact：上游 unary 等待期间向下游发 SSE 注释行心跳，防止反向代理
+	// 空闲超时掐断长压缩连接（#3887）。启动点位于早期 Mock 分支之后、内容审计之前：
+	// 命中本地 mock 的请求不发心跳，未命中的请求仍在上游 unary 等待前启动，保持有效。
+	// 首拍延迟一个心跳间隔，快速失败仍走 JSON+状态码链路；未标记客户端流式或间隔为 0 时是 no-op。
+	stopCompactKeepalive := func() {}
+	if !requestAuditIsForced(c) {
+		stopCompactKeepalive = service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+	}
+	defer stopCompactKeepalive()
 
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.openAISecurityAuditError(c, decision)
@@ -824,41 +867,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		if slotResult != openAISlotAcquireOK {
 			return
-		}
-
-		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-		//
-		// 判定必须先于停拍。compact 的下游心跳是上游 unary 等待期间唯一的下游空闲
-		// 保护（大上下文可达数分钟零字节，反代空闲/读超时会掐断连接），而真实
-		// body-signal compact 请求的 input 必带 compaction_trigger，按定义不可能被
-		// 判为下游测试请求。若先无条件停拍，每个真实 compact 请求都会在判定处被摘
-		// 掉心跳，重新回到零字节静默（#3887）。因此这里先用同一份设置快照做纯判定，
-		// 不命中就完全不动心跳，命中才停拍接管。
-		//
-		// 接管前还必须确认响应尚未被提交，两条来源都要看：
-		//   - handleErrorResponse 系列写完错误响应后会置 response_committed；
-		//   - body-signal compact 的下游心跳会直接写出 SSE 注释行并提交 200，但它
-		//     不置 response_committed（该 key 只属于错误写回）。而 compact 的白名单
-		//     归一化删掉了 stream 字段，mock 会按非流式写回裸 JSON——追加到已提交
-		//     的 SSE 流上，客户端拿到的是 ": keepalive\n\n{...json...}"，注释行后面
-		//     的裸 JSON 不是合法事件，解析必然失败。
-		// 因此命中后先停拍 compact 心跳并读取其提交状态：停拍经心跳互斥锁建立
-		// happens-before，返回后不会再有心跳字节写出，可安全接管 ResponseWriter；
-		// 锁在 Stop 内部立即释放，不在持锁状态下写响应（无死锁）。心跳已提交 200
-		// 时不接管，交回标准 compact 写回路径（writeOpenAICompactSSEBridge 会按
-		// 客户端流式协议合成 SSE）。判定与写回共用预检得到的同一份结论，不会出现
-		// "先停拍、后又不命中"的中间态。
-		if !service.IsResponseCommitted(c) {
-			mockMatch := h.resolveDownstreamTestMockMatch(c, service.GatewayMockProtocolResponses, body)
-			if mockMatch.Matched && !service.StopOpenAICompactSSEKeepaliveCommitted(c) {
-				markGatewayMockStream(c, reqStream)
-				if h.serveResolvedDownstreamTestMock(c, service.GatewayMockProtocolResponses, reqModel, account.ID, mockMatch) {
-					if accountReleaseFunc != nil {
-						accountReleaseFunc()
-					}
-					return
-				}
-			}
 		}
 
 		// Forward request
@@ -1336,6 +1344,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
+	// 保留 thinking 形态改写之前的客户端原始请求体用于严格 Mock 判定。
+	mockMatchBody := append([]byte(nil), body...)
 	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 
 	mode := service.ThinkingDisabledFormModeNormalize
@@ -1376,6 +1386,52 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+
+	// 严格 Mock 优先于内容审计：命中即本地应答，跳过两类内容审计、不选号；
+	// 未命中无副作用，保持原有顺序。
+	if outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:        service.GatewayMockProtocolMessages,
+		model:           reqModel,
+		rawBody:         mockMatchBody,
+		stream:          reqStream,
+		settingService:  h.settingService,
+		events:          h.gatewayMockEvents,
+		concurrency:     h.concurrencyHelper,
+		apiKeyID:        apiKey.ID,
+		userID:          subject.UserID,
+		userConcurrency: subject.Concurrency,
+		cooldown:        claude429Cooldown,
+		billingCheck:    h.mockBillingCheck(c, apiKey),
+		metadataReject: func() bool {
+			return !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteMessages, true)
+		},
+		precheckReject: func() bool {
+			// 命中分支不得用非法 stream 字段返回 200：本入口的 stream 只按 Bool()
+			// 取值、不验类型，因此命中后必须显式做类型校验，未命中保持原样。
+			if _, streamOK := parseOpenAICompatibleStream(mockMatchBody); !streamOK {
+				h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)
+				return true
+			}
+			// 已封禁的 cyber 会话属权限拒绝，命中分支必须先拒绝。
+			return h.rejectIfCyberSessionBlocked(c, apiKey, mockMatchBody, reqModel, cyberBlockFormatAnthropic)
+		},
+		writeCooldownReject: func(int) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"type":  "error",
+				"error": gin.H{"type": "rate_limit_error", "code": claude429CooldownCode, "message": claude429CooldownMessage},
+			})
+		},
+		writeConcurrencyReject: func(err error) {
+			h.handleConcurrencyError(c, err, "user", false)
+		},
+		writeBillingReject: func(err error) {
+			gatewayMockBillingReject(c, err, func(status int, code, message string) {
+				h.anthropicStreamingAwareError(c, status, code, message, false)
+			})
+		},
+	}); outcome != gatewayMockGateMiss {
+		return
+	}
 
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.anthropicSecurityAuditError(c, decision)
@@ -1544,15 +1600,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
-			return
-		}
-
-		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-		markGatewayMockStream(c, reqStream)
-		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolMessages, reqModel, account.ID, body) {
-			if accountReleaseFunc != nil {
-				accountReleaseFunc()
-			}
 			return
 		}
 

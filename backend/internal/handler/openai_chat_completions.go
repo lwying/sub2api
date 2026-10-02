@@ -70,6 +70,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	// 保留客户端原始请求体用于严格 Mock 判定：不得因后续规范化洗掉工具／历史字段。
+	mockMatchBody := append([]byte(nil), body...)
 	requestAuditProtocolFieldsFromClient := requestAuditProtocolFields(body)
 	claude429Cooldown := captureClaude429Cooldown(c, apiKey.ID, body, h.claude429Cooldown)
 
@@ -111,6 +113,43 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+
+	// 严格 Mock 优先于内容审计：命中即本地应答，跳过两类内容审计、不选号；
+	// 未命中无副作用，保持原有顺序。
+	if outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:        service.GatewayMockProtocolChatCompletions,
+		model:           reqModel,
+		rawBody:         mockMatchBody,
+		stream:          reqStream,
+		settingService:  h.settingService,
+		events:          h.gatewayMockEvents,
+		concurrency:     h.concurrencyHelper,
+		apiKeyID:        apiKey.ID,
+		userID:          subject.UserID,
+		userConcurrency: subject.Concurrency,
+		cooldown:        claude429Cooldown,
+		billingCheck:    h.mockBillingCheck(c, apiKey),
+		metadataReject: func() bool {
+			return !prepareRequestAuditOrReject(c, h.gatewayService, service.RequestAuditRouteChatCompletions, false)
+		},
+		precheckReject: func() bool {
+			// 已封禁的 cyber 会话属权限拒绝，命中分支必须先拒绝，不能靠本地 Mock 放行。
+			return h.rejectIfCyberSessionBlocked(c, apiKey, mockMatchBody, reqModel, cyberBlockFormatChat)
+		},
+		writeCooldownReject: func(int) {
+			h.errorResponse(c, http.StatusTooManyRequests, claude429CooldownCode, claude429CooldownMessage)
+		},
+		writeConcurrencyReject: func(err error) {
+			h.handleConcurrencyError(c, err, "user", false)
+		},
+		writeBillingReject: func(err error) {
+			gatewayMockBillingReject(c, err, func(status int, code, message string) {
+				h.handleStreamingAwareError(c, status, code, message, false)
+			})
+		},
+	}); outcome != gatewayMockGateMiss {
+		return
+	}
 
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.openAISecurityAuditError(c, decision)
@@ -269,15 +308,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
-			return
-		}
-
-		// 下游测试请求：已选到可用账号、尚未发出上游时按管理员配置返回本地 mock。
-		markGatewayMockStream(c, reqStream)
-		if h.maybeServeDownstreamTestMock(c, service.GatewayMockProtocolChatCompletions, reqModel, account.ID, body) {
-			if accountReleaseFunc != nil {
-				accountReleaseFunc()
-			}
 			return
 		}
 

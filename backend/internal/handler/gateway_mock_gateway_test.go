@@ -239,6 +239,40 @@ func TestGatewayMock_OpenAISideEntriesReturnLocalReplyWithoutUpstream(t *testing
 	})
 }
 
+// TestGatewayMock_MatchedRequestNeedsNoSchedulableAccount 证明早期严格 Mock 在
+// 选号之前完成：分组里一个可调度账号都没有时，命中规则的请求仍能本地回复，
+// 既不会走到选号失败，也不会发出任何上游请求。
+func TestGatewayMock_MatchedRequestNeedsNoSchedulableAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const groupID int64 = 7822
+	group := &service.Group{ID: groupID, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	handler := newRequestTraceMatrixGatewayWithoutAccounts(t, group, cfg)
+
+	settingRepo := &gatewayMockSettingsRepo{values: map[string]string{}}
+	startGatewayMockRules(t, settingRepo, "hi", "本地无账号回复")
+	handler.settingService = gatewayMockSettingService(t, settingRepo)
+
+	capture := &requestTraceMatrixUpstream{}
+	repo := &finalizingRequestTraceRepoStub{finalized: make(chan service.RequestTraceCaptureState, 1)}
+	queue := service.NewRequestTraceCaptureQueue(repo)
+	t.Cleanup(queue.Stop)
+	env := &requestTraceMatrixEnv{
+		repo: repo, queue: queue, capture: capture,
+		anthropic: handler, group: group, groupID: groupID, accountID: 0, apiKeyID: 14, userID: 24,
+	}
+
+	w := env.serve(t, "/v1/responses", `{"model":"`+requestTraceMatrixModel+`","input":"hi"}`, env.anthropic.Responses)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, service.GatewayMockReplyHeaderValue, w.Header().Get(service.GatewayMockReplyHeader))
+	require.Contains(t, w.Body.String(), "本地无账号回复")
+	paths, _ := capture.snapshot()
+	require.Empty(t, paths, "命中本地 mock 时不得向上游发出任何请求")
+}
+
 func TestGatewayMock_MessagesNonStreamReturnsLocalReplyWithoutUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	env := newGatewayMockEnv(t)
@@ -265,6 +299,112 @@ func TestGatewayMock_MessagesNonStreamReturnsLocalReplyWithoutUpstream(t *testin
 	require.True(t, ok)
 	require.Equal(t, float64(0), usage["input_tokens"], "本地 mock 不得编造输入用量")
 	require.Equal(t, float64(0), usage["output_tokens"], "本地 mock 不得编造输出用量")
+}
+
+// gatewayMockUserSlotFullCache 让用户并发槽位永远取不到，模拟入口并发已满。
+type gatewayMockUserSlotFullCache struct{ fakeConcurrencyCache }
+
+func (gatewayMockUserSlotFullCache) AcquireUserSlot(context.Context, int64, int, string) (bool, error) {
+	return false, nil
+}
+
+// TestGatewayMock_MatchedRequestStillHonorsUserConcurrencyLimit 证明严格命中不能
+// 绕过用户并发限制：取不到槽位时必须标准 429，不得本地放行，也不产生命中事件。
+func TestGatewayMock_MatchedRequestStillHonorsUserConcurrencyLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := newGatewayMockEnv(t)
+	startGatewayMockRules(t, env.settingRepo, "hi", "本地回复")
+	env.handler.concurrencyHelper = NewConcurrencyHelper(service.NewConcurrencyService(&gatewayMockUserSlotFullCache{}), SSEPingFormatClaude, 0)
+	events := &gatewayMockAuditEventStore{}
+	env.handler.SetGatewayMockEventStore(events)
+
+	w := env.serve(t, "/v1/messages", gatewayMockMessagesBody("hi", false))
+
+	require.Equal(t, http.StatusTooManyRequests, w.Code, w.Body.String())
+	require.Empty(t, w.Header().Get(service.GatewayMockReplyHeader))
+	require.Zero(t, events.calls.Load(), "被并发限制拒绝不得产生命中事件")
+	require.Empty(t, upstreamPaths(env.capture), "被并发限制拒绝不得请求上游")
+}
+
+// TestGatewayMock_ClaudeCodeOnlyGroupRejectsMatchedRequest 证明 ClaudeCodeOnly 是
+// 权限约束：命中分支同样复用与选号一致的分组限制语义，受限分组上非 Claude Code
+// 客户端不得因本地 Mock 被放行。
+func TestGatewayMock_ClaudeCodeOnlyGroupRejectsMatchedRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := newGatewayMockEnv(t)
+	startGatewayMockRules(t, env.settingRepo, "hi", "本地回复")
+	env.group.ClaudeCodeOnly = true
+	env.group.FallbackGroupID = nil
+	events := &gatewayMockAuditEventStore{}
+	env.handler.SetGatewayMockEventStore(events)
+
+	w := env.serve(t, "/v1/messages", gatewayMockMessagesBody("hi", false))
+
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "permission_error")
+	require.Empty(t, w.Header().Get(service.GatewayMockReplyHeader))
+	require.Zero(t, events.calls.Load(), "权限拒绝不得产生命中事件")
+	require.Empty(t, upstreamPaths(env.capture), "权限拒绝不得请求上游")
+}
+
+// TestEarlyMockGate_UserRPMExceededRejectsMatchedRequest 证明命中分支仍执行基础
+// 计费/配额/RPM 准入：CheckBillingEligibility 返回 user RPM 超限时，必须按 429
+// 拒绝，绝不本地放行（跳过两类内容审计不等于跳过限流配额）。
+func TestEarlyMockGate_UserRPMExceededRejectsMatchedRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := newGatewayMockEnv(t)
+	startGatewayMockRules(t, env.settingRepo, "hi", "本地回复")
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	var rejected error
+	outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:               service.GatewayMockProtocolMessages,
+		model:                  "claude-sonnet-4-5",
+		rawBody:                []byte(gatewayMockMessagesBody("hi", false)),
+		settingService:         env.settings,
+		concurrency:            env.handler.concurrencyHelper,
+		apiKeyID:               env.apiKeyID,
+		userID:                 env.userID,
+		userConcurrency:        10,
+		billingCheck:           func() error { return service.ErrUserRPMExceeded },
+		writeCooldownReject:    func(int) {},
+		writeConcurrencyReject: func(error) {},
+		writeBillingReject:     func(err error) { rejected = err },
+	})
+
+	require.Equal(t, gatewayMockGateRejected, outcome, "user RPM 超限不得本地放行")
+	require.ErrorIs(t, rejected, service.ErrUserRPMExceeded)
+}
+
+// TestEarlyMockGate_MissingAdmissionDependencyFailsClosed 证明命中分支缺少基础
+// 准入依赖时 fail-closed：不本地放行、不回退内容审计，按服务不可用拒绝。
+func TestEarlyMockGate_MissingAdmissionDependencyFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	env := newGatewayMockEnv(t)
+	startGatewayMockRules(t, env.settingRepo, "hi", "本地回复")
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	var rejected error
+	outcome := serveEarlyDownstreamTestMock(c, earlyMockServeRequest{
+		protocol:               service.GatewayMockProtocolMessages,
+		model:                  "claude-sonnet-4-5",
+		rawBody:                []byte(gatewayMockMessagesBody("hi", false)),
+		settingService:         env.settings,
+		concurrency:            env.handler.concurrencyHelper,
+		apiKeyID:               env.apiKeyID,
+		userID:                 env.userID,
+		userConcurrency:        10,
+		billingCheck:           nil, // 准入依赖缺失
+		writeCooldownReject:    func(int) {},
+		writeConcurrencyReject: func(err error) { rejected = err },
+	})
+
+	require.Equal(t, gatewayMockGateRejected, outcome, "缺少基础准入依赖不得本地放行")
+	require.ErrorIs(t, rejected, errEarlyMockAdmissionUnavailable)
 }
 
 func TestGatewayMock_UnmatchedRequestStillReachesUpstream(t *testing.T) {
@@ -453,10 +593,10 @@ func TestGatewayMock_MessagesOnGeminiGroupPlatformReturnsLocalReply(t *testing.T
 	require.Equal(t, float64(0), usage["input_tokens"], "本地 mock 不得编造输入用量")
 	require.Equal(t, float64(0), usage["output_tokens"], "本地 mock 不得编造输出用量")
 
-	// 账号槽位必须在返回前归还：获取与释放必须成对，不能把并发额度留给下一次请求。
+	// 严格命中在选号之前完成：不进入账号选择，自然不获取账号槽位，也就无从泄漏。
 	acquired, released := env.slots.slotCounts()
-	require.Equal(t, 1, acquired, "真实选号路径必须经并发缓存获取账号槽位，槽位计数才有意义")
-	require.Equal(t, acquired, released, "命中 mock 返回前必须安全归还账号槽位")
+	require.Zero(t, acquired, "命中本地 mock 不选号，不得获取账号槽位")
+	require.Zero(t, released, "没有获取账号槽位就不存在释放")
 
 	// 本地 mock 不得进入计量路径：没有上游尝试，就不能有使用记录任务。
 	require.Zero(t, env.usagePool.Stats().SubmittedTasks, "本地 mock 不得提交任何使用记录任务")

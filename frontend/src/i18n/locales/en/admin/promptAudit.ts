@@ -13,7 +13,7 @@ export default {
       riskControlOff:
         "Risk control is currently off, so the audit tabs are hidden. You can still manage the downstream test mock here.",
       auditOrderHint:
-        "The audit gates run first: a mock matches only after the request is allowed, so an audit-blocked request never produces a mock hit. Only a single-turn plain-text request whose whole text equals the keyword matches. Known fixed instructions added by account tests are supported; additional tasks, tools or conversation history still do not match.",
+        "After authentication and the necessary limits, Mock matching runs first: a hit skips both prompt and content audit, selects no account and sends no model request; only a miss runs the audits. Only a single-turn plain-text request whose whole text equals the keyword matches. Known fixed instructions added by account tests are supported; additional tasks, tools or conversation history still do not match.",
     },
     actions: {
       refresh: "Refresh runtime",

@@ -139,6 +139,8 @@ export const requestTraceEn = {
         account_switch: "Account switched",
         model_rewritten: "Model rewritten",
         mock_served: "Local mock reply served; no upstream attempt was made",
+        mock_served_without_content_audit:
+          "Local mock served without a content audit; no upstream attempt was made",
         identity_sent: "Identity sent",
         identity_rewritten: "Identity rewritten",
         identity_not_sent: "Identity not sent",
@@ -683,6 +685,8 @@ export const requestTraceZh = {
         account_switch: "已切换账号",
         model_rewritten: "模型已改写",
         mock_served: "已由本地 mock 应答，未发出上游尝试",
+        mock_served_without_content_audit:
+          "本地 Mock，未执行内容审计、未发上游",
         identity_sent: "身份已发送",
         identity_rewritten: "身份已改写",
         identity_not_sent: "身份未发送",

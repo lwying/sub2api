@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	mathrand "math/rand"
@@ -999,6 +1000,25 @@ func (s *GatewayService) checkClaudeCodeRestriction(ctx context.Context, groupID
 	}
 
 	return group, resolvedID, nil
+}
+
+// CheckClaudeCodeDispatchAllowed 是提前 Mock 分支用的轻量权限校验：只按分组解析
+// Claude Code 限制语义（复用 checkClaudeCodeRestriction，走 resolveGroupByID），
+// 不选号、不查账号候选。返回 false 表示该分组仅限 Claude Code 客户端且没有可用的
+// 降级分组，必须按权限拒绝；存在降级分组时仍视为允许，与正常调度一致，不忽略
+// fallback 规则。err 非 nil 表示分组解析本身失败，调用方应按权限拒绝处理（fail-closed）。
+func (s *GatewayService) CheckClaudeCodeDispatchAllowed(ctx context.Context, groupID *int64) (bool, error) {
+	if groupID == nil {
+		return true, nil
+	}
+	_, _, err := s.checkClaudeCodeRestriction(ctx, groupID)
+	if err != nil {
+		if errors.Is(err, ErrClaudeCodeOnly) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, group *Group, requestedModel string) (string, bool, error) {

@@ -29,6 +29,22 @@ export const gatewayMockProtocols = [
 
 export type GatewayMockProtocol = (typeof gatewayMockProtocols)[number];
 
+/**
+ * The closed set of content-audit states a hit can carry. `skipped_local_mock` is the
+ * new strict early match: the gateway answered locally before either content audit
+ * ran, so no audit executed. `unknown` is every other case — a legacy record written
+ * before this field existed, or a value this build does not recognise. History is
+ * never guessed at, so an absent or unexpected value degrades to `unknown` rather
+ * than being reported as `skipped_local_mock`.
+ */
+export const gatewayMockContentAuditStates = [
+  "unknown",
+  "skipped_local_mock",
+] as const;
+
+export type GatewayMockContentAuditState =
+  (typeof gatewayMockContentAuditStates)[number];
+
 /** One stored rule as the admin API returns it. */
 export interface GatewayMockRule {
   id: string;
@@ -86,6 +102,13 @@ export interface GatewayMockEvent {
   account_id: number;
   client_ip: string;
   trace_id: string;
+  /**
+   * Whether the prompt/content audit executed for this hit. `skipped_local_mock`
+   * means the strict early match answered locally before either audit ran;
+   * `unknown` covers a legacy record or an unrecognised value. This is an audit
+   * action, never an audit verdict, and it carries no body.
+   */
+  content_audit_state: GatewayMockContentAuditState;
   /**
    * Always `null`: the stored deadline is an internal estimate, not the effective
    * cleanup time, so the server does not disclose it. Cleanup follows the current
@@ -225,6 +248,20 @@ export function normalizeGatewayMockPresetSeed(
   };
 }
 
+const contentAuditStates = new Set<string>(gatewayMockContentAuditStates);
+
+/**
+ * Reads the content-audit state. A missing field (an older server that predates the
+ * column) and a value outside the closed set both degrade to `unknown`; the raw
+ * token is never kept, so an unrecognised state cannot be rendered as a fact and
+ * old data is never guessed to be `skipped_local_mock`.
+ */
+function contentAuditState(value: unknown): GatewayMockContentAuditState {
+  if (typeof value !== "string" || !contentAuditStates.has(value))
+    return "unknown";
+  return value as GatewayMockContentAuditState;
+}
+
 function normalizeGatewayMockEvent(value: unknown): GatewayMockEvent {
   const source = record(value);
   return {
@@ -262,6 +299,8 @@ function normalizeGatewayMockEvent(value: unknown): GatewayMockEvent {
       64,
       "Invalid gateway mock event Trace id",
     ),
+    // 缺失或闭集之外的取值一律降级为 unknown：旧服务不带该字段，不能被猜成"已确认未审计"。
+    content_audit_state: contentAuditState(source.content_audit_state),
     // 只有确实记录到期限时才有值：null 是"没有记录到"，不是要被猜成某个日期的空值。
     cleanup_after: optionalTimestamp(
       source.cleanup_after,

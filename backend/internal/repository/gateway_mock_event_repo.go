@@ -25,6 +25,10 @@ type GatewayMockEvent struct {
 	AccountID   int64
 	ClientIP    string
 	TraceID     string
+	// ContentAuditState 是内容审计是否执行的有界状态（见 service 的闭集常量）：
+	// 旧记录与未提供的写入都是 unknown，新的早期严格命中是 skipped_local_mock。
+	// 它只记录审计动作是否发生，不含审计结论，也不含任何正文。
+	ContentAuditState string
 	// CleanupAfter 是发布版本里 NOT NULL 的 legacy 列，只作为内部字段保留：
 	// 旧实例（滚动发布中被替换掉的进程、或回滚后的旧二进制）会把该列读成 time.Time，
 	// 因此写入必须给它一个合法时间戳，不能让这一列出现 NULL。
@@ -65,6 +69,9 @@ func (r *GatewayMockEventRepo) RecordGatewayMockEvent(ctx context.Context, input
 		AccountID:   input.AccountID,
 		ClientIP:    input.ClientIP,
 		TraceID:     input.TraceID,
+		// ContentAuditState 收敛到闭集：旧调用方不传（空串）时写 unknown，绝不伪造成
+		// skipped_local_mock，避免把"未记录"说成"已确认未执行审计"。
+		ContentAuditState: service.NormalizeGatewayMockContentAuditState(input.ContentAuditState),
 		// OccurredAt 留零值，由存储按当前时刻写入（网关不参与时间来源）。
 		// CleanupAfter 留零值，由存储写成一个合法时间戳：该 NOT NULL 列只是 legacy
 		// 内部字段，旧实例会把它读成 time.Time（见 GatewayMockEvent.CleanupAfter）。
@@ -82,8 +89,9 @@ func NewGatewayMockEventRepo(db *sql.DB) *GatewayMockEventRepo {
 const gatewayMockEventInsertSQL = `
 INSERT INTO gateway_mock_events (
     rule_id, rule_version, protocol, model,
-    api_key_id, user_id, group_id, account_id, client_ip, trace_id, cleanup_after
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+    api_key_id, user_id, group_id, account_id, client_ip, trace_id, cleanup_after,
+    content_audit_state
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
 // insertGatewayMockEvent 写入一条事件。
 //
@@ -99,7 +107,7 @@ func (r *GatewayMockEventRepo) insertGatewayMockEvent(ctx context.Context, event
 	_, err := r.db.ExecContext(ctx, gatewayMockEventInsertSQL,
 		event.RuleID, event.RuleVersion, event.Protocol, event.Model,
 		event.APIKeyID, event.UserID, event.GroupID, event.AccountID, event.ClientIP, event.TraceID,
-		cleanupAfter,
+		cleanupAfter, service.NormalizeGatewayMockContentAuditState(event.ContentAuditState),
 	)
 	return err
 }
@@ -130,7 +138,7 @@ WHERE id IN (
 // 这里刻意不读 cleanup_after：它是 legacy 内部字段，写入时的估算不是可披露的实际清理
 // 时间，列表（以及任何对外投影）都不应有读出它的路径。
 const gatewayMockEventListColumns = `occurred_at, rule_id, rule_version, protocol, model,
-	api_key_id, user_id, group_id, account_id, client_ip, trace_id`
+	api_key_id, user_id, group_id, account_id, client_ip, trace_id, content_audit_state`
 
 // 列表按 (occurred_at, id) 倒序稳定推进，与 gateway_mock_events_occurred_idx 一致：
 // 同一时刻的多条事件也有确定的先后，翻页不会重复或漏读。
@@ -162,13 +170,17 @@ func (r *GatewayMockEventRepo) ListGatewayMockEvents(ctx context.Context, filter
 	list := make([]service.GatewayMockEventRecord, 0, pageSize)
 	for rows.Next() {
 		var record service.GatewayMockEventRecord
+		var rawContentAuditState string
 		if err := rows.Scan(
 			&record.OccurredAt, &record.RuleID, &record.RuleVersion, &record.Protocol, &record.Model,
 			&record.APIKeyID, &record.UserID, &record.GroupID, &record.AccountID, &record.ClientIP,
-			&record.TraceID,
+			&record.TraceID, &rawContentAuditState,
 		); err != nil {
 			return nil, 0, err
 		}
+		// 读侧同样收敛：旧记录（无该列语义）或未来新增枚举都安全降级为 unknown，
+		// 不回显未知取值，也不猜测旧数据。
+		record.ContentAuditState = service.NormalizeGatewayMockContentAuditState(rawContentAuditState)
 		list = append(list, record)
 	}
 	if err := rows.Err(); err != nil {

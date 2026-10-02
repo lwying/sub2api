@@ -111,6 +111,10 @@ func TestRequestTraceGatewayMockDecisionIsLocalMockWithoutWireAttempt(t *testing
 	require.Equal(t, string(service.RequestTraceDecisionMock), string(decision.Decision.Decision))
 	require.Equal(t, service.RequestTraceDecisionNotSent, decision.Decision.Outcome)
 	require.Equal(t, service.RequestTraceDecisionSourceInbound, decision.Decision.Source)
+	// 早期严格命中在两类内容审计之前本地应答：决策理由必须明确表达"未执行内容审计"，
+	// 且不虚报账号（未选号）。
+	require.Equal(t, "mock_served_without_content_audit", decision.Reason)
+	require.Zero(t, decision.Decision.AccountID, "本地 mock 未选号，Trace 不得虚报账号")
 	// 决策阶段是 body-less 的元数据：既不是 wire 尝试，也不带正文或传输事实。
 	require.Equal(t, service.RequestTraceNotObserved, decision.State)
 	require.Empty(t, decision.Payload)

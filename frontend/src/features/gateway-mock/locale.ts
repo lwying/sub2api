@@ -65,6 +65,12 @@ export const gatewayMockEn = {
         clientIp: "Client IP",
         traceId: "Trace",
         cleanup: "Cleanup after",
+        contentAudit: "Content audit",
+      },
+      contentAudit: {
+        unknown: "Not recorded",
+        skipped_local_mock:
+          "Local mock; the content audit did not run and no upstream attempt was made",
       },
       page: "{page} / {pages}",
       total: "{total} hits",
@@ -163,6 +169,11 @@ export const gatewayMockZh = {
         clientIp: "客户端 IP",
         traceId: "Trace",
         cleanup: "清理截止",
+        contentAudit: "内容审计",
+      },
+      contentAudit: {
+        unknown: "未记录",
+        skipped_local_mock: "本地 Mock，内容审计未执行",
       },
       page: "第 {page} / {pages} 页",
       total: "共 {total} 条",

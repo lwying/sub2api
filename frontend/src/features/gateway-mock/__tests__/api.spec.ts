@@ -177,6 +177,7 @@ describe("gateway mock API", () => {
       "api_key_id",
       "cleanup_after",
       "client_ip",
+      "content_audit_state",
       "group_id",
       "model",
       "occurred_at",
@@ -186,6 +187,31 @@ describe("gateway mock API", () => {
       "trace_id",
       "user_id",
     ]);
+  });
+
+  it("round-trips the content-audit state and degrades old or unknown values to unknown", async () => {
+    // 合法的 skipped_local_mock 原样保留；旧服务缺字段、未来枚举与损坏值都安全降级为
+    // unknown，既不猜测旧数据，也不回显未知取值。
+    for (const [payload, want] of [
+      [{ content_audit_state: "skipped_local_mock" }, "skipped_local_mock"],
+      [{ content_audit_state: "unknown" }, "unknown"],
+      // 旧服务不带该字段。
+      [{}, "unknown"],
+      [{ content_audit_state: null }, "unknown"],
+      [{ content_audit_state: "invented_state" }, "unknown"],
+    ] as const) {
+      client.get.mockResolvedValue({
+        data: {
+          items: [event(payload)],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        },
+      });
+      const page = await listEvents({ page: 1, page_size: 20 });
+      expect(page.items[0].content_audit_state).toBe(want);
+      expect(JSON.stringify(page)).not.toContain("invented_state");
+    }
   });
 
   it("keeps an unrecorded cleanup deadline as null instead of guessing one", async () => {

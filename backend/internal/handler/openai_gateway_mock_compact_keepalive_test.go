@@ -4,24 +4,18 @@ package handler
 
 // 下游测试请求 mock 与 body-signal compact 下游心跳（#3887）的交互。
 //
-// compact 心跳会在上游 unary 等待期间向下游写出 SSE 注释行并提交 200，但它
-// 不会设置 response_committed（那个 key 由 handleErrorResponse 系列设置）。而
-// compact 请求的白名单归一化会删掉 stream 字段，于是 mock 按"非流式"判定构造
-// 裸 JSON。若 mock 在这条已提交的 SSE 流上接管写回，客户端会收到
-// ": keepalive\n\n{...json...}"——注释行后面的裸 JSON 不是合法 SSE 事件，解析
-// 直接失败。
+// 新优先级下，早期严格 Mock 在 compact 心跳启动之前完成判定：命中规则的请求在
+// 心跳启动前就被本地接管，因此既不会出现心跳注释行，也不会在已提交的 SSE 流上
+// 追加裸 JSON（": keepalive\n\n{...json...}" 里的裸 JSON 不是合法 SSE 事件）。
 //
-// 反向的约束同样成立：mock 判定不得反过来摘下这条心跳。真实 body-signal compact
-// 请求的 input 必带 compaction_trigger，永不可能被判为下游测试请求，因此判定必须
-// 先于停拍——先无条件停拍等于给每个真实 compact 请求在上游等待期间摘掉唯一的空闲
-// 保护，下游重新变成零字节静默。两个方向合起来即：规则快照只读一次，命中才停拍
-// 接管；不命中时心跳必须继续跳动。
+// 反向的约束同样成立：未命中的真实 body-signal compact 请求（input 必带
+// compaction_trigger，永不可能被判为下游测试请求）必须保留心跳——判定之后心跳
+// 仍在上游 unary 等待期间继续跳动，否则大上下文压缩会重新变成零字节静默而被反代
+// 空闲超时掐断。
 //
-// 真实链路里这两件事不会同时发生（body-signal 提升要求 input 带
-// compaction_trigger，而带该 item 的请求不会被判定为下游测试请求），因此这里用
-// 处理器可用的接缝显式复现该状态：真实路由 -> 真实 handler -> 真实 service ->
-// 本地 httptest 上游；只把「客户端流式标记」按 body-signal 提升的效果直接写入
-// 上下文，并用慢一拍的并发缓存让心跳在 mock 判定之前完成首拍。
+// 真实链路里这两件事不会同时发生，因此这里用处理器可用的接缝显式复现：真实路由
+// -> 真实 handler -> 真实 service -> 本地 httptest 上游；只把「客户端流式标记」
+// 按 body-signal 提升的效果直接写入上下文。
 //
 // 只使用本地 httptest 作为上游，不访问任何生产上游。
 
@@ -193,43 +187,36 @@ func requireNoRawJSONOnCommittedStream(t *testing.T, body string) {
 	}
 }
 
-// TestOpenAICompactMock_NotServedAfterCompactKeepaliveCommitted 是本文件的核心
-// 复现：compact 心跳已经把响应头提交为 200 的 SSE 流之后，本地 mock 不得再按
-// 裸 JSON 接管写回。
-func TestOpenAICompactMock_NotServedAfterCompactKeepaliveCommitted(t *testing.T) {
+// TestOpenAICompactMock_MatchedRequestServedBeforeKeepaliveStarts 是本文件的核心：
+// 命中规则的 compact 请求在 compact 心跳启动之前就被本地接管——响应里不得出现任何
+// ": keepalive" 心跳字节，也不存在"在已提交 SSE 流上追加裸 JSON"的机会。
+// 用户槽位刻意延迟，证明即便准入耗时超过心跳间隔，心跳也不会被提前启动。
+func TestOpenAICompactMock_MatchedRequestServedBeforeKeepaliveStarts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	env := newCompactMockKeepaliveEnv(t, 1500*time.Millisecond, 0)
 
 	w := env.servePathBasedCompactMock(t, compactMockEligibleBody)
 
-	// 心跳必须真的先提交了（否则本用例没有复现目标状态）。
-	require.True(t, strings.HasPrefix(w.Body.String(), ": keepalive\n\n"),
-		"compact keepalive must have committed the stream before the mock decision: %s", w.Body.String())
 	require.Equal(t, http.StatusOK, w.Code)
-
-	// 已提交的 SSE 流上不得出现本地 mock 的裸 JSON 接管。
-	require.Empty(t, w.Header().Get(service.GatewayMockReplyHeader),
-		"local mock must not take over an already committed stream")
-	require.NotContains(t, w.Body.String(), "本地回复")
-	requireNoRawJSONOnCommittedStream(t, w.Body.String())
-
-	// 标准 compact 写回接管：上游被真实调用，响应以 SSE 终止事件收尾。
-	require.Equal(t, []string{"/v1/responses/compact"}, realUpstreamPaths(env.capture))
-	require.Contains(t, w.Body.String(), "event: response.completed")
+	require.NotContains(t, w.Body.String(), ": keepalive",
+		"命中本地 mock 的请求不得启动 compact 心跳: %s", w.Body.String())
+	require.Equal(t, service.GatewayMockReplyHeaderValue, w.Header().Get(service.GatewayMockReplyHeader),
+		"命中规则的下游测试请求必须由本地 mock 接管")
+	require.Contains(t, w.Body.String(), "本地回复")
+	require.Empty(t, realUpstreamPaths(env.capture), "命中本地 mock 时不得向上游发出任何请求")
 }
 
-// TestOpenAICompactMock_ServedWhenKeepaliveNotCommitted 保证修复不改变标准路径：
-// 心跳尚未提交（没有发生首拍）时，命中规则的下游测试请求仍由本地 mock 接管，
-// 且不发出上游请求。
-func TestOpenAICompactMock_ServedWhenKeepaliveNotCommitted(t *testing.T) {
+// TestOpenAICompactMock_ImmediateAdmissionStillServedLocally 是上一用例的对照：
+// 立即拿到用户槽位时命中请求同样本地接管，且不写出任何心跳字节、不发上游。
+func TestOpenAICompactMock_ImmediateAdmissionStillServedLocally(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	env := newCompactMockKeepaliveEnv(t, 0, 0)
 
 	w := env.servePathBasedCompactMock(t, compactMockEligibleBody)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	require.Equal(t, service.GatewayMockReplyHeaderValue, w.Header().Get(service.GatewayMockReplyHeader),
-		"an uncommitted response must still be served by the local mock")
+	require.NotContains(t, w.Body.String(), ": keepalive")
+	require.Equal(t, service.GatewayMockReplyHeaderValue, w.Header().Get(service.GatewayMockReplyHeader))
 	require.Contains(t, w.Body.String(), "本地回复")
 	require.Empty(t, realUpstreamPaths(env.capture), "命中本地 mock 时不得向上游发出任何请求")
 }

@@ -6,12 +6,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  gatewayMockContentAuditKey,
   gatewayMockFailureKey,
   gatewayMockFailureReasons,
   gatewayMockProtocolKey,
 } from "../labels";
 import { gatewayMockEn, gatewayMockZh } from "../locale";
-import { gatewayMockProtocols } from "../types";
+import { gatewayMockContentAuditStates, gatewayMockProtocols } from "../types";
 
 type LocaleValue = Record<string, unknown>;
 
@@ -92,6 +93,60 @@ describe("gateway mock locale", () => {
     );
     expect(gatewayMockProtocolKey("")).toBe(
       "admin.gatewayMock.events.protocol.unknown",
+    );
+  });
+
+  it("labels every content-audit state plus a fallback, and never echoes the raw token", () => {
+    // `unknown` 既是闭集成员又是兜底键，去重后仍要求每个值各有独立文案。
+    const values = [...new Set([...gatewayMockContentAuditStates, "unknown"])];
+    for (const [locale, messages] of Object.entries({
+      en: gatewayMockEn,
+      zh: gatewayMockZh,
+    })) {
+      const labels = values.map((value) =>
+        readLeaf(messages, `gatewayMock.events.contentAudit.${value}`),
+      );
+      for (const [index, label] of labels.entries()) {
+        expect(typeof label, `${locale} contentAudit.${values[index]}`).toBe(
+          "string",
+        );
+        expect(
+          (label as string).trim(),
+          `${locale} contentAudit.${values[index]}`,
+        ).not.toBe("");
+        expect(
+          label,
+          `${locale} contentAudit.${values[index]} must not echo the wire value`,
+        ).not.toBe(values[index]);
+      }
+      expect(
+        new Set(labels).size,
+        `${locale} has repeated content-audit labels`,
+      ).toBe(values.length);
+    }
+    // 用户要求的具体文案。
+    expect(
+      readLeaf(
+        gatewayMockZh,
+        "gatewayMock.events.contentAudit.skipped_local_mock",
+      ),
+    ).toBe("本地 Mock，内容审计未执行");
+    expect(
+      readLeaf(gatewayMockZh, "gatewayMock.events.contentAudit.unknown"),
+    ).toBe("未记录");
+  });
+
+  it("maps a content-audit state outside the closed set to the fallback label key", () => {
+    for (const state of gatewayMockContentAuditStates) {
+      expect(gatewayMockContentAuditKey(state)).toBe(
+        `admin.gatewayMock.events.contentAudit.${state}`,
+      );
+    }
+    expect(gatewayMockContentAuditKey("invented_audit_state")).toBe(
+      "admin.gatewayMock.events.contentAudit.unknown",
+    );
+    expect(gatewayMockContentAuditKey("")).toBe(
+      "admin.gatewayMock.events.contentAudit.unknown",
     );
   });
 

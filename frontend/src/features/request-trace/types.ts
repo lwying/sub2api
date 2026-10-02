@@ -99,6 +99,7 @@ export const requestTraceStageReasons = [
   "account_switch",
   "model_rewritten",
   "mock_served",
+  "mock_served_without_content_audit",
   "identity_sent",
   "identity_rewritten",
   "identity_not_sent",

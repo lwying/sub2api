@@ -58,7 +58,7 @@ func TestGatewayMockEventInsertAlwaysWritesAValidTimestamp(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO gateway_mock_events")).
 		WithArgs("gmr_0123456789abcdef", "v1", "messages", "claude-sonnet-4-5",
 			int64(7), int64(3), int64(2), int64(11), "203.0.113.7", "0123456789abcdef0123456789abcdef",
-			futureTimestamp{}).
+			futureTimestamp{}, service.GatewayMockContentAuditUnknown).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = NewGatewayMockEventRepo(db).RecordGatewayMockEvent(context.Background(), service.GatewayMockEventInput{
@@ -72,13 +72,45 @@ func TestGatewayMockEventInsertAlwaysWritesAValidTimestamp(t *testing.T) {
 	// 调用方确实给出期限时照原样落库，不做二次加工。
 	explicit := time.Date(2026, 12, 29, 3, 4, 5, 0, time.UTC)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO gateway_mock_events")).
-		WithArgs("gmr_explicit", "", "responses", "", int64(0), int64(0), int64(0), int64(0), "", "", explicit).
+		WithArgs("gmr_explicit", "", "responses", "", int64(0), int64(0), int64(0), int64(0), "", "", explicit,
+			service.GatewayMockContentAuditUnknown).
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	err = NewGatewayMockEventRepo(db).insertGatewayMockEvent(context.Background(), GatewayMockEvent{
 		RuleID: "gmr_explicit", Protocol: "responses", CleanupAfter: explicit,
 	})
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// 写入侧把内容审计状态收敛到闭集：调用方给出的合法状态照原样落库；未给出（空串）或闭集
+// 之外的值写 unknown，绝不伪造成 skipped_local_mock。
+func TestGatewayMockEventInsertNormalizesContentAuditState(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"skipped local mock round-trips", service.GatewayMockContentAuditSkippedLocalMock, service.GatewayMockContentAuditSkippedLocalMock},
+		{"unknown round-trips", service.GatewayMockContentAuditUnknown, service.GatewayMockContentAuditUnknown},
+		{"missing becomes unknown, never skipped", "", service.GatewayMockContentAuditUnknown},
+		{"unknown enum becomes unknown", "invented_state", service.GatewayMockContentAuditUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+
+			mock.ExpectExec(regexp.QuoteMeta("INSERT INTO gateway_mock_events")).
+				WithArgs("gmr_state", "", "messages", "", int64(0), int64(0), int64(0), int64(0), "", "",
+					futureTimestamp{}, tc.want).
+				WillReturnResult(sqlmock.NewResult(1, 1))
+
+			err = NewGatewayMockEventRepo(db).insertGatewayMockEvent(context.Background(),
+				GatewayMockEvent{RuleID: "gmr_state", Protocol: "messages", ContentAuditState: tc.input})
+			require.NoError(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 // 对外投影里不能有读出该列的路径：写入时的估算不是可披露的实际清理时间。
