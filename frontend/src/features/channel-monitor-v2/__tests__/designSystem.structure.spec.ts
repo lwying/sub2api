@@ -27,7 +27,7 @@ describe("channel-monitor-v2 design system structure", () => {
     expect(src).toContain("monitor-toolbar");
     expect(src).toContain("clearFilters");
     expect(src).toContain("healthModeOptions");
-    expect(src).toContain("'cache'");
+    expect(src).toMatch(/['"]cache['"]/);
     // Ops elevation: rounded-3xl + ring surfaces
     expect(src).toContain("rounded-3xl");
     expect(src).toContain("ring-1 ring-gray-900/5");
@@ -43,7 +43,7 @@ describe("channel-monitor-v2 design system structure", () => {
     expect(src).toContain("overflow-auto");
     // Trend view toggle (pulse matrix / line chart) + default platform/group dimension
     expect(src).toContain("trendView");
-    expect(src).toContain("'platform_group'");
+    expect(src).toMatch(/['"]platform_group['"]/);
     expect(src).toContain("MonitorTrendChart");
   });
 

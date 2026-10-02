@@ -28,6 +28,8 @@ func newRequestTraceDeleteTestTx(t *testing.T) (*sql.Tx, context.Context) {
 	_, err = tx.ExecContext(ctx, "SET LOCAL search_path TO "+schema)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `
+CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL DEFAULT '');
+CREATE TABLE api_keys (id BIGINT PRIMARY KEY, name TEXT NOT NULL DEFAULT '');
 CREATE TABLE request_traces (
     id BIGSERIAL PRIMARY KEY,
     trace_id TEXT NOT NULL UNIQUE,
