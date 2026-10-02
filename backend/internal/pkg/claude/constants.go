@@ -3,6 +3,9 @@ package claude
 
 // Claude Code 客户端相关常量
 
+// CodeSystemPrompt 是账号连通性探针和网关使用的固定客户端身份声明，不包含用户任务。
+const CodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
+
 // Beta header 常量
 //
 // 这里的常量对齐真实 Claude Code CLI 的最新流量（截至 2026-04）。

@@ -6819,13 +6819,6 @@
             </div>
           </div>
 
-          <GatewayMockSettings
-            :status="gatewayMockStatus"
-            :loading="gatewayMockLoading"
-            @updated="gatewayMockStatus = $event"
-          />
-          <GatewayMockEventsPanel />
-
           <!-- Web Search Emulation -->
           <div class="card">
             <div
@@ -10303,10 +10296,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import GatewayMockSettings from "@/features/gateway-mock/GatewayMockSettings.vue";
-import GatewayMockEventsPanel from "@/features/gateway-mock/GatewayMockEventsPanel.vue";
-import { getOperatorSettings as getGatewayMockOperatorSettings } from "@/features/gateway-mock/api";
-import type { GatewayMockOperatorStatus } from "@/features/gateway-mock/types";
 import { adminAPI } from "@/api";
 import {
   appendAuthSourceDefaultsToUpdateRequest,
@@ -10402,19 +10391,6 @@ import {
 } from "./codexFingerprintSignals";
 
 const { t, locale } = useI18n();
-const gatewayMockStatus = ref<GatewayMockOperatorStatus | null>(null);
-const gatewayMockLoading = ref(true);
-
-async function loadGatewayMockOperatorSettings() {
-  gatewayMockLoading.value = true;
-  try {
-    gatewayMockStatus.value = await getGatewayMockOperatorSettings();
-  } catch {
-    gatewayMockStatus.value = null;
-  } finally {
-    gatewayMockLoading.value = false;
-  }
-}
 const appStore = useAppStore();
 // 关闭 step-up 开关是敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 码重试
 const settingsStepUp = useStepUp();
@@ -14501,7 +14477,6 @@ onMounted(() => {
   loadRateLimit429CooldownSettings();
   loadRateLimit429AccountLimit();
   loadKeyBillingSnapshotSettings();
-  loadGatewayMockOperatorSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();

@@ -4,7 +4,13 @@ export default {
     description:
       "通过 OpenAI 兼容 Qwen3Guard 节点异步复核或同步阻止用户输入；事件的完整提示词会入库保存，仅供管理员复核。",
     configVersion: "配置版本 v{version}",
-    tabs: { config: "配置", events: "事件" },
+    tabs: { config: "配置", events: "事件", mock: "下游 Mock" },
+    mock: {
+      riskControlOff:
+        "风控当前已关闭，审计标签已隐藏；此处仍可管理下游测试请求 mock。",
+      auditOrderHint:
+        "审计闸门先执行：请求被放行后才会匹配 mock，被审计拒绝的请求不会产生 mock 命中。仅单轮纯文本且整条文本与关键词完全相同的请求会命中；兼容账号测试自动附带的已知固定指令，追加任务、工具或历史对话仍不命中。",
+    },
     actions: {
       refresh: "刷新运行态",
       retry: "重试",

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -85,7 +87,7 @@ func extractMessagesSingleUserText(root map[string]any) (string, bool) {
 }
 
 // messagesSystemIsProtocolBoilerplate 报告 system 字段是否存在实质任务。
-// 返回 (true, true) 表示没有 system 或只有已知协议提醒；(false, true) 表示存在任务指令；
+// 返回 (true, true) 表示没有 system、只有已知协议提醒或固定账号探针身份声明；(false, true) 表示存在任务指令；
 // (*, false) 表示形态无法确认。
 func messagesSystemIsProtocolBoilerplate(root map[string]any) (bool, bool) {
 	raw, present := root["system"]
@@ -94,7 +96,7 @@ func messagesSystemIsProtocolBoilerplate(root map[string]any) (bool, bool) {
 	}
 	switch value := raw.(type) {
 	case string:
-		return isProtocolBoilerplateText(value), true
+		return isProtocolBoilerplateText(value) || strings.TrimSpace(value) == claude.CodeSystemPrompt, true
 	case []any:
 		for _, block := range value {
 			item, ok := block.(map[string]any)
@@ -105,7 +107,7 @@ func messagesSystemIsProtocolBoilerplate(root map[string]any) (bool, bool) {
 				return false, false
 			}
 			text, _ := item["text"].(string)
-			if !isProtocolBoilerplateText(text) {
+			if !isProtocolBoilerplateText(text) && strings.TrimSpace(text) != claude.CodeSystemPrompt {
 				return false, false
 			}
 		}
@@ -186,8 +188,8 @@ func extractChatCompletionsSingleUserText(root map[string]any) (string, bool) {
 }
 
 // responsesInstructionsIsProtocolBoilerplate 报告 Responses 的 instructions 是否存在实质任务。
-// 语义与 messagesSystemIsProtocolBoilerplate 一致：无 instructions、纯空白或已知协议提醒视为不含任务，
-// 其余任何非空文本按任务处理；返回 (*, false) 表示形态无法确认。
+// 无 instructions、纯空白、已知协议提醒或字符串形态的完整固定账号探针指令视为不含任务；
+// 其余非空文本（包括在固定指令前后追加任务）按任务处理。返回 (*, false) 表示形态无法确认。
 func responsesInstructionsIsProtocolBoilerplate(root map[string]any) (bool, bool) {
 	raw, present := root["instructions"]
 	if !present || raw == nil {
@@ -195,7 +197,8 @@ func responsesInstructionsIsProtocolBoilerplate(root map[string]any) (bool, bool
 	}
 	switch value := raw.(type) {
 	case string:
-		return isProtocolBoilerplateText(value), true
+		// 账号测试自动附带固定客户端指令；只接受完整一致的文本，追加任务仍按普通请求处理。
+		return isProtocolBoilerplateText(value) || strings.TrimSpace(value) == strings.TrimSpace(openai.DefaultInstructions), true
 	case []any:
 		for _, block := range value {
 			item, ok := block.(map[string]any)

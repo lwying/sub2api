@@ -4,7 +4,17 @@ export default {
     description:
       "Review user input asynchronously or block it synchronously through OpenAI-compatible Qwen3Guard nodes. Full prompts are stored with events for admin review.",
     configVersion: "Config version v{version}",
-    tabs: { config: "Configuration", events: "Events" },
+    tabs: {
+      config: "Configuration",
+      events: "Events",
+      mock: "Downstream mock",
+    },
+    mock: {
+      riskControlOff:
+        "Risk control is currently off, so the audit tabs are hidden. You can still manage the downstream test mock here.",
+      auditOrderHint:
+        "The audit gates run first: a mock matches only after the request is allowed, so an audit-blocked request never produces a mock hit. Only a single-turn plain-text request whose whole text equals the keyword matches. Known fixed instructions added by account tests are supported; additional tasks, tools or conversation history still do not match.",
+    },
     actions: {
       refresh: "Refresh runtime",
       retry: "Retry",

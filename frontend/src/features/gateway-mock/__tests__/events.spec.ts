@@ -14,8 +14,23 @@ vi.mock("vue-i18n", async (importOriginal) => {
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) };
 });
 
+// 部署配置可能声明超过网关命中列表上限的页大小，用注入配置验证面板会过滤。
+const preferences = vi.hoisted(() => ({
+  getConfiguredTablePageSizeOptions: vi.fn(() => [10, 20, 50, 100]),
+}));
+vi.mock("@/utils/tablePreferences", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/utils/tablePreferences")>();
+  return {
+    ...actual,
+    getConfiguredTablePageSizeOptions:
+      preferences.getConfiguredTablePageSizeOptions,
+  };
+});
+
 import GatewayMockEventsPanel from "../GatewayMockEventsPanel.vue";
-import { gatewayMockProtocols } from "../types";
+import Pagination from "@/components/common/Pagination.vue";
+import { gatewayMockEventMaxPageSize, gatewayMockProtocols } from "../types";
 
 type Raw = Record<string, unknown>;
 
@@ -55,7 +70,12 @@ async function mountLoaded(payload: Raw = page()) {
 }
 
 describe("admin gateway mock hit list", () => {
-  beforeEach(() => mocks.listEvents.mockReset());
+  beforeEach(() => {
+    mocks.listEvents.mockReset();
+    preferences.getConfiguredTablePageSizeOptions.mockReturnValue([
+      10, 20, 50, 100,
+    ]);
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it("reads the first page on mount and renders the stored facts", async () => {
@@ -93,12 +113,8 @@ describe("admin gateway mock hit list", () => {
     expect(
       wrapper.get('[data-testid="gateway-mock-events-model"]').text(),
     ).toBe("claude-sonnet-4-5");
-    expect(
-      wrapper.get('[data-testid="gateway-mock-events-total"]').text(),
-    ).toBe("admin.gatewayMock.events.total");
-    expect(wrapper.get('[data-testid="gateway-mock-events-page"]').text()).toBe(
-      "admin.gatewayMock.events.page",
-    );
+    // 与审计页统一使用同一分页组件。
+    expect(wrapper.findComponent(Pagination).exists()).toBe(true);
   });
 
   it("discloses that hits follow the usage-retention policy and are kept while it is off", async () => {
@@ -262,7 +278,7 @@ describe("admin gateway mock hit list", () => {
     ).toBe(false);
   });
 
-  it("pages forward and back on demand, and disables the ends", async () => {
+  it("pages forward and back through the shared pagination, and disables the ends", async () => {
     mocks.listEvents
       .mockResolvedValueOnce({
         items: [event()],
@@ -285,36 +301,58 @@ describe("admin gateway mock hit list", () => {
     const wrapper = mountPanel();
     await flushPromises();
 
-    const previous = wrapper.get('[data-testid="gateway-mock-events-prev"]');
-    const next = wrapper.get('[data-testid="gateway-mock-events-next"]');
-    expect((previous.element as HTMLButtonElement).disabled).toBe(true);
-    expect((next.element as HTMLButtonElement).disabled).toBe(false);
+    // 桌面分页导航：首尾按钮即上一页 / 下一页。
+    const desktopButtons = () =>
+      wrapper.get('nav[aria-label="Pagination"]').findAll("button");
+    expect((desktopButtons()[0].element as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (desktopButtons().at(-1)!.element as HTMLButtonElement).disabled,
+    ).toBe(false);
 
-    await next.trigger("click");
+    await desktopButtons().at(-1)!.trigger("click");
     await flushPromises();
     expect(mocks.listEvents).toHaveBeenLastCalledWith(
       { page: 2, page_size: 20 },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect((desktopButtons()[0].element as HTMLButtonElement).disabled).toBe(
+      false,
+    );
     expect(
-      (
-        wrapper.get('[data-testid="gateway-mock-events-prev"]')
-          .element as HTMLButtonElement
-      ).disabled,
-    ).toBe(false);
-    expect(
-      (
-        wrapper.get('[data-testid="gateway-mock-events-next"]')
-          .element as HTMLButtonElement
-      ).disabled,
+      (desktopButtons().at(-1)!.element as HTMLButtonElement).disabled,
     ).toBe(true);
 
-    await wrapper
-      .get('[data-testid="gateway-mock-events-prev"]')
-      .trigger("click");
+    await desktopButtons()[0].trigger("click");
     await flushPromises();
     expect(mocks.listEvents).toHaveBeenLastCalledWith(
       { page: 1, page_size: 20 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("applies a new page size and clamps it to the API maximum", async () => {
+    mocks.listEvents.mockResolvedValue({
+      items: [event()],
+      total: 25,
+      page: 1,
+      page_size: 50,
+    });
+    const wrapper = mountPanel();
+    await flushPromises();
+
+    wrapper.getComponent(Pagination).vm.$emit("update:page-size", 50);
+    await flushPromises();
+    expect(mocks.listEvents).toHaveBeenLastCalledWith(
+      { page: 1, page_size: 50 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+
+    wrapper.getComponent(Pagination).vm.$emit("update:page-size", 500);
+    await flushPromises();
+    expect(mocks.listEvents).toHaveBeenLastCalledWith(
+      { page: 1, page_size: 100 },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -398,5 +436,24 @@ describe("admin gateway mock hit list", () => {
     expect(
       wrapper.find('[data-testid="gateway-mock-events-row"]').exists(),
     ).toBe(false);
+  });
+
+  it("offers only page sizes within the API maximum, dropping a larger deployment option", async () => {
+    preferences.getConfiguredTablePageSizeOptions.mockReturnValue([
+      20, 100, 200,
+    ]);
+    const wrapper = await mountLoaded();
+
+    const options = wrapper.getComponent(Pagination).props("pageSizeOptions");
+    // 200 超出后端上限，下拉不得提供，否则选到它会把非法值写进全局持久化。
+    expect(options).toEqual([20, 100]);
+  });
+
+  it("falls back to legal page sizes when configuration offers none within the maximum", async () => {
+    preferences.getConfiguredTablePageSizeOptions.mockReturnValue([200]);
+    const wrapper = await mountLoaded();
+
+    const options = wrapper.getComponent(Pagination).props("pageSizeOptions");
+    expect(options).toEqual([20, gatewayMockEventMaxPageSize]);
   });
 });

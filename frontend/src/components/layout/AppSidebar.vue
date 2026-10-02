@@ -1124,17 +1124,19 @@ const adminNavItems = computed((): NavItem[] => {
       icon: BellIcon,
     },
     { path: "/admin/proxies", label: t("nav.proxies"), icon: ServerIcon },
+    // 安全审计分组整体保留可见，使风控关闭时合并页面（提示词审计 / 下游 Mock）
+    // 仍能从这里进入；内容审计子入口继续受风控开关约束，未新增导航项。
     {
       path: "/admin/security-audit",
       label: t("nav.securityAudit"),
       icon: ShieldIcon,
       expandOnly: true,
-      featureFlag: flagRiskControl,
       children: [
         {
           path: "/admin/risk-control",
           label: t("nav.contentModeration"),
           icon: ShieldIcon,
+          featureFlag: flagRiskControl,
         },
         {
           path: "/admin/prompt-audit",

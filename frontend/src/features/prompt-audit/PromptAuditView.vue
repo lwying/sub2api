@@ -37,118 +37,163 @@
         </div>
       </header>
 
+      <!-- 风控关闭时审计标签整体隐藏，只保留下游 Mock；这里说明原因，避免管理员误以为功能丢失。 -->
       <div
-        v-if="loadErrors.config && !draft"
-        role="alert"
-        class="rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30"
+        v-if="riskControlOff"
+        role="status"
+        data-test="risk-control-off-notice"
+        class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
       >
-        <p class="text-sm text-red-700 dark:text-red-300">
-          {{ loadErrors.config }}
-        </p>
-        <button
-          type="button"
-          class="btn btn-secondary btn-sm mt-3"
-          @click="loadConfig"
-        >
-          {{ t("admin.promptAudit.actions.retry") }}
-        </button>
+        {{ t("admin.promptAudit.mock.riskControlOff") }}
       </div>
 
-      <template v-else>
-        <div
-          class="mb-4"
-          role="tablist"
-          :aria-label="t('admin.promptAudit.title')"
-        >
-          <div class="tabs inline-flex">
+      <div
+        class="mb-4"
+        role="tablist"
+        :aria-label="t('admin.promptAudit.title')"
+      >
+        <div class="tabs inline-flex">
+          <button
+            v-for="tab in pageTabs"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            class="tab"
+            :class="{ 'tab-active': activeTab === tab.id }"
+            :aria-selected="activeTab === tab.id"
+            :data-test="`tab-${tab.id}`"
+            @click="selectTab(tab.id)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+      </div>
+
+      <main class="card px-4 sm:px-6 lg:px-8">
+        <div v-show="activeTab === 'config'" data-test="tab-panel-config">
+          <RuntimeOverview
+            :runtime="runtime"
+            :loading="loading.runtime"
+            :error="loadErrors.runtime"
+            @refresh="loadRuntime"
+          />
+
+          <!-- 审计配置失败只在这里提示并重试，不再隐藏整个标签栏，从而不牵连 Mock 标签。 -->
+          <div
+            v-if="loadErrors.config && !draft"
+            role="alert"
+            data-test="config-load-error"
+            class="mt-5 rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30"
+          >
+            <p class="text-sm text-red-700 dark:text-red-300">
+              {{ loadErrors.config }}
+            </p>
             <button
-              v-for="tab in pageTabs"
-              :key="tab.id"
               type="button"
-              role="tab"
-              class="tab"
-              :class="{ 'tab-active': activeTab === tab.id }"
-              :aria-selected="activeTab === tab.id"
-              :data-test="`tab-${tab.id}`"
-              @click="activeTab = tab.id"
+              class="btn btn-secondary btn-sm mt-3"
+              @click="loadConfig"
             >
-              {{ tab.label }}
+              {{ t("admin.promptAudit.actions.retry") }}
             </button>
           </div>
+
+          <template v-if="draft">
+            <EndpointPool
+              :endpoints="draft.endpoints"
+              :probe-results="probeResults"
+              :probing-ids="probingIds"
+              @update:endpoints="updateEndpoints"
+              @probe="runProbe"
+            />
+            <div
+              v-if="loadErrors.groups"
+              role="alert"
+              class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+            >
+              {{ loadErrors.groups }}
+            </div>
+            <PolicyPanel
+              :draft="draft"
+              :groups="groups"
+              @update:draft="replaceDraft"
+            />
+          </template>
         </div>
 
-        <main class="card px-4 sm:px-6 lg:px-8">
-          <div v-show="activeTab === 'config'" data-test="tab-panel-config">
-            <RuntimeOverview
-              :runtime="runtime"
-              :loading="loading.runtime"
-              :error="loadErrors.runtime"
-              @refresh="loadRuntime"
-            />
-
-            <template v-if="draft">
-              <EndpointPool
-                :endpoints="draft.endpoints"
-                :probe-results="probeResults"
-                :probing-ids="probingIds"
-                @update:endpoints="updateEndpoints"
-                @probe="runProbe"
-              />
-              <div
-                v-if="loadErrors.groups"
-                role="alert"
-                class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
-              >
-                {{ loadErrors.groups }}
-              </div>
-              <PolicyPanel
-                :draft="draft"
-                :groups="groups"
-                @update:draft="replaceDraft"
-              />
-            </template>
-          </div>
-
-          <div v-show="activeTab === 'events'" data-test="tab-panel-events">
-            <div
-              v-if="draft?.enabled && !draft.store_pass_events"
-              data-test="pass-events-disabled-notice"
-              role="status"
-              class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
+        <div v-show="activeTab === 'events'" data-test="tab-panel-events">
+          <div
+            v-if="draft?.enabled && !draft.store_pass_events"
+            data-test="pass-events-disabled-notice"
+            role="status"
+            class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
+          >
+            <span>{{ t("admin.promptAudit.events.passEventsDisabled") }}</span>
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              @click="activeTab = 'config'"
             >
-              <span>{{
-                t("admin.promptAudit.events.passEventsDisabled")
-              }}</span>
-              <button
-                type="button"
-                class="btn btn-secondary btn-sm"
-                @click="activeTab = 'config'"
-              >
-                {{ t("admin.promptAudit.events.openConfiguration") }}
-              </button>
-            </div>
-            <EventWorkspace
-              :events="events.items"
-              :total="events.total"
-              :page="events.page"
-              :page-size="events.page_size"
-              :filters="filters"
-              :selected-ids="selectedEventIds"
-              :loading="loading.events"
-              :error="loadErrors.events"
-              @filters-change="handleFiltersChanged"
-              @search="applyEventFilters"
-              @selection="selectedEventIds = $event"
-              @page="changePage"
-              @page-size="changePageSize"
-              @view="openEvent"
-              @delete="requestSingleDelete"
-              @batch-delete="requestBatchDelete"
-              @preview-delete="requestFilterDeletePreview"
-            />
+              {{ t("admin.promptAudit.events.openConfiguration") }}
+            </button>
           </div>
-        </main>
-      </template>
+          <EventWorkspace
+            :events="events.items"
+            :total="events.total"
+            :page="events.page"
+            :page-size="events.page_size"
+            :filters="filters"
+            :selected-ids="selectedEventIds"
+            :loading="loading.events"
+            :error="loadErrors.events"
+            @filters-change="handleFiltersChanged"
+            @search="applyEventFilters"
+            @selection="selectedEventIds = $event"
+            @page="changePage"
+            @page-size="changePageSize"
+            @view="openEvent"
+            @delete="requestSingleDelete"
+            @batch-delete="requestBatchDelete"
+            @preview-delete="requestFilterDeletePreview"
+          />
+        </div>
+
+        <!-- 下游 Mock：首次进入该标签才挂载并加载，之后保留编辑状态，失败可重试。 -->
+        <div v-show="activeTab === 'mock'" data-test="tab-panel-mock">
+          <p
+            data-test="mock-audit-order-hint"
+            class="mb-4 rounded-lg bg-gray-50 px-4 py-3 text-xs text-gray-600 dark:bg-dark-900 dark:text-dark-300"
+          >
+            {{ t("admin.promptAudit.mock.auditOrderHint") }}
+          </p>
+          <div
+            v-if="mockLoadError"
+            role="alert"
+            data-test="mock-load-error"
+            class="rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30"
+          >
+            <p class="text-sm text-red-700 dark:text-red-300">
+              {{ mockLoadError }}
+            </p>
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm mt-3"
+              data-test="mock-retry"
+              @click="loadMock(true)"
+            >
+              {{ t("admin.promptAudit.actions.retry") }}
+            </button>
+          </div>
+          <template v-if="mockMounted">
+            <GatewayMockSettings
+              v-if="mockStatus || mockLoading"
+              :status="mockStatus"
+              :loading="mockLoading"
+              @updated="mockStatus = $event"
+            />
+            <GatewayMockEventsPanel v-if="mockStatus" class="mt-6" />
+          </template>
+        </div>
+      </main>
     </div>
 
     <div
@@ -269,12 +314,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from "vue";
+import {
+  computed,
+  defineComponent,
+  h,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
 import { useI18n } from "vue-i18n";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import { useAppStore } from "@/stores/app";
 import { extractApiErrorCode, extractApiErrorMessage } from "@/utils/apiError";
+import GatewayMockSettings from "@/features/gateway-mock/GatewayMockSettings.vue";
+import GatewayMockEventsPanel from "@/features/gateway-mock/GatewayMockEventsPanel.vue";
+import { getOperatorSettings as getGatewayMockOperatorSettings } from "@/features/gateway-mock/api";
+import type { GatewayMockOperatorStatus } from "@/features/gateway-mock/types";
 import RuntimeOverview from "./components/RuntimeOverview.vue";
 import EndpointPool from "./components/EndpointPool.vue";
 import PolicyPanel from "./components/PolicyPanel.vue";
@@ -304,12 +361,27 @@ import {
 
 const { t, locale } = useI18n();
 const appStore = useAppStore();
-type PromptAuditPageTab = "config" | "events";
-const activeTab = ref<PromptAuditPageTab>("events");
-const pageTabs = computed(() => [
-  { id: "events" as const, label: t("admin.promptAudit.tabs.events") },
-  { id: "config" as const, label: t("admin.promptAudit.tabs.config") },
-]);
+type PromptAuditPageTab = "config" | "events" | "mock";
+// 只有公共设置成功加载且明确 risk_control_enabled === false 才算风控关闭；
+// 设置未知（尚未加载或加载失败）时不当作关闭，仍展示审计标签。
+const riskControlOff = computed(
+  () =>
+    appStore.publicSettingsLoaded === true &&
+    appStore.cachedPublicSettings?.risk_control_enabled === false,
+);
+const activeTab = ref<PromptAuditPageTab>(
+  riskControlOff.value ? "mock" : "events",
+);
+const pageTabs = computed(() => {
+  const tabs: { id: PromptAuditPageTab; label: string }[] = [];
+  // 风控关闭时隐藏审计专属标签，仅保留下游 Mock；导航入口仍在安全审计分组内可见。
+  if (!riskControlOff.value) {
+    tabs.push({ id: "events", label: t("admin.promptAudit.tabs.events") });
+    tabs.push({ id: "config", label: t("admin.promptAudit.tabs.config") });
+  }
+  tabs.push({ id: "mock", label: t("admin.promptAudit.tabs.mock") });
+  return tabs;
+});
 const serverConfig = ref<PromptAuditDraft | null>(null);
 const draft = ref<PromptAuditDraft | null>(null);
 const runtime = ref<PromptAuditRuntime | null>(null);
@@ -352,6 +424,12 @@ const loadErrors = reactive<PromptLoadErrors>({
   groups: "",
   events: "",
 });
+// 下游 Mock 独立于审计配置：惰性挂载、访问后保留、失败可重试。
+const mockMounted = ref(false);
+const mockStatus = ref<GatewayMockOperatorStatus | null>(null);
+const mockLoading = ref(false);
+const mockLoaded = ref(false);
+const mockLoadError = ref("");
 const dirty = computed(
   () => draftFingerprint(draft.value) !== draftFingerprint(serverConfig.value),
 );
@@ -714,5 +792,43 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-onMounted(loadInitial);
+// 切换标签：首次进入 Mock 才挂载并加载，之后重复切换只复用已挂载的组件状态。
+function selectTab(id: PromptAuditPageTab) {
+  activeTab.value = id;
+  if (id === "mock") ensureMockTab();
+}
+function ensureMockTab() {
+  mockMounted.value = true;
+  if (!mockLoaded.value && !mockLoading.value) void loadMock();
+}
+// 加载失败不标记为已成功加载，从而允许重试，且不影响审计配置的加载与保存。
+async function loadMock(force = false) {
+  if (mockLoading.value) return;
+  if (mockLoaded.value && !force) return;
+  mockLoading.value = true;
+  mockLoadError.value = "";
+  try {
+    mockStatus.value = await getGatewayMockOperatorSettings();
+    mockLoaded.value = true;
+  } catch {
+    mockStatus.value = null;
+    mockLoaded.value = false;
+    mockLoadError.value = t("admin.gatewayMock.failures.settingsUnavailable");
+  } finally {
+    mockLoading.value = false;
+  }
+}
+
+// 风控在页面打开后被明确关闭时，切换到 Mock 并隐藏审计标签。
+watch(riskControlOff, (off) => {
+  if (off) {
+    activeTab.value = "mock";
+    ensureMockTab();
+  }
+});
+
+onMounted(() => {
+  void loadInitial();
+  if (activeTab.value === "mock") ensureMockTab();
+});
 </script>

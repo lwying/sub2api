@@ -655,7 +655,8 @@ const routes: RouteRecordRaw[] = [
       title: "Prompt Audit",
       titleKey: "admin.promptAudit.title",
       descriptionKey: "admin.promptAudit.description",
-      requiresRiskControl: true,
+      // 该合并页面在风控关闭时仍需可进入以管理下游 Mock；仅取消本页面的
+      // 风控可见性限制，管理员认证/授权与其它的风控路由保持不变。
     },
   },
   {

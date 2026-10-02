@@ -172,36 +172,15 @@
           </tbody>
         </table>
       </div>
-      <div
-        class="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600 dark:text-dark-300"
-      >
-        <span data-testid="gateway-mock-events-total">{{
-          t("admin.gatewayMock.events.total", { total })
-        }}</span>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            data-testid="gateway-mock-events-prev"
-            :disabled="page <= 1 || loading"
-            @click="load(page - 1)"
-          >
-            {{ t("admin.gatewayMock.events.previous") }}
-          </button>
-          <span data-testid="gateway-mock-events-page">{{
-            t("admin.gatewayMock.events.page", { page, pages })
-          }}</span>
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            data-testid="gateway-mock-events-next"
-            :disabled="page >= pages || loading"
-            @click="load(page + 1)"
-          >
-            {{ t("admin.gatewayMock.events.next") }}
-          </button>
-        </div>
-      </div>
+      <Pagination
+        class="mt-3"
+        :total="total"
+        :page="page"
+        :page-size="pageSize"
+        :page-size-options="eventPageSizeOptions"
+        @update:page="load($event)"
+        @update:page-size="changePageSize"
+      />
     </template>
     <p
       v-else-if="failed"
@@ -233,9 +212,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import Pagination from "@/components/common/Pagination.vue";
+import { getConfiguredTablePageSizeOptions } from "@/utils/tablePreferences";
 import { listEvents } from "./api";
 import { gatewayMockProtocolKey } from "./labels";
-import type { GatewayMockEvent } from "./types";
+import { gatewayMockEventMaxPageSize, type GatewayMockEvent } from "./types";
 
 const { t } = useI18n();
 const rows = ref<GatewayMockEvent[]>([]);
@@ -248,9 +229,27 @@ let revision = 0;
 let controller: AbortController | null = null;
 
 const absent = computed(() => t("admin.gatewayMock.events.absent"));
-const pages = computed(() =>
-  Math.max(1, Math.ceil(total.value / (pageSize.value || 20))),
-);
+
+// 部署配置可能声明超过网关命中列表上限（100）的页大小；下拉只保留合法档位，
+// 若配置里没有一个合法值则回退到 20/100，避免空下拉并把非法值写进全局持久化。
+const eventPageSizeOptions = computed(() => {
+  const withinLimit = getConfiguredTablePageSizeOptions().filter(
+    (size) => size <= gatewayMockEventMaxPageSize,
+  );
+  return withinLimit.length > 0
+    ? withinLimit
+    : [20, gatewayMockEventMaxPageSize];
+});
+
+// 命中列表与审计页共用同一分页组件；页大小超过后端上限（100）时收敛回该上限。
+function changePageSize(size: number) {
+  const clamped = Math.min(
+    Math.max(1, Math.trunc(size)),
+    gatewayMockEventMaxPageSize,
+  );
+  pageSize.value = clamped;
+  void load(1);
+}
 
 /**
  * A value the gateway did not record renders as explicitly absent. The events

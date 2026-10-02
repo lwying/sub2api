@@ -17,15 +17,31 @@ const mocks = vi.hoisted(() => ({
   previewDelete: vi.fn(),
   deleteEventsByFilter: vi.fn(),
   listGroups: vi.fn(),
+  getGatewayMockOperatorSettings: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn(),
 }));
 
+// 公共设置状态决定风控是否明确关闭；默认未知（未成功加载）。
+const appStoreState = vi.hoisted(() => ({
+  publicSettingsLoaded: false,
+  cachedPublicSettings: null as null | { risk_control_enabled?: boolean },
+}));
+
 vi.mock("../api", () => ({ default: mocks }));
+vi.mock("@/features/gateway-mock/api", () => ({
+  getOperatorSettings: mocks.getGatewayMockOperatorSettings,
+}));
 vi.mock("@/stores/app", () => ({
   useAppStore: () => ({
     showSuccess: mocks.showSuccess,
     showError: mocks.showError,
+    get publicSettingsLoaded() {
+      return appStoreState.publicSettingsLoaded;
+    },
+    get cachedPublicSettings() {
+      return appStoreState.cachedPublicSettings;
+    },
   }),
 }));
 vi.mock("vue-i18n", async () => {
@@ -170,6 +186,15 @@ const FilterDeleteStub = defineComponent({
   template:
     "<div v-if=\"show\" data-test=\"filter-delete-dialog\"><button data-test=\"dialog-preview\" @click=\"$emit('preview', { ...initialFilters, start_at: '2026-07-15T00:00', end_at: '2026-07-16T00:00' })\">run</button><button data-test=\"dialog-confirm\" @click=\"$emit('confirm', { ...initialFilters, start_at: '2026-07-15T00:00', end_at: '2026-07-16T00:00' })\">confirm</button><span data-test=\"dialog-preview-state\">{{ preview ? preview.matched_count : 'none' }}</span></div>",
 });
+const GatewayMockSettingsStub = defineComponent({
+  props: ["status", "loading"],
+  emits: ["updated"],
+  template:
+    '<div data-test="mock-settings"><span data-test="mock-settings-state">{{ status ? (status.enabled ? "on" : "off") : "none" }}</span></div>',
+});
+const GatewayMockEventsStub = defineComponent({
+  template: '<div data-test="mock-events" />',
+});
 
 function mountView() {
   return mount(PromptAuditView, {
@@ -183,6 +208,8 @@ function mountView() {
         EventDetailDialog: DetailStub,
         FilterDeleteDialog: FilterDeleteStub,
         ConfirmDialog: ConfirmStub,
+        GatewayMockSettings: GatewayMockSettingsStub,
+        GatewayMockEventsPanel: GatewayMockEventsStub,
       },
     },
   });
@@ -232,6 +259,14 @@ describe("PromptAuditView", () => {
       deleted_events: 2,
       deleted_jobs: 2,
     });
+    mocks.getGatewayMockOperatorSettings.mockResolvedValue({
+      enabled: false,
+      rules: [],
+      preset_available: true,
+      preset_created: 0,
+    });
+    appStoreState.publicSettingsLoaded = false;
+    appStoreState.cachedPublicSettings = null;
   });
 
   it("starts config, runtime, groups, and events loads independently", async () => {
@@ -493,5 +528,116 @@ describe("PromptAuditView", () => {
     expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(
       false,
     );
+  });
+
+  it("lazily mounts and loads the downstream mock only on first visit", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    // 默认在事件标签，未访问 Mock 前不加载、不挂载。
+    expect(mocks.getGatewayMockOperatorSettings).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-test="mock-settings"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="tab-mock"]').trigger("click");
+    await flushPromises();
+    expect(mocks.getGatewayMockOperatorSettings).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="mock-settings"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mock-events"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="mock-settings-state"]').text()).toBe("off");
+
+    // 已成功加载后重复切换不重新加载，保留组件状态。
+    await wrapper.get('[data-test="tab-events"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="tab-mock"]').trigger("click");
+    await flushPromises();
+    expect(mocks.getGatewayMockOperatorSettings).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[data-test="mock-settings-state"]').text()).toBe("off");
+  });
+
+  it("retries a failed mock load without blocking the audit configuration", async () => {
+    mocks.getGatewayMockOperatorSettings
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({
+        enabled: true,
+        rules: [],
+        preset_available: true,
+        preset_created: 0,
+      });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('[data-test="tab-mock"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="mock-load-error"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mock-settings"]').exists()).toBe(false);
+    // 审计配置已独立成功加载，不受 mock 失败影响。
+    expect(wrapper.find('[data-test="config-load-error"]').exists()).toBe(
+      false,
+    );
+    expect(mocks.getConfig).toHaveBeenCalledTimes(1);
+
+    await wrapper.get('[data-test="mock-retry"]').trigger("click");
+    await flushPromises();
+    expect(mocks.getGatewayMockOperatorSettings).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-test="mock-load-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mock-settings-state"]').text()).toBe("on");
+  });
+
+  it("isolates an audit config load failure from the tab bar and the mock tab", async () => {
+    mocks.getConfig.mockRejectedValue(new Error("config unavailable"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    // 审计配置失败不再隐藏整个标签栏。
+    expect(wrapper.find('[data-test="tab-events"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tab-config"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tab-mock"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="runtime"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="tab-config"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="config-load-error"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="tab-mock"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="mock-load-error"]').exists()).toBe(false);
+    expect(mocks.getGatewayMockOperatorSettings).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="mock-settings"]').exists()).toBe(true);
+  });
+
+  it("defaults to the mock tab and hides audit tabs when risk control is explicitly off", async () => {
+    appStoreState.publicSettingsLoaded = true;
+    appStoreState.cachedPublicSettings = { risk_control_enabled: false };
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="tab-events"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="tab-config"]').exists()).toBe(false);
+    expect(
+      wrapper.get('[data-test="tab-mock"]').attributes("aria-selected"),
+    ).toBe("true");
+    expect(wrapper.find('[data-test="risk-control-off-notice"]').exists()).toBe(
+      true,
+    );
+    // 默认选中 Mock，自动挂载并加载。
+    expect(mocks.getGatewayMockOperatorSettings).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="mock-settings"]').exists()).toBe(true);
+  });
+
+  it("treats an unknown risk-control state as not off and keeps audit tabs", async () => {
+    // 公共设置未成功加载：未知状态不能当作风控关闭。
+    appStoreState.publicSettingsLoaded = false;
+    appStoreState.cachedPublicSettings = null;
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="tab-events"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tab-config"]').exists()).toBe(true);
+    expect(
+      wrapper.get('[data-test="tab-events"]').attributes("aria-selected"),
+    ).toBe("true");
+    expect(wrapper.find('[data-test="risk-control-off-notice"]').exists()).toBe(
+      false,
+    );
+    expect(mocks.getGatewayMockOperatorSettings).not.toHaveBeenCalled();
   });
 });

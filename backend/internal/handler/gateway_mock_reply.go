@@ -130,26 +130,48 @@ func sendGatewayMockChatCompletions(c *gin.Context, model string, match GatewayM
 // sendGatewayMockResponses 写出 OpenAI Responses 形态的本地回复。
 func sendGatewayMockResponses(c *gin.Context, model string, match GatewayMockMatch) {
 	responseID := "resp_" + strings.TrimPrefix(generateRealisticMsgID(), "msg_01")
+	itemID := generateRealisticMsgID()
 	created := time.Now().Unix()
+	part := gin.H{"type": "output_text", "text": match.Reply, "annotations": []any{}, "logprobs": []any{}}
+	item := gin.H{"type": "message", "id": itemID, "status": "completed", "role": "assistant", "content": []gin.H{part}}
 	completed := gin.H{
 		"id": responseID, "object": "response", "created_at": created, "model": model,
-		"status": "completed",
-		"output": []gin.H{{
-			"type": "message", "id": responseID, "status": "completed", "role": "assistant",
-			"content": []gin.H{{"type": "output_text", "text": match.Reply, "annotations": []any{}}},
-		}},
+		"status": "completed", "output": []gin.H{item},
 		"usage": gin.H{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
 	}
 	if gatewayMockStreamRequested(c) {
 		setGatewayMockSSEHeaders(c)
-		gatewayMockWriteSSE(c, "response.created", gin.H{
-			"type": "response.created",
+		sequenceNumber := 0
+		writeEvent := func(kind string, payload gin.H) {
+			payload["type"], payload["sequence_number"] = kind, sequenceNumber
+			sequenceNumber++
+			gatewayMockWriteSSE(c, kind, payload)
+		}
+		writeEvent("response.created", gin.H{
 			"response": gin.H{
 				"id": responseID, "object": "response", "created_at": created, "model": model,
 				"status": "in_progress", "output": []any{},
 			},
 		})
-		gatewayMockWriteSSE(c, "response.completed", gin.H{"type": "response.completed", "response": completed})
+		writeEvent("response.output_item.added", gin.H{
+			"output_index": 0,
+			"item":         gin.H{"type": "message", "id": itemID, "status": "in_progress", "role": "assistant", "content": []any{}},
+		})
+		writeEvent("response.content_part.added", gin.H{
+			"item_id": itemID, "output_index": 0, "content_index": 0,
+			"part": gin.H{"type": "output_text", "text": "", "annotations": []any{}, "logprobs": []any{}},
+		})
+		writeEvent("response.output_text.delta", gin.H{
+			"item_id": itemID, "output_index": 0, "content_index": 0, "delta": match.Reply, "logprobs": []any{},
+		})
+		writeEvent("response.output_text.done", gin.H{
+			"item_id": itemID, "output_index": 0, "content_index": 0, "text": match.Reply, "logprobs": []any{},
+		})
+		writeEvent("response.content_part.done", gin.H{
+			"item_id": itemID, "output_index": 0, "content_index": 0, "part": part,
+		})
+		writeEvent("response.output_item.done", gin.H{"output_index": 0, "item": item})
+		writeEvent("response.completed", gin.H{"response": completed})
 		c.Writer.Flush()
 		return
 	}

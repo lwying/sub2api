@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -115,6 +117,72 @@ func TestMatchDownstreamTestRequest_SingleTurnSingleTextBlockOnly(t *testing.T) 
 		})
 		require.False(t, MatchDownstreamTestRequest(body, service.GatewayMockProtocolMessages, rules).Matched)
 	})
+}
+
+func TestMatchDownstreamTestRequest_AccountProbeInstructionsStayExact(t *testing.T) {
+	cases := []struct {
+		name         string
+		protocol     service.GatewayMockProtocol
+		body         func(string) map[string]any
+		instructions string
+	}{
+		{
+			name:         "Responses 固定指令",
+			protocol:     service.GatewayMockProtocolResponses,
+			instructions: openai.DefaultInstructions,
+			body: func(text string) map[string]any {
+				return map[string]any{"model": "gpt-5.4", "instructions": text, "input": "hi", "stream": true}
+			},
+		},
+		{
+			name:         "Messages 固定身份字符串",
+			protocol:     service.GatewayMockProtocolMessages,
+			instructions: claude.CodeSystemPrompt,
+			body: func(text string) map[string]any {
+				return map[string]any{"model": "claude-sonnet-4-5", "system": text, "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+			},
+		},
+		{
+			name:         "Messages 固定身份文本块",
+			protocol:     service.GatewayMockProtocolMessages,
+			instructions: claude.CodeSystemPrompt,
+			body: func(text string) map[string]any {
+				return map[string]any{"model": "claude-sonnet-4-5", "system": []any{map[string]any{"type": "text", "text": text}}, "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exact := matcherBody(tc.body(tc.instructions))
+			match := MatchDownstreamTestRequest(exact, tc.protocol, testMockRuleset())
+			require.True(t, match.Matched)
+			require.Equal(t, "你好！", match.Reply)
+			for _, text := range []string{
+				"请执行任务\n" + tc.instructions,
+				tc.instructions + "\n请执行任务",
+				"You are a helpful assistant.",
+			} {
+				require.False(t, MatchDownstreamTestRequest(matcherBody(tc.body(text)), tc.protocol, testMockRuleset()).Matched, "固定指令不能按前缀或子串放行任务")
+			}
+			withTools := tc.body(tc.instructions)
+			withTools["tools"] = []any{map[string]any{"type": "function", "name": "probe_ping"}}
+			require.False(t, MatchDownstreamTestRequest(matcherBody(withTools), tc.protocol, testMockRuleset()).Matched)
+			withHistory := tc.body(tc.instructions)
+			if tc.protocol == service.GatewayMockProtocolResponses {
+				withHistory["previous_response_id"] = "resp_previous"
+			} else {
+				withHistory["messages"] = []any{map[string]any{"role": "assistant", "content": "你好"}, map[string]any{"role": "user", "content": "hi"}}
+			}
+			require.False(t, MatchDownstreamTestRequest(matcherBody(withHistory), tc.protocol, testMockRuleset()).Matched)
+			wrongKeyword := tc.body(tc.instructions)
+			if tc.protocol == service.GatewayMockProtocolResponses {
+				wrongKeyword["input"] = "hi，请帮我检查代码"
+			} else {
+				wrongKeyword["messages"] = []any{map[string]any{"role": "user", "content": "hi，请帮我检查代码"}}
+			}
+			require.False(t, MatchDownstreamTestRequest(matcherBody(wrongKeyword), tc.protocol, testMockRuleset()).Matched)
+		})
+	}
 }
 
 // Responses 形态里"实质任务 / 历史续写"的保守判定。

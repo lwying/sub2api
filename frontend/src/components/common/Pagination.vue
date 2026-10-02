@@ -130,10 +130,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import Icon from "@/components/icons/Icon.vue";
 import Select from "./Select.vue";
-import {
-  getConfiguredTablePageSizeOptions,
-  normalizeTablePageSize,
-} from "@/utils/tablePreferences";
+import { getConfiguredTablePageSizeOptions } from "@/utils/tablePreferences";
 import { setPersistedPageSize } from "@/composables/usePersistedPageSize";
 
 const { t } = useI18n();
@@ -173,12 +170,13 @@ const toItem = computed(() => {
 });
 
 const pageSizeSelectOptions = computed(() => {
+  // 尊重调用方传入的 pageSizeOptions（未传时 withDefaults 已回退到全局表格配置）；
+  // 当前页大小始终并入，保证它在下拉中可选。
   const options = Array.from(
-    new Set([
-      ...getConfiguredTablePageSizeOptions(),
-      normalizeTablePageSize(props.pageSize),
-    ]),
-  ).sort((a, b) => a - b);
+    new Set([...props.pageSizeOptions, props.pageSize]),
+  )
+    .filter((size) => Number.isInteger(size) && size > 0)
+    .sort((a, b) => a - b);
 
   return options.map((size) => ({
     value: size,
@@ -235,9 +233,10 @@ const goToPage = (newPage: number) => {
 
 const handlePageSizeChange = (value: string | number | boolean | null) => {
   if (value === null || typeof value === "boolean") return;
-  const newPageSize = normalizeTablePageSize(
-    typeof value === "string" ? parseInt(value, 10) : value,
-  );
+  const selected = typeof value === "string" ? parseInt(value, 10) : value;
+  if (!pageSizeSelectOptions.value.some((option) => option.value === selected))
+    return;
+  const newPageSize = selected;
   setPersistedPageSize(newPageSize);
   emit("update:pageSize", newPageSize);
 };
