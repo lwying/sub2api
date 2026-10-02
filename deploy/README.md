@@ -4,30 +4,30 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 
 ## Deployment Methods
 
-| Method | Best For | Setup Wizard |
-|--------|----------|--------------|
-| **Docker Compose** | Quick setup, all-in-one | Not needed (auto-setup) |
+| Method              | Best For                       | Setup Wizard            |
+| ------------------- | ------------------------------ | ----------------------- |
+| **Docker Compose**  | Quick setup, all-in-one        | Not needed (auto-setup) |
 | **Apple container** | Native local stack on macOS 26 | Not needed (auto-setup) |
-| **Binary Install** | Production servers, systemd | Web-based wizard |
+| **Binary Install**  | Production servers, systemd    | Web-based wizard        |
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `docker-compose.yml` | Docker Compose configuration (named volumes) |
-| `docker-compose.local.yml` | Docker Compose configuration (local directories, easy migration) |
-| `docker-deploy.sh` | **One-click Docker deployment script (recommended)** |
-| `apple-container.sh` | Native Apple `container` lifecycle script |
-| `APPLE_CONTAINER.md` | Apple `container` deployment and operations guide |
-| `.env.example` | Container environment variables template |
-| `DOCKER.md` | Docker Hub documentation |
-| `install.sh` | One-click binary installation script (fork releases; install/rollback verify the platform archive and `checksums.txt`) |
-| `install-datamanagementd.sh` | datamanagementd 一键安装脚本 |
-| `sub2api.service` | Systemd service unit file |
-| `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
-| `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
-| `config.example.yaml` | Example configuration file |
-| `EDGE_SECURITY.md` | Reverse proxy, CDN/WAF, trusted proxy, and ingress hardening guide |
+| File                              | Description                                                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `docker-compose.yml`              | Docker Compose configuration (named volumes)                                                                           |
+| `docker-compose.local.yml`        | Docker Compose configuration (local directories, easy migration)                                                       |
+| `docker-deploy.sh`                | **One-click Docker deployment script (recommended)**                                                                   |
+| `apple-container.sh`              | Native Apple `container` lifecycle script                                                                              |
+| `APPLE_CONTAINER.md`              | Apple `container` deployment and operations guide                                                                      |
+| `.env.example`                    | Container environment variables template                                                                               |
+| `DOCKER.md`                       | Docker Hub documentation                                                                                               |
+| `install.sh`                      | One-click binary installation script (fork releases; install/rollback verify the platform archive and `checksums.txt`) |
+| `install-datamanagementd.sh`      | datamanagementd 一键安装脚本                                                                                           |
+| `sub2api.service`                 | Systemd service unit file                                                                                              |
+| `sub2api-datamanagementd.service` | datamanagementd systemd service unit file                                                                              |
+| `DATAMANAGEMENTD_CN.md`           | datamanagementd 部署与联动说明（中文）                                                                                 |
+| `config.example.yaml`             | Example configuration file                                                                                             |
+| `EDGE_SECURITY.md`                | Reverse proxy, CDN/WAF, trusted proxy, and ingress hardening guide                                                     |
 
 ---
 
@@ -73,6 +73,7 @@ chmod +x docker-deploy.sh
 ```
 
 **What the script does:**
+
 - Downloads `docker-compose.local.yml` and `.env.example`
 - Automatically generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
 - Creates `.env` file with generated secrets
@@ -80,6 +81,7 @@ chmod +x docker-deploy.sh
 - **Displays generated credentials** (POSTGRES_PASSWORD, JWT_SECRET, etc.)
 
 **After running the script:**
+
 ```bash
 # Start services
 docker compose -f docker-compose.local.yml up -d
@@ -129,10 +131,10 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 ### Deployment Version Comparison
 
-| Version | Data Storage | Migration | Best For |
-|---------|-------------|-----------|----------|
+| Version                      | Data Storage                                              | Migration                      | Best For                                    |
+| ---------------------------- | --------------------------------------------------------- | ------------------------------ | ------------------------------------------- |
 | **docker-compose.local.yml** | Local directories (./data, ./postgres_data, ./redis_data) | ✅ Easy (tar entire directory) | Production, need frequent backups/migration |
-| **docker-compose.yml** | Named volumes (/var/lib/docker/volumes/) | ⚠️ Requires docker commands | Simple setup, don't need migration |
+| **docker-compose.yml**       | Named volumes (/var/lib/docker/volumes/)                  | ⚠️ Requires docker commands    | Simple setup, don't need migration          |
 
 **Recommendation:** Use `docker-compose.local.yml` (deployed by `docker-deploy.sh`) for easier data management and migration.
 
@@ -259,20 +261,20 @@ docker compose down -v
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `POSTGRES_PASSWORD` | **Yes** | - | PostgreSQL password |
-| `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
-| `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |
-| `SERVER_PORT` | No | `8080` | Server port |
-| `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
-| `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
-| `TZ` | No | `Asia/Shanghai` | Timezone |
-| `UPDATE_GITHUB_TOKEN` | No | *(empty)* | Token for `api.github.com` release checks only; asset downloads remain anonymous. |
-| `GEMINI_OAUTH_CLIENT_ID` | No | *(builtin)* | Google OAuth client ID (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
-| `GEMINI_OAUTH_CLIENT_SECRET` | No | *(builtin)* | Google OAuth client secret (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
-| `GEMINI_OAUTH_SCOPES` | No | *(default)* | OAuth scopes (Gemini OAuth) |
-| `GEMINI_QUOTA_POLICY` | No | *(empty)* | JSON overrides for Gemini local quota simulation (Code Assist only). |
+| Variable                     | Required        | Default               | Description                                                                                   |
+| ---------------------------- | --------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`          | **Yes**         | -                     | PostgreSQL password                                                                           |
+| `JWT_SECRET`                 | **Recommended** | _(auto-generated)_    | JWT secret (fixed for persistent sessions)                                                    |
+| `TOTP_ENCRYPTION_KEY`        | **Recommended** | _(auto-generated)_    | TOTP encryption key (fixed for persistent 2FA)                                                |
+| `SERVER_PORT`                | No              | `8080`                | Server port                                                                                   |
+| `ADMIN_EMAIL`                | No              | `admin@sub2api.local` | Admin email                                                                                   |
+| `ADMIN_PASSWORD`             | No              | _(auto-generated)_    | Admin password                                                                                |
+| `TZ`                         | No              | `Asia/Shanghai`       | Timezone                                                                                      |
+| `UPDATE_GITHUB_TOKEN`        | No              | _(empty)_             | Token for `api.github.com` release checks only; asset downloads remain anonymous.             |
+| `GEMINI_OAUTH_CLIENT_ID`     | No              | _(builtin)_           | Google OAuth client ID (Gemini OAuth). Leave empty to use the built-in Gemini CLI client.     |
+| `GEMINI_OAUTH_CLIENT_SECRET` | No              | _(builtin)_           | Google OAuth client secret (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
+| `GEMINI_OAUTH_SCOPES`        | No              | _(default)_           | OAuth scopes (Gemini OAuth)                                                                   |
+| `GEMINI_QUOTA_POLICY`        | No              | _(empty)_             | JSON overrides for Gemini local quota simulation (Code Assist only).                          |
 
 See `.env.example` for all available options.
 
@@ -318,10 +320,12 @@ Sub2API supports three methods to connect to Gemini:
 > Code Assist OAuth will still use the built-in Gemini CLI client.
 
 **Requirements:**
+
 - Google account with access to Google Cloud Platform
 - A GCP project (auto-detected or manually specified)
 
 **How to get Project ID (if auto-detection fails):**
+
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Click the project dropdown at the top of the page
 3. Copy the Project ID (not the project name) from the list
@@ -389,13 +393,13 @@ GEMINI_OAUTH_CLIENT_SECRET=GOCSPX-your-client-secret
 
 ### Comparison Table
 
-| Feature | Code Assist OAuth | AI Studio OAuth | API Key |
-|---------|-------------------|-----------------|---------|
-| Setup Complexity | Easy (no config) | Medium (OAuth client) | Easy |
-| GCP Project Required | Yes | No | No |
-| Custom OAuth Client | No (built-in) | Yes (required) | N/A |
-| Rate Limits | GCP quota | Standard | Standard |
-| Best For | GCP developers | Regular users needing OAuth | Quick testing |
+| Feature              | Code Assist OAuth | AI Studio OAuth             | API Key       |
+| -------------------- | ----------------- | --------------------------- | ------------- |
+| Setup Complexity     | Easy (no config)  | Medium (OAuth client)       | Easy          |
+| GCP Project Required | Yes               | No                          | No            |
+| Custom OAuth Client  | No (built-in)     | Yes (required)              | N/A           |
+| Rate Limits          | GCP quota         | Standard                    | Standard      |
+| Best For             | GCP developers    | Regular users needing OAuth | Quick testing |
 
 ---
 
@@ -533,11 +537,13 @@ During installation, you will be prompted to configure the server listen address
 To change after installation:
 
 1. Edit the systemd service:
+
    ```bash
    sudo systemctl edit sub2api
    ```
 
 2. Add or modify:
+
    ```ini
    [Service]
    Environment=SERVER_HOST=0.0.0.0
@@ -555,17 +561,20 @@ To change after installation:
 If you need to use AI Studio OAuth for Gemini accounts, add the OAuth client credentials to the systemd service file:
 
 1. Edit the service file:
+
    ```bash
    sudo nano /etc/systemd/system/sub2api.service
    ```
 
 2. Add your OAuth credentials in the `[Service]` section (after the existing `Environment=` lines):
+
    ```ini
    Environment=GEMINI_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
    Environment=GEMINI_OAUTH_CLIENT_SECRET=GOCSPX-your-client-secret
    ```
 
    如需使用“内置 Gemini CLI OAuth Client”（Code Assist / Google One），还需要注入：
+
    ```ini
    Environment=GEMINI_CLI_OAUTH_CLIENT_SECRET=GOCSPX-your-built-in-secret
    ```
@@ -695,7 +704,7 @@ Sub2API supports TLS fingerprint simulation to make requests appear as if they c
 ```yaml
 gateway:
   tls_fingerprint:
-    enabled: true  # Global switch
+    enabled: true # Global switch
     profiles:
       # Simple profile (uses default cipher suites)
       profile_1:
@@ -717,12 +726,12 @@ gateway:
 
 ### Profile Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Display name (required) |
-| `cipher_suites` | []uint16 | Cipher suites in decimal. Empty = default |
-| `curves` | []uint16 | Elliptic curves in decimal. Empty = default |
-| `point_formats` | []uint8 | EC point formats. Empty = default |
+| Field           | Type     | Description                                 |
+| --------------- | -------- | ------------------------------------------- |
+| `name`          | string   | Display name (required)                     |
+| `cipher_suites` | []uint16 | Cipher suites in decimal. Empty = default   |
+| `curves`        | []uint16 | Elliptic curves in decimal. Empty = default |
+| `point_formats` | []uint8  | EC point formats. Empty = default           |
 
 ### Common Values Reference
 

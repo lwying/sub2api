@@ -12,28 +12,28 @@
 </template>
 
 <script setup lang="ts">
-import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
-import type { User } from '@/types'
+import ProfileIdentityBindingsSection from "@/components/user/profile/ProfileIdentityBindingsSection.vue";
+import type { User } from "@/types";
 
 withDefaults(
   defineProps<{
-    user: User | null
-    linuxdoEnabled?: boolean
-    dingtalkEnabled?: boolean
-    oidcEnabled?: boolean
-    oidcProviderName?: string
-    wechatEnabled?: boolean
-    wechatOpenEnabled?: boolean
-    wechatMpEnabled?: boolean
+    user: User | null;
+    linuxdoEnabled?: boolean;
+    dingtalkEnabled?: boolean;
+    oidcEnabled?: boolean;
+    oidcProviderName?: string;
+    wechatEnabled?: boolean;
+    wechatOpenEnabled?: boolean;
+    wechatMpEnabled?: boolean;
   }>(),
   {
     linuxdoEnabled: false,
     dingtalkEnabled: false,
     oidcEnabled: false,
-    oidcProviderName: 'OIDC',
+    oidcProviderName: "OIDC",
     wechatEnabled: false,
     wechatOpenEnabled: undefined,
-    wechatMpEnabled: undefined
-  }
-)
+    wechatMpEnabled: undefined,
+  },
+);
 </script>

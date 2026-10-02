@@ -3,32 +3,37 @@
  * 参考 CRS 项目的 format.js 实现
  */
 
-import { i18n, getLocale } from '@/i18n'
+import { i18n, getLocale } from "@/i18n";
 
 /**
  * 格式化相对时间
  * @param date 日期字符串或 Date 对象
  * @returns 相对时间字符串，如 "5m ago", "2h ago", "3d ago"
  */
-export function formatRelativeTime(date: string | Date | null | undefined): string {
-  if (!date) return i18n.global.t('common.time.never')
+export function formatRelativeTime(
+  date: string | Date | null | undefined,
+): string {
+  if (!date) return i18n.global.t("common.time.never");
 
-  const now = new Date()
-  const past = new Date(date)
-  const diffMs = now.getTime() - past.getTime()
+  const now = new Date();
+  const past = new Date(date);
+  const diffMs = now.getTime() - past.getTime();
 
   // 处理未来时间或无效日期
-  if (diffMs < 0 || isNaN(diffMs)) return i18n.global.t('common.time.never')
+  if (diffMs < 0 || isNaN(diffMs)) return i18n.global.t("common.time.never");
 
-  const diffSecs = Math.floor(diffMs / 1000)
-  const diffMins = Math.floor(diffSecs / 60)
-  const diffHours = Math.floor(diffMins / 60)
-  const diffDays = Math.floor(diffHours / 24)
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
 
-  if (diffDays > 0) return i18n.global.t('common.time.daysAgo', { n: diffDays })
-  if (diffHours > 0) return i18n.global.t('common.time.hoursAgo', { n: diffHours })
-  if (diffMins > 0) return i18n.global.t('common.time.minutesAgo', { n: diffMins })
-  return i18n.global.t('common.time.justNow')
+  if (diffDays > 0)
+    return i18n.global.t("common.time.daysAgo", { n: diffDays });
+  if (diffHours > 0)
+    return i18n.global.t("common.time.hoursAgo", { n: diffHours });
+  if (diffMins > 0)
+    return i18n.global.t("common.time.minutesAgo", { n: diffMins });
+  return i18n.global.t("common.time.justNow");
 }
 
 /**
@@ -37,19 +42,19 @@ export function formatRelativeTime(date: string | Date | null | undefined): stri
  * @returns 格式化后的字符串，如 "1.2K", "3.5M"
  */
 export function formatNumber(num: number | null | undefined): string {
-  if (num === null || num === undefined) return '0'
+  if (num === null || num === undefined) return "0";
 
-  const locale = getLocale()
-  const absNum = Math.abs(num)
+  const locale = getLocale();
+  const absNum = Math.abs(num);
 
   // Use Intl.NumberFormat for compact notation if supported and needed
   // Note: Compact notation in 'zh' uses '万/亿', which is appropriate for Chinese
   const formatter = new Intl.NumberFormat(locale, {
-    notation: absNum >= 10000 ? 'compact' : 'standard',
-    maximumFractionDigits: 1
-  })
+    notation: absNum >= 10000 ? "compact" : "standard",
+    maximumFractionDigits: 1,
+  });
 
-  return formatter.format(num)
+  return formatter.format(num);
 }
 
 /**
@@ -58,20 +63,23 @@ export function formatNumber(num: number | null | undefined): string {
  * @param currency 货币代码，默认 USD
  * @returns 格式化后的字符串，如 "$1.25"
  */
-export function formatCurrency(amount: number | null | undefined, currency: string = 'USD'): string {
-  if (amount === null || amount === undefined) return '$0.00'
+export function formatCurrency(
+  amount: number | null | undefined,
+  currency: string = "USD",
+): string {
+  if (amount === null || amount === undefined) return "$0.00";
 
-  const locale = getLocale()
+  const locale = getLocale();
 
   // For very small amounts, show more decimals
-  const fractionDigits = amount > 0 && amount < 0.01 ? 6 : 2
+  const fractionDigits = amount > 0 && amount < 0.01 ? 6 : 2;
 
   return new Intl.NumberFormat(locale, {
-    style: 'currency',
+    style: "currency",
     currency: currency,
     minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits
-  }).format(amount)
+    maximumFractionDigits: fractionDigits,
+  }).format(amount);
 }
 
 /**
@@ -81,15 +89,15 @@ export function formatCurrency(amount: number | null | undefined, currency: stri
  * @returns 格式化后的字符串，如 "1.5 MB"
  */
 export function formatBytes(bytes: number, decimals: number = 2): string {
-  if (bytes === 0) return '0 Bytes'
+  if (bytes === 0) return "0 Bytes";
 
-  const k = 1024
-  const dm = decimals < 0 ? 0 : decimals
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
 
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
 
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
 /**
@@ -102,23 +110,23 @@ export function formatBytes(bytes: number, decimals: number = 2): string {
 export function formatDate(
   date: string | Date | null | undefined,
   options: Intl.DateTimeFormatOptions = {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
   },
-  localeOverride?: string
+  localeOverride?: string,
 ): string {
-  if (!date) return ''
+  if (!date) return "";
 
-  const d = new Date(date)
-  if (isNaN(d.getTime())) return ''
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "";
 
-  const locale = localeOverride ?? getLocale()
-  return new Intl.DateTimeFormat(locale, options).format(d)
+  const locale = localeOverride ?? getLocale();
+  return new Intl.DateTimeFormat(locale, options).format(d);
 }
 
 /**
@@ -128,10 +136,10 @@ export function formatDate(
  */
 export function formatDateOnly(date: string | Date | null | undefined): string {
   return formatDate(date, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  })
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
 }
 
 /**
@@ -144,9 +152,9 @@ export function formatDateOnly(date: string | Date | null | undefined): string {
 export function formatDateTime(
   date: string | Date | null | undefined,
   options?: Intl.DateTimeFormatOptions,
-  localeOverride?: string
+  localeOverride?: string,
 ): string {
-  return formatDate(date, options, localeOverride)
+  return formatDate(date, options, localeOverride);
 }
 
 /**
@@ -154,68 +162,73 @@ export function formatDateTime(
  */
 export function formatDateTimeToMinute(
   date: string | Date | null | undefined,
-  localeOverride?: string
+  localeOverride?: string,
 ): string {
   return formatDate(
     date,
     {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
     },
-    localeOverride
-  )
+    localeOverride,
+  );
 }
 
 /**
  * 格式化为 date 控件值（YYYY-MM-DD，使用本地时间）
  */
 export function formatDateLocalInput(date: Date): string {
-  if (isNaN(date.getTime())) return ''
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  if (isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /**
  * 格式化为 datetime-local 控件值（YYYY-MM-DDTHH:mm，使用本地时间）
  */
-export function formatDateTimeLocalInput(timestampSeconds: number | null): string {
-  if (!timestampSeconds) return ''
-  const date = new Date(timestampSeconds * 1000)
-  if (isNaN(date.getTime())) return ''
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-  return `${year}-${month}-${day}T${hours}:${minutes}`
+export function formatDateTimeLocalInput(
+  timestampSeconds: number | null,
+): string {
+  if (!timestampSeconds) return "";
+  const date = new Date(timestampSeconds * 1000);
+  if (isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 /**
  * 解析 datetime-local 控件值为时间戳（秒，使用本地时间）
  */
 export function parseDateTimeLocalInput(value: string): number | null {
-  if (!value) return null
+  if (!value) return null;
 
   // datetime-local intentionally has no timezone. Parse its components explicitly
   // so malformed values or timezone-bearing strings are not reinterpreted by Date.parse.
-  const match = /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/.exec(value)
-  if (!match) return null
+  const match =
+    /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/.exec(
+      value,
+    );
+  if (!match) return null;
 
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const hours = Number(match[4])
-  const minutes = Number(match[5])
-  const seconds = match[6] ? Number(match[6]) : 0
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hours = Number(match[4]);
+  const minutes = Number(match[5]);
+  const seconds = match[6] ? Number(match[6]) : 0;
   const milliseconds = match[7]
-    ? Number(match[7].slice(0, 3).padEnd(3, '0'))
-    : 0
+    ? Number(match[7].slice(0, 3).padEnd(3, "0"))
+    : 0;
 
   if (
     !Number.isSafeInteger(year) ||
@@ -228,12 +241,12 @@ export function parseDateTimeLocalInput(value: string): number | null {
     minutes > 59 ||
     seconds > 59
   ) {
-    return null
+    return null;
   }
 
-  const date = new Date(0)
-  date.setFullYear(year, month - 1, day)
-  date.setHours(hours, minutes, seconds, milliseconds)
+  const date = new Date(0);
+  date.setFullYear(year, month - 1, day);
+  date.setHours(hours, minutes, seconds, milliseconds);
 
   // Date setters normalize calendar overflows (for example, February 30). Keep
   // the platform's existing DST disambiguation for otherwise valid local times.
@@ -242,11 +255,11 @@ export function parseDateTimeLocalInput(value: string): number | null {
     date.getMonth() !== month - 1 ||
     date.getDate() !== day
   ) {
-    return null
+    return null;
   }
 
-  const timestamp = date.getTime()
-  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null
+  const timestamp = date.getTime();
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null;
 }
 
 /**
@@ -254,9 +267,9 @@ export function parseDateTimeLocalInput(value: string): number | null {
  */
 export function getBrowserTimeZone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   } catch {
-    return 'UTC'
+    return "UTC";
   }
 }
 
@@ -265,33 +278,43 @@ export function getBrowserTimeZone(): string {
  * @param effort 原始 effort（如 "low" / "medium" / "high" / "xhigh"）
  * @returns 格式化后的字符串（Low / Medium / High / Xhigh），无值返回 "-"
  */
-function normalizeReasoningEffortKey(effort: string | null | undefined): string {
-  return (effort ?? '').toString().trim().toLowerCase().replace(/[-_\s]/g, '')
+function normalizeReasoningEffortKey(
+  effort: string | null | undefined,
+): string {
+  return (effort ?? "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]/g, "");
 }
 
-export function formatReasoningEffort(effort: string | null | undefined): string {
-  const raw = (effort ?? '').toString().trim()
-  if (!raw) return '-'
+export function formatReasoningEffort(
+  effort: string | null | undefined,
+): string {
+  const raw = (effort ?? "").toString().trim();
+  if (!raw) return "-";
 
-  const normalized = normalizeReasoningEffortKey(raw)
+  const normalized = normalizeReasoningEffortKey(raw);
   switch (normalized) {
-    case 'low':
-      return 'Low'
-    case 'medium':
-      return 'Medium'
-    case 'high':
-      return 'High'
-    case 'xhigh':
-    case 'extrahigh':
-      return 'XHigh'
-    case 'max':
-      return 'Max'
-    case 'none':
-    case 'minimal':
-      return '-'
+    case "low":
+      return "Low";
+    case "medium":
+      return "Medium";
+    case "high":
+      return "High";
+    case "xhigh":
+    case "extrahigh":
+      return "XHigh";
+    case "max":
+      return "Max";
+    case "none":
+    case "minimal":
+      return "-";
     default:
       // best-effort: Title-case first letter
-      return raw.length > 1 ? raw[0].toUpperCase() + raw.slice(1) : raw.toUpperCase()
+      return raw.length > 1
+        ? raw[0].toUpperCase() + raw.slice(1)
+        : raw.toUpperCase();
   }
 }
 
@@ -299,10 +322,10 @@ export function reasoningEffortValuesEqual(
   left: string | null | undefined,
   right: string | null | undefined,
 ): boolean {
-  const a = normalizeReasoningEffortKey(left)
-  const b = normalizeReasoningEffortKey(right)
-  if (!a && !b) return true
-  return a !== '' && a === b
+  const a = normalizeReasoningEffortKey(left);
+  const b = normalizeReasoningEffortKey(right);
+  if (!a && !b) return true;
+  return a !== "" && a === b;
 }
 
 /** Requested vs forwarded effort for usage export; one value when they match. */
@@ -310,14 +333,17 @@ export function formatReasoningEffortMapping(
   requested: string | null | undefined,
   forwarded: string | null | undefined,
 ): string {
-  const requestedLabel = formatReasoningEffort(requested)
-  const forwardedLabel = formatReasoningEffort(forwarded)
-  if (requestedLabel === '-' && forwardedLabel === '-') return '-'
-  if (requestedLabel === '-' || reasoningEffortValuesEqual(requested, forwarded)) {
-    return forwardedLabel === '-' ? requestedLabel : forwardedLabel
+  const requestedLabel = formatReasoningEffort(requested);
+  const forwardedLabel = formatReasoningEffort(forwarded);
+  if (requestedLabel === "-" && forwardedLabel === "-") return "-";
+  if (
+    requestedLabel === "-" ||
+    reasoningEffortValuesEqual(requested, forwarded)
+  ) {
+    return forwardedLabel === "-" ? requestedLabel : forwardedLabel;
   }
-  if (forwardedLabel === '-') return requestedLabel
-  return `${requestedLabel} → ${forwardedLabel}`
+  if (forwardedLabel === "-") return requestedLabel;
+  return `${requestedLabel} → ${forwardedLabel}`;
 }
 
 /**
@@ -327,11 +353,11 @@ export function formatReasoningEffortMapping(
  */
 export function formatTime(date: string | Date | null | undefined): string {
   return formatDate(date, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  })
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 /**
@@ -340,7 +366,7 @@ export function formatTime(date: string | Date | null | undefined): string {
  * @returns 格式化后的字符串，如 "12,345"
  */
 export function formatNumberLocaleString(num: number): string {
-  return num.toLocaleString()
+  return num.toLocaleString();
 }
 
 /**
@@ -349,8 +375,11 @@ export function formatNumberLocaleString(num: number): string {
  * @param fractionDigits 小数位数，默认 4
  * @returns 格式化后的字符串，如 "1.2345"
  */
-export function formatCostFixed(amount: number, fractionDigits: number = 4): string {
-  return amount.toFixed(fractionDigits)
+export function formatCostFixed(
+  amount: number,
+  fractionDigits: number = 4,
+): string {
+  return amount.toFixed(fractionDigits);
 }
 
 /**
@@ -359,9 +388,9 @@ export function formatCostFixed(amount: number, fractionDigits: number = 4): str
  * @returns 格式化后的字符串，如 "950", "1.2K", "3.5M"
  */
 export function formatTokensK(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-  return tokens.toString()
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
+  return tokens.toString();
 }
 
 /**
@@ -371,17 +400,18 @@ export function formatTokensK(tokens: number): string {
  */
 export function formatCompactNumber(
   num: number | null | undefined,
-  options?: { allowBillions?: boolean }
+  options?: { allowBillions?: boolean },
 ): string {
-  if (num === null || num === undefined) return '0'
+  if (num === null || num === undefined) return "0";
 
-  const abs = Math.abs(num)
-  const allowBillions = options?.allowBillions !== false
+  const abs = Math.abs(num);
+  const allowBillions = options?.allowBillions !== false;
 
-  if (allowBillions && abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`
-  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`
-  if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`
-  return num.toString()
+  if (allowBillions && abs >= 1_000_000_000)
+    return `${(num / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  return num.toString();
 }
 
 /**
@@ -389,33 +419,41 @@ export function formatCompactNumber(
  * @param targetDate 目标日期字符串或 Date 对象
  * @returns 倒计时字符串，如 "2h 41m", "3d 5h", "15m"
  */
-export function formatCountdown(targetDate: string | Date | null | undefined): string | null {
-  if (!targetDate) return null
+export function formatCountdown(
+  targetDate: string | Date | null | undefined,
+): string | null {
+  if (!targetDate) return null;
 
-  const now = new Date()
-  const target = new Date(targetDate)
-  const diffMs = target.getTime() - now.getTime()
+  const now = new Date();
+  const target = new Date(targetDate);
+  const diffMs = target.getTime() - now.getTime();
 
   // 如果目标时间已过或无效
-  if (diffMs <= 0 || isNaN(diffMs)) return null
+  if (diffMs <= 0 || isNaN(diffMs)) return null;
 
-  const diffMins = Math.floor(diffMs / (1000 * 60))
-  const diffHours = Math.floor(diffMins / 60)
-  const diffDays = Math.floor(diffHours / 24)
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
 
-  const remainingHours = diffHours % 24
-  const remainingMins = diffMins % 60
+  const remainingHours = diffHours % 24;
+  const remainingMins = diffMins % 60;
 
   if (diffDays > 0) {
     // 超过1天：显示 "Xd Yh"
-    return i18n.global.t('common.time.countdown.daysHours', { d: diffDays, h: remainingHours })
+    return i18n.global.t("common.time.countdown.daysHours", {
+      d: diffDays,
+      h: remainingHours,
+    });
   }
   if (diffHours > 0) {
     // 小于1天：显示 "Xh Ym"
-    return i18n.global.t('common.time.countdown.hoursMinutes', { h: diffHours, m: remainingMins })
+    return i18n.global.t("common.time.countdown.hoursMinutes", {
+      h: diffHours,
+      m: remainingMins,
+    });
   }
   // 小于1小时：显示 "Ym"
-  return i18n.global.t('common.time.countdown.minutes', { m: diffMins })
+  return i18n.global.t("common.time.countdown.minutes", { m: diffMins });
 }
 
 /**
@@ -423,10 +461,12 @@ export function formatCountdown(targetDate: string | Date | null | undefined): s
  * @param targetDate 目标日期字符串或 Date 对象
  * @returns 完整的倒计时字符串，如 "2h 41m to lift", "2小时41分钟后解除"
  */
-export function formatCountdownWithSuffix(targetDate: string | Date | null | undefined): string | null {
-  const countdown = formatCountdown(targetDate)
-  if (!countdown) return null
-  return i18n.global.t('common.time.countdown.withSuffix', { time: countdown })
+export function formatCountdownWithSuffix(
+  targetDate: string | Date | null | undefined,
+): string | null {
+  const countdown = formatCountdown(targetDate);
+  if (!countdown) return null;
+  return i18n.global.t("common.time.countdown.withSuffix", { time: countdown });
 }
 
 /**
@@ -434,16 +474,18 @@ export function formatCountdownWithSuffix(targetDate: string | Date | null | und
  * @param date 日期字符串或 Date 对象
  * @returns 组合时间字符串，如 "5 天前 · 2026-01-27 15:25"
  */
-export function formatRelativeWithDateTime(date: string | Date | null | undefined): string {
-  if (!date) return ''
+export function formatRelativeWithDateTime(
+  date: string | Date | null | undefined,
+): string {
+  if (!date) return "";
 
-  const relativeTime = formatRelativeTime(date)
-  const dateTime = formatDateTime(date)
+  const relativeTime = formatRelativeTime(date);
+  const dateTime = formatDateTime(date);
 
   // 如果是 "从未" 或空字符串，只返回相对时间
-  if (!dateTime || relativeTime === i18n.global.t('common.time.never')) {
-    return relativeTime
+  if (!dateTime || relativeTime === i18n.global.t("common.time.never")) {
+    return relativeTime;
   }
 
-  return `${relativeTime} · ${dateTime}`
+  return `${relativeTime} · ${dateTime}`;
 }

@@ -1,7 +1,9 @@
 <template>
   <div>
     <!-- Tags display -->
-    <div class="flex flex-wrap gap-1.5 rounded-lg border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-800 min-h-[2.5rem]">
+    <div
+      class="flex flex-wrap gap-1.5 rounded-lg border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-800 min-h-[2.5rem]"
+    >
       <span
         v-for="(model, idx) in models"
         :key="idx"
@@ -31,73 +33,81 @@
       />
     </div>
     <p class="mt-1 text-xs text-gray-400">
-      {{ t('admin.channels.form.modelInputHint', 'Press Enter to add, supports paste for batch import.') }}
+      {{
+        t(
+          "admin.channels.form.modelInputHint",
+          "Press Enter to add, supports paste for batch import.",
+        )
+      }}
     </p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
-import { getPlatformTagClass } from './types'
+import { ref } from "vue";
+import { useI18n } from "vue-i18n";
+import Icon from "@/components/icons/Icon.vue";
+import { getPlatformTagClass } from "./types";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 const props = defineProps<{
-  models: string[]
-  placeholder?: string
-  platform?: string
-}>()
+  models: string[];
+  placeholder?: string;
+  platform?: string;
+}>();
 
 const emit = defineEmits<{
-  'update:models': [models: string[]]
-}>()
+  "update:models": [models: string[]];
+}>();
 
-const inputValue = ref('')
-const inputRef = ref<HTMLInputElement>()
+const inputValue = ref("");
+const inputRef = ref<HTMLInputElement>();
 
 function addModel() {
-  const val = inputValue.value.trim()
-  if (!val) return
+  const val = inputValue.value.trim();
+  if (!val) return;
   if (!props.models.includes(val)) {
-    emit('update:models', [...props.models, val])
+    emit("update:models", [...props.models, val]);
   }
-  inputValue.value = ''
+  inputValue.value = "";
 }
 
 function handleEnter(event: KeyboardEvent) {
-  if (event.isComposing) return
-  event.preventDefault()
-  addModel()
+  if (event.isComposing) return;
+  event.preventDefault();
+  addModel();
 }
 
 function handleTab(event: KeyboardEvent) {
-  if (event.isComposing || !inputValue.value.trim()) return
-  event.preventDefault()
-  addModel()
+  if (event.isComposing || !inputValue.value.trim()) return;
+  event.preventDefault();
+  addModel();
 }
 
 function removeModel(idx: number) {
-  const newModels = [...props.models]
-  newModels.splice(idx, 1)
-  emit('update:models', newModels)
+  const newModels = [...props.models];
+  newModels.splice(idx, 1);
+  emit("update:models", newModels);
 }
 
 function handleBackspace(event: KeyboardEvent) {
-  if (event.isComposing) return
-  if (inputValue.value === '' && props.models.length > 0) {
-    removeModel(props.models.length - 1)
+  if (event.isComposing) return;
+  if (inputValue.value === "" && props.models.length > 0) {
+    removeModel(props.models.length - 1);
   }
 }
 
 function handlePaste(e: ClipboardEvent) {
-  e.preventDefault()
-  const text = e.clipboardData?.getData('text') || ''
-  const items = text.split(/[,\n;]+/).map(s => s.trim()).filter(Boolean)
-  if (items.length === 0) return
-  const unique = [...new Set([...props.models, ...items])]
-  emit('update:models', unique)
-  inputValue.value = ''
+  e.preventDefault();
+  const text = e.clipboardData?.getData("text") || "";
+  const items = text
+    .split(/[,\n;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (items.length === 0) return;
+  const unique = [...new Set([...props.models, ...items])];
+  emit("update:models", unique);
+  inputValue.value = "";
 }
 </script>

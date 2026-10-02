@@ -1,4 +1,4 @@
-import { apiClient } from '@/api/client'
+import { apiClient } from "@/api/client";
 import {
   normalizeGatewayMockEventPage,
   normalizeGatewayMockOperatorStatus,
@@ -8,19 +8,19 @@ import {
   type GatewayMockOperatorStatus,
   type GatewayMockOperatorUpdateInput,
   type GatewayMockPresetSeed,
-} from './types'
+} from "./types";
 
-const path = '/admin/settings/gateway-mock'
-const eventsPath = '/admin/settings/gateway-mock/events'
-const headers = { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+const path = "/admin/settings/gateway-mock";
+const eventsPath = "/admin/settings/gateway-mock/events";
+const headers = { "Cache-Control": "no-store", Pragma: "no-cache" };
 
 /**
  * Reads the whole rule set plus the global switch. The switch is off unless it
  * was turned on: an absent or unreadable setting is not an enabled one.
  */
 export async function getOperatorSettings(): Promise<GatewayMockOperatorStatus> {
-  const { data } = await apiClient.get<unknown>(path, { headers })
-  return normalizeGatewayMockOperatorStatus(data)
+  const { data } = await apiClient.get<unknown>(path, { headers });
+  return normalizeGatewayMockOperatorStatus(data);
 }
 
 /**
@@ -29,17 +29,23 @@ export async function getOperatorSettings(): Promise<GatewayMockOperatorStatus> 
  * patch. Validation stays on the server; the bounded reason it answers with is
  * what the settings form shows.
  */
-export async function updateOperatorSettings(input: GatewayMockOperatorUpdateInput): Promise<GatewayMockOperatorStatus> {
-  const { data } = await apiClient.put<unknown>(path, {
-    enabled: input.enabled,
-    rules: input.rules.map(rule => ({
-      id: rule.id,
-      keyword: rule.keyword,
-      reply: rule.reply,
-      enabled: rule.enabled,
-    })),
-  }, { headers })
-  return normalizeGatewayMockOperatorStatus(data)
+export async function updateOperatorSettings(
+  input: GatewayMockOperatorUpdateInput,
+): Promise<GatewayMockOperatorStatus> {
+  const { data } = await apiClient.put<unknown>(
+    path,
+    {
+      enabled: input.enabled,
+      rules: input.rules.map((rule) => ({
+        id: rule.id,
+        keyword: rule.keyword,
+        reply: rule.reply,
+        enabled: rule.enabled,
+      })),
+    },
+    { headers },
+  );
+  return normalizeGatewayMockOperatorStatus(data);
 }
 
 /**
@@ -47,8 +53,10 @@ export async function updateOperatorSettings(input: GatewayMockOperatorUpdateInp
  * seeding never turns the feature on, and a non-empty set is left untouched.
  */
 export async function seedPresets(): Promise<GatewayMockPresetSeed> {
-  const { data } = await apiClient.post<unknown>(`${path}/presets`, null, { headers })
-  return normalizeGatewayMockPresetSeed(data)
+  const { data } = await apiClient.post<unknown>(`${path}/presets`, null, {
+    headers,
+  });
+  return normalizeGatewayMockPresetSeed(data);
 }
 
 /**
@@ -59,6 +67,10 @@ export async function listEvents(
   params: GatewayMockEventListParams,
   options?: { signal?: AbortSignal },
 ): Promise<GatewayMockEventPage> {
-  const { data } = await apiClient.get<unknown>(eventsPath, { params, headers, signal: options?.signal })
-  return normalizeGatewayMockEventPage(data)
+  const { data } = await apiClient.get<unknown>(eventsPath, {
+    params,
+    headers,
+    signal: options?.signal,
+  });
+  return normalizeGatewayMockEventPage(data);
 }

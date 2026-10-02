@@ -3,8 +3,8 @@
  * Handles group-related operations for regular users
  */
 
-import { apiClient } from './client'
-import type { Group } from '@/types'
+import { apiClient } from "./client";
+import type { Group } from "@/types";
 
 /**
  * Get available groups that the current user can bind to API keys
@@ -14,8 +14,8 @@ import type { Group } from '@/types'
  * @returns List of available groups
  */
 export async function getAvailable(): Promise<Group[]> {
-  const { data } = await apiClient.get<Group[]>('/groups/available')
-  return data
+  const { data } = await apiClient.get<Group[]>("/groups/available");
+  return data;
 }
 
 /**
@@ -23,13 +23,15 @@ export async function getAvailable(): Promise<Group[]> {
  * @returns Map of group_id to custom rate_multiplier
  */
 export async function getUserGroupRates(): Promise<Record<number, number>> {
-  const { data } = await apiClient.get<Record<number, number> | null>('/groups/rates')
-  return data || {}
+  const { data } = await apiClient.get<Record<number, number> | null>(
+    "/groups/rates",
+  );
+  return data || {};
 }
 
 export const userGroupsAPI = {
   getAvailable,
-  getUserGroupRates
-}
+  getUserGroupRates,
+};
 
-export default userGroupsAPI
+export default userGroupsAPI;

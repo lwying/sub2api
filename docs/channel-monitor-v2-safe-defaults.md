@@ -12,13 +12,13 @@
 
 ## Decisions
 
-| Topic | Decision |
-|-------|----------|
-| Default mode | **v1** (keep active probes). V2 is explicit opt-in. |
-| Existing `channel_monitor_mode=v2` rows | **Unchanged** (`ON CONFLICT DO NOTHING` / no force rewrite). |
-| Switch to v2 | V1 runner `fire()` and `RunCheck` require `ActiveProbesAllowed()` → probes stop. |
-| Backfill | Unified hard gates + adaptive soft gates (same rules, different observed load). |
-| Optional profile knob | **Not in this change** (YAGNI). |
+| Topic                                   | Decision                                                                         |
+| --------------------------------------- | -------------------------------------------------------------------------------- |
+| Default mode                            | **v1** (keep active probes). V2 is explicit opt-in.                              |
+| Existing `channel_monitor_mode=v2` rows | **Unchanged** (`ON CONFLICT DO NOTHING` / no force rewrite).                     |
+| Switch to v2                            | V1 runner `fire()` and `RunCheck` require `ActiveProbesAllowed()` → probes stop. |
+| Backfill                                | Unified hard gates + adaptive soft gates (same rules, different observed load).  |
+| Optional profile knob                   | **Not in this change** (YAGNI).                                                  |
 
 ## Mode defaults
 

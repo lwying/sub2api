@@ -19,11 +19,11 @@ name: Upstream Sync
 # 同步脚本会先校验工作树干净，然后才在其中切换分支与 merge。
 on:
   schedule:
-    - cron: '17 3 * * *'
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: '只判定并输出报告，不推送分支、不创建或更新 PR'
+        description: "只判定并输出报告，不推送分支、不创建或更新 PR"
         required: false
         type: boolean
         default: false
@@ -76,7 +76,7 @@ jobs:
           BOT_EMAIL: ${{ env.BOT_EMAIL }}
           # 显式声明：runner 的检出是一次性、可丢弃的，工具可以在其中
           # 切换分支并 merge/reset（它同时要求工作树干净）。
-          FORK_SYNC_DISPOSABLE_CHECKOUT: '1'
+          FORK_SYNC_DISPOSABLE_CHECKOUT: "1"
         run: |
           set -euo pipefail
 

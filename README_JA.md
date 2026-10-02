@@ -192,19 +192,19 @@ Sub2API は、AI 製品のサブスクリプションから API クォータを�
 
 Sub2API を拡張・統合するコミュニティプロジェクト:
 
-| プロジェクト | 説明 | 機能 |
-|---------|-------------|----------|
-| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~セルフサービス決済システム~~ | **内蔵済み** — 決済機能は Sub2API に統合されました。別途デプロイは不要です。[決済設定ガイド](docs/PAYMENT.md)をご参照ください |
-| [sub2api-mobile](https://github.com/ckken/sub2api-mobile) | モバイル管理コンソール | ユーザー管理、アカウント管理、監視ダッシュボード、マルチバックエンド切り替えが可能なクロスプラットフォームアプリ（iOS/Android/Web）。Expo + React Native で構築 |
+| プロジェクト                                               | 説明                           | 機能                                                                                                                                                            |
+| ---------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~セルフサービス決済システム~~ | **内蔵済み** — 決済機能は Sub2API に統合されました。別途デプロイは不要です。[決済設定ガイド](docs/PAYMENT.md)をご参照ください                                   |
+| [sub2api-mobile](https://github.com/ckken/sub2api-mobile)  | モバイル管理コンソール         | ユーザー管理、アカウント管理、監視ダッシュボード、マルチバックエンド切り替えが可能なクロスプラットフォームアプリ（iOS/Android/Web）。Expo + React Native で構築 |
 
 ## 技術スタック
 
-| コンポーネント | 技術 |
-|-----------|------------|
-| バックエンド | Go 1.27.0, Gin, Ent |
-| フロントエンド | Vue 3.4+, Vite 5+, TailwindCSS |
-| データベース | PostgreSQL 15+ |
-| キャッシュ/キュー | Redis 7+ |
+| コンポーネント    | 技術                           |
+| ----------------- | ------------------------------ |
+| バックエンド      | Go 1.27.0, Gin, Ent            |
+| フロントエンド    | Vue 3.4+, Vite 5+, TailwindCSS |
+| データベース      | PostgreSQL 15+                 |
+| キャッシュ/キュー | Redis 7+                       |
 
 ---
 
@@ -242,6 +242,7 @@ curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.s
 この fork のインストーラーは、`lwying/sub2api` が公開した本プラットフォーム用アーカイブと `checksums.txt` の両方がある Release だけを受け入れます。イメージのみ、または検証できない Release はインストールしません。既存の上流版から fork 版への初回切り替えは手動で行う必要があります。Docker イメージの更新は運用者が管理し、コンテナー内のバイナリ置換とは別です。
 
 スクリプトは以下を実行します:
+
 1. システムアーキテクチャの検出
 2. 最新リリースのダウンロード
 3. バイナリを `/opt/sub2api` にインストール
@@ -262,6 +263,7 @@ sudo systemctl enable sub2api
 ```
 
 セットアップウィザードでは以下の設定を行います:
+
 - データベース設定
 - Redis 設定
 - 管理者アカウントの作成
@@ -271,6 +273,7 @@ sudo systemctl enable sub2api
 **管理ダッシュボード**の左上にある**アップデートを確認**ボタンをクリックすることで、ダッシュボードから直接アップグレードできます。
 
 Web インターフェースでは以下が可能です:
+
 - 新しいバージョンの自動確認
 - ワンクリックでのアップデートのダウンロードと適用
 - 必要に応じたロールバック
@@ -321,6 +324,7 @@ docker compose logs -f sub2api
 ```
 
 **スクリプトの動作内容:**
+
 - `docker-compose.local.yml`（`docker-compose.yml` として保存）と `.env.example` をダウンロード
 - セキュアな認証情報（JWT_SECRET、TOTP_ENCRYPTION_KEY、POSTGRES_PASSWORD）を自動生成
 - 自動生成されたシークレットで `.env` ファイルを作成
@@ -365,6 +369,7 @@ SERVER_PORT=8080
 ```
 
 **セキュアなシークレットの生成方法:**
+
 ```bash
 # JWT_SECRET を生成
 openssl rand -hex 32
@@ -396,10 +401,10 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 #### デプロイバージョン
 
-| バージョン | データストレージ | 移行 | 推奨用途 |
-|---------|-------------|-----------|----------|
+| バージョン                   | データストレージ     | 移行                              | 推奨用途                     |
+| ---------------------------- | -------------------- | --------------------------------- | ---------------------------- |
 | **docker-compose.local.yml** | ローカルディレクトリ | ✅ 容易（ディレクトリ全体を tar） | 本番環境、頻繁なバックアップ |
-| **docker-compose.yml** | 名前付きボリューム | ⚠️ docker コマンドが必要 | シンプルなセットアップ |
+| **docker-compose.yml**       | 名前付きボリューム   | ⚠️ docker コマンドが必要          | シンプルなセットアップ       |
 
 **推奨:** データ管理が容易な `docker-compose.local.yml`（スクリプトによるデプロイ）を使用してください。
 
@@ -408,6 +413,7 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 ブラウザで `http://YOUR_SERVER_IP:8080` を開いてください。
 
 管理者パスワードが自動生成された場合は、ログで確認できます:
+
 ```bash
 docker compose -f docker-compose.local.yml logs sub2api | grep "admin password"
 ```
@@ -575,8 +581,8 @@ SECURITY_FORWARDED_CLIENT_IP_HEADERS=True-Client-IP,X-CDN-Client-IP
 ```yaml
 security:
   url_allowlist:
-    enabled: false                # 許可リストチェックを無効化
-    allow_insecure_http: false    # HTTPS のみ許可（本番環境推奨）
+    enabled: false # 許可リストチェックを無効化
+    allow_insecure_http: false # HTTPS のみ許可（本番環境推奨）
 ```
 
 **または環境変数で設定:**
@@ -587,22 +593,26 @@ SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=false
 ```
 
 **HTTP を許可するリスク:**
+
 - API キーとデータが**平文**で送信される（傍受の危険性）
 - **中間者攻撃（MITM）**を受けやすい
 - **本番環境には不適切**
 
 **HTTP を使用すべき場面:**
+
 - ✅ ローカルサーバーでの開発・テスト（http://localhost）
 - ✅ 信頼できるエンドポイントを持つ内部ネットワーク
 - ✅ HTTPS 取得前のアカウント接続テスト
 - ❌ 本番環境（HTTPS のみを使用）
 
 **`allow_insecure_http: false` 設定時に HTTP URL で表示されるエラー例:**
+
 ```
 Invalid base URL: invalid url scheme: http
 ```
 
 URL バリデーションまたはレスポンスヘッダーフィルタリングを無効にする場合は、ネットワーク層を強化してください:
+
 - 上流ドメイン/IP のエグレス許可リストを適用
 - プライベート/ループバック/リンクローカル範囲をブロック
 - TLS のみのアウトバウンドトラフィックを強制
@@ -672,10 +682,10 @@ Sub2API は [Antigravity](https://antigravity.so/) アカウントをサポー�
 
 ### 専用エンドポイント
 
-| エンドポイント | モデル |
-|----------|-------|
+| エンドポイント             | モデル        |
+| -------------------------- | ------------- |
 | `/antigravity/v1/messages` | Claude モデル |
-| `/antigravity/v1beta/` | Gemini モデル |
+| `/antigravity/v1beta/`     | Gemini モデル |
 
 ### Claude Code の設定
 

@@ -61,7 +61,9 @@
 
           <div v-else class="space-y-2 text-gray-700 dark:text-gray-300">
             <div class="flex justify-between">
-              <span class="text-gray-500 dark:text-gray-400">{{ t(prefixKey('billingMode')) }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{
+                t(prefixKey("billingMode"))
+              }}</span>
               <span>{{ billingModeLabel }}</span>
             </div>
 
@@ -98,14 +100,20 @@
                 :scale="perMillionScale"
               />
               <PricingRow
-                v-if="model.pricing.image_input_price != null && model.pricing.image_input_price > 0"
+                v-if="
+                  model.pricing.image_input_price != null &&
+                  model.pricing.image_input_price > 0
+                "
                 :label="t(prefixKey('imageInputPrice'))"
                 :value="model.pricing.image_input_price"
                 :unit="t(prefixKey('unitPerMillion'))"
                 :scale="perMillionScale"
               />
               <PricingRow
-                v-if="model.pricing.image_output_price != null && model.pricing.image_output_price > 0"
+                v-if="
+                  model.pricing.image_output_price != null &&
+                  model.pricing.image_output_price > 0
+                "
                 :label="t(prefixKey('imageOutputPrice'))"
                 :value="model.pricing.image_output_price"
                 :unit="t(prefixKey('unitPerMillion'))"
@@ -136,7 +144,10 @@
             />
 
             <PricingRow
-              v-if="model.pricing.billing_mode === BILLING_MODE_VIDEO && model.pricing.per_request_price != null"
+              v-if="
+                model.pricing.billing_mode === BILLING_MODE_VIDEO &&
+                model.pricing.per_request_price != null
+              "
               :label="t(prefixKey('videoPrice'))"
               :value="model.pricing.per_request_price"
               :unit="t(prefixKey('unitPerSecond'))"
@@ -144,12 +155,14 @@
             />
 
             <div
-              v-if="model.pricing.intervals && model.pricing.intervals.length > 0"
+              v-if="
+                model.pricing.intervals && model.pricing.intervals.length > 0
+              "
               class="mt-2 border-t pt-2"
               :class="[popoverBorderClass]"
             >
               <div class="mb-1 font-medium text-gray-600 dark:text-gray-400">
-                {{ t(prefixKey('intervals')) }}
+                {{ t(prefixKey("intervals")) }}
               </div>
               <div class="space-y-1">
                 <div
@@ -158,8 +171,12 @@
                   class="flex justify-between text-[11px]"
                 >
                   <span class="text-gray-500 dark:text-gray-400">
-                    <template v-if="iv.tier_label">{{ iv.tier_label }}</template>
-                    <template v-else>{{ formatRange(iv.min_tokens, iv.max_tokens) }}</template>
+                    <template v-if="iv.tier_label">{{
+                      iv.tier_label
+                    }}</template>
+                    <template v-else>{{
+                      formatRange(iv.min_tokens, iv.max_tokens)
+                    }}</template>
                   </span>
                   <span>{{ formatInterval(iv, model.pricing) }}</span>
                 </div>
@@ -173,100 +190,116 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import PricingRow from './PricingRow.vue'
-import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
+import { computed, nextTick, onBeforeUnmount, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import PricingRow from "./PricingRow.vue";
+import { formatScaled, resolveIntervalPrices } from "@/utils/pricing";
 import {
   BILLING_MODE_TOKEN,
   BILLING_MODE_PER_REQUEST,
   BILLING_MODE_IMAGE,
-  BILLING_MODE_VIDEO
-} from '@/constants/channel'
+  BILLING_MODE_VIDEO,
+} from "@/constants/channel";
 // 复用 api/channels.ts 的用户侧最小形态 DTO。
 // admin 侧 ChannelModelPricing 字段更多，但结构上是用户 DTO 的超集，admin 视图传入可直接通过结构化子类型检查。
-import type { UserPricingInterval, UserSupportedModel, UserSupportedModelPricing } from '@/api/channels'
-import PlatformIcon from '@/components/common/PlatformIcon.vue'
-import type { GroupPlatform } from '@/types'
-import { platformBadgeClass, platformBorderClass, platformBadgeLightClass } from '@/utils/platformColors'
+import type {
+  UserPricingInterval,
+  UserSupportedModel,
+  UserSupportedModelPricing,
+} from "@/api/channels";
+import PlatformIcon from "@/components/common/PlatformIcon.vue";
+import type { GroupPlatform } from "@/types";
+import {
+  platformBadgeClass,
+  platformBorderClass,
+  platformBadgeLightClass,
+} from "@/utils/platformColors";
 
 const props = withDefaults(
   defineProps<{
-    model: UserSupportedModel
+    model: UserSupportedModel;
     /** i18n 前缀：管理端传 `admin.availableChannels.pricing`，用户端传 `availableChannels.pricing`。 */
-    pricingKeyPrefix?: string
-    noPricingLabel?: string
-    showPlatform?: boolean
+    pricingKeyPrefix?: string;
+    noPricingLabel?: string;
+    showPlatform?: boolean;
     /**
      * 当 model.platform 缺失（如 admin 聚合场景）时，用父行的平台作为兜底着色。
      * 仅用于视觉，不影响业务逻辑。
      */
-    platformHint?: string
+    platformHint?: string;
   }>(),
   {
-    pricingKeyPrefix: 'availableChannels.pricing',
-    noPricingLabel: '',
+    pricingKeyPrefix: "availableChannels.pricing",
+    noPricingLabel: "",
     showPlatform: true,
-    platformHint: ''
-  }
-)
+    platformHint: "",
+  },
+);
 
-const effectivePlatform = computed<string>(() => props.model.platform || props.platformHint || '')
+const effectivePlatform = computed<string>(
+  () => props.model.platform || props.platformHint || "",
+);
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 /** 按 token 定价展示时的换算单位：每百万 token。 */
-const perMillionScale = 1_000_000
+const perMillionScale = 1_000_000;
 
 // Popover border + header classes echo the platform theme so each card reads
 // at a glance which model family it belongs to.
 const popoverBorderClass = computed(() =>
   effectivePlatform.value
     ? platformBorderClass(effectivePlatform.value)
-    : 'border-gray-200 dark:border-dark-600',
-)
+    : "border-gray-200 dark:border-dark-600",
+);
 const popoverHeaderClass = computed(() =>
   effectivePlatform.value
     ? platformBadgeLightClass(effectivePlatform.value)
-    : 'bg-gray-50 text-gray-700 dark:bg-dark-700/60 dark:text-gray-300',
-)
+    : "bg-gray-50 text-gray-700 dark:bg-dark-700/60 dark:text-gray-300",
+);
 
 function prefixKey(k: string): string {
-  return `${props.pricingKeyPrefix}.${k}`
+  return `${props.pricingKeyPrefix}.${k}`;
 }
 
 const billingModeLabel = computed(() => {
-  const mode = props.model.pricing?.billing_mode
+  const mode = props.model.pricing?.billing_mode;
   switch (mode) {
     case BILLING_MODE_TOKEN:
-      return t(prefixKey('billingModeToken'))
+      return t(prefixKey("billingModeToken"));
     case BILLING_MODE_PER_REQUEST:
-      return t(prefixKey('billingModePerRequest'))
+      return t(prefixKey("billingModePerRequest"));
     case BILLING_MODE_IMAGE:
-      return t(prefixKey('billingModeImage'))
+      return t(prefixKey("billingModeImage"));
     case BILLING_MODE_VIDEO:
-      return t(prefixKey('billingModeVideo'))
+      return t(prefixKey("billingModeVideo"));
     default:
-      return '-'
+      return "-";
   }
-})
+});
 
 function formatRange(min: number, max: number | null): string {
-  const maxLabel = max == null ? '∞' : String(max)
-  return `(${min}, ${maxLabel}]`
+  const maxLabel = max == null ? "∞" : String(max);
+  return `(${min}, ${maxLabel}]`;
 }
 
-function formatInterval(iv: UserPricingInterval, pricing: UserSupportedModelPricing): string {
+function formatInterval(
+  iv: UserPricingInterval,
+  pricing: UserSupportedModelPricing,
+): string {
   if (pricing.billing_mode === BILLING_MODE_VIDEO) {
-    return `${formatScaled(iv.per_request_price, 1)} ${t(prefixKey('unitPerSecond'))}`
+    return `${formatScaled(iv.per_request_price, 1)} ${t(prefixKey("unitPerSecond"))}`;
   }
-  if (pricing.billing_mode === BILLING_MODE_PER_REQUEST || pricing.billing_mode === BILLING_MODE_IMAGE) {
-    return formatScaled(iv.per_request_price, 1)
+  if (
+    pricing.billing_mode === BILLING_MODE_PER_REQUEST ||
+    pricing.billing_mode === BILLING_MODE_IMAGE
+  ) {
+    return formatScaled(iv.per_request_price, 1);
   }
-  const resolved = resolveIntervalPrices(iv, pricing)
-  const input = formatScaled(resolved.input_price, perMillionScale)
-  const output = formatScaled(resolved.output_price, perMillionScale)
-  return `${input} / ${output}`
+  const resolved = resolveIntervalPrices(iv, pricing);
+  const input = formatScaled(resolved.input_price, perMillionScale);
+  const output = formatScaled(resolved.output_price, perMillionScale);
+  return `${input} / ${output}`;
 }
 
 // ── Popover positioning ─────────────────────────────────────────────
@@ -275,55 +308,55 @@ function formatInterval(iv: UserPricingInterval, pricing: UserSupportedModelPric
 // hover enter, scroll, and resize. Pinning to the trigger's top-center
 // with a flip when the viewport edge is near keeps it aligned without a
 // full-blown positioning lib.
-const show = ref(false)
-const triggerEl = ref<HTMLElement | null>(null)
-const popoverEl = ref<HTMLElement | null>(null)
-const popoverStyle = ref<Record<string, string>>({ top: '0px', left: '0px' })
+const show = ref(false);
+const triggerEl = ref<HTMLElement | null>(null);
+const popoverEl = ref<HTMLElement | null>(null);
+const popoverStyle = ref<Record<string, string>>({ top: "0px", left: "0px" });
 
 function updatePosition() {
-  const trigger = triggerEl.value
-  if (!trigger) return
-  const rect = trigger.getBoundingClientRect()
-  const margin = 8
-  const popover = popoverEl.value
-  const popWidth = popover?.offsetWidth ?? 320
-  const popHeight = popover?.offsetHeight ?? 240
-  const vw = window.innerWidth
-  const vh = window.innerHeight
+  const trigger = triggerEl.value;
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  const margin = 8;
+  const popover = popoverEl.value;
+  const popWidth = popover?.offsetWidth ?? 320;
+  const popHeight = popover?.offsetHeight ?? 240;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
 
-  let top = rect.bottom + margin
+  let top = rect.bottom + margin;
   // Flip upward if it would overflow below.
   if (top + popHeight > vh - margin) {
-    top = Math.max(margin, rect.top - popHeight - margin)
+    top = Math.max(margin, rect.top - popHeight - margin);
   }
 
-  let left = rect.left + rect.width / 2 - popWidth / 2
-  if (left < margin) left = margin
-  if (left + popWidth > vw - margin) left = vw - margin - popWidth
+  let left = rect.left + rect.width / 2 - popWidth / 2;
+  if (left < margin) left = margin;
+  if (left + popWidth > vw - margin) left = vw - margin - popWidth;
 
   popoverStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
-  }
+  };
 }
 
 function onEnter() {
-  show.value = true
+  show.value = true;
   nextTick(() => {
-    updatePosition()
-    window.addEventListener('scroll', updatePosition, true)
-    window.addEventListener('resize', updatePosition)
-  })
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+  });
 }
 
 function onLeave() {
-  show.value = false
-  window.removeEventListener('scroll', updatePosition, true)
-  window.removeEventListener('resize', updatePosition)
+  show.value = false;
+  window.removeEventListener("scroll", updatePosition, true);
+  window.removeEventListener("resize", updatePosition);
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener('scroll', updatePosition, true)
-  window.removeEventListener('resize', updatePosition)
-})
+  window.removeEventListener("scroll", updatePosition, true);
+  window.removeEventListener("resize", updatePosition);
+});
 </script>

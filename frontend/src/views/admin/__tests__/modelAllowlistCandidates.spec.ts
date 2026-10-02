@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createModelAllowlistCandidatesTracker,
-} from "../modelAllowlistCandidates";
+import { createModelAllowlistCandidatesTracker } from "../modelAllowlistCandidates";
 
 describe("modelAllowlistCandidates", () => {
   it("rejects stale candidate responses after a newer platform request starts", () => {

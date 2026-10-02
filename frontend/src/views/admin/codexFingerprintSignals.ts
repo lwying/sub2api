@@ -1,4 +1,5 @@
-export type FingerprintSignalType = "header_exact" | "header_prefix" | "body_path";
+export type FingerprintSignalType =
+  "header_exact" | "header_prefix" | "body_path";
 
 export interface FingerprintSignalRow {
   type: FingerprintSignalType;
@@ -12,7 +13,9 @@ const VALID_TYPES: FingerprintSignalType[] = [
   "body_path",
 ];
 
-export function parseFingerprintSignalsToRows(raw: string): FingerprintSignalRow[] {
+export function parseFingerprintSignalsToRows(
+  raw: string,
+): FingerprintSignalRow[] {
   if (!raw || !raw.trim()) return [];
   try {
     const arr = JSON.parse(raw);
@@ -29,7 +32,9 @@ export function parseFingerprintSignalsToRows(raw: string): FingerprintSignalRow
   }
 }
 
-export function serializeFingerprintRowsToJSON(rows: FingerprintSignalRow[]): string {
+export function serializeFingerprintRowsToJSON(
+  rows: FingerprintSignalRow[],
+): string {
   const entries = rows
     .map((r) => ({
       type: r.type,

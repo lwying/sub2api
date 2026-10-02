@@ -18,7 +18,6 @@
 
 </div>
 
-
 ## ⚠️ 重要提醒
 
 使用本项目前，请务必仔细阅读以下内容：
@@ -193,19 +192,19 @@ Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的
 
 围绕 Sub2API 的社区扩展与集成项目：
 
-| 项目 | 说明 | 功能 |
-|------|------|------|
-| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~自助支付系统~~ | **已内置** — 支付功能已集成到 Sub2API 中，无需独立部署。详见 [支付配置指南](docs/PAYMENT_CN.md) |
-| [sub2api-mobile](https://github.com/ckken/sub2api-mobile) | 移动端管理控制台 | 跨平台应用（iOS/Android/Web），支持用户管理、账号管理、监控看板、多后端切换；基于 Expo + React Native 构建 |
+| 项目                                                       | 说明             | 功能                                                                                                       |
+| ---------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~自助支付系统~~ | **已内置** — 支付功能已集成到 Sub2API 中，无需独立部署。详见 [支付配置指南](docs/PAYMENT_CN.md)            |
+| [sub2api-mobile](https://github.com/ckken/sub2api-mobile)  | 移动端管理控制台 | 跨平台应用（iOS/Android/Web），支持用户管理、账号管理、监控看板、多后端切换；基于 Expo + React Native 构建 |
 
 ## 技术栈
 
-| 组件 | 技术 |
-|------|------|
-| 后端 | Go 1.27.0, Gin, Ent |
-| 前端 | Vue 3.4+, Vite 5+, TailwindCSS |
-| 数据库 | PostgreSQL 15+ |
-| 缓存/队列 | Redis 7+ |
+| 组件      | 技术                           |
+| --------- | ------------------------------ |
+| 后端      | Go 1.27.0, Gin, Ent            |
+| 前端      | Vue 3.4+, Vite 5+, TailwindCSS |
+| 数据库    | PostgreSQL 15+                 |
+| 缓存/队列 | Redis 7+                       |
 
 ---
 
@@ -267,6 +266,7 @@ curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.s
 Fork 安装脚本只接受 `lwying/sub2api` 已发布且含本平台归档与 `checksums.txt` 的 Release；仅镜像或无法校验的版本会拒装。旧上游构建首次切换到 fork 构建须人工安装一次；Docker 镜像由运营者自行维护，容器内替换二进制不等于镜像升级。
 
 脚本会自动：
+
 1. 检测系统架构
 2. 下载最新版本
 3. 安装二进制文件到 `/opt/sub2api`
@@ -287,6 +287,7 @@ sudo systemctl enable sub2api
 ```
 
 设置向导将引导你完成：
+
 - 数据库配置
 - Redis 配置
 - 管理员账号创建
@@ -296,6 +297,7 @@ sudo systemctl enable sub2api
 可以直接在 **管理后台** 左上角点击 **检测更新** 按钮进行在线升级。
 
 网页升级功能支持：
+
 - 自动检测新版本
 - 一键下载并应用更新
 - 支持回滚
@@ -346,6 +348,7 @@ docker compose logs -f sub2api
 ```
 
 **脚本功能：**
+
 - 下载 `docker-compose.local.yml`（本地保存为 `docker-compose.yml`）和 `.env.example`
 - 自动生成安全凭证（JWT_SECRET、TOTP_ENCRYPTION_KEY、POSTGRES_PASSWORD）
 - 创建 `.env` 文件并填充自动生成的密钥
@@ -390,6 +393,7 @@ SERVER_PORT=8080
 ```
 
 **生成安全密钥：**
+
 ```bash
 # 生成 JWT_SECRET
 openssl rand -hex 32
@@ -421,10 +425,10 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 #### 部署版本对比
 
-| 版本 | 数据存储 | 迁移便利性 | 适用场景 |
-|------|---------|-----------|---------|
+| 版本                         | 数据存储 | 迁移便利性              | 适用场景           |
+| ---------------------------- | -------- | ----------------------- | ------------------ |
 | **docker-compose.local.yml** | 本地目录 | ✅ 简单（打包整个目录） | 生产环境、频繁备份 |
-| **docker-compose.yml** | 命名卷 | ⚠️ 需要 docker 命令 | 简单设置 |
+| **docker-compose.yml**       | 命名卷   | ⚠️ 需要 docker 命令     | 简单设置           |
 
 **推荐：** 使用 `docker-compose.local.yml`（脚本部署）以便更轻松地管理数据。
 
@@ -445,6 +449,7 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 在浏览器中打开 `http://你的服务器IP:8080`
 
 如果管理员密码是自动生成的，在日志中查找：
+
 ```bash
 docker compose -f docker-compose.local.yml logs sub2api | grep "admin password"
 ```
@@ -620,8 +625,8 @@ SECURITY_FORWARDED_CLIENT_IP_HEADERS=True-Client-IP,X-CDN-Client-IP
 ```yaml
 security:
   url_allowlist:
-    enabled: false                # 禁用白名单检查
-    allow_insecure_http: false    # 仅允许 HTTPS（生产环境推荐）
+    enabled: false # 禁用白名单检查
+    allow_insecure_http: false # 仅允许 HTTPS（生产环境推荐）
 ```
 
 **或通过环境变量：**
@@ -632,22 +637,26 @@ SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=false
 ```
 
 **允许 HTTP 的风险：**
+
 - API 密钥和数据以**明文传输**（可被截获）
 - 易受**中间人攻击 (MITM)**
 - **不适合生产环境**
 
 **适用场景：**
+
 - ✅ 开发/测试环境的本地服务器（http://localhost）
 - ✅ 内网可信端点
 - ✅ 获取 HTTPS 前测试账号连通性
 - ❌ 生产环境（仅使用 HTTPS）
 
 **设置 `allow_insecure_http: false` 后，HTTP URL 会返回如下错误：**
+
 ```
 Invalid base URL: invalid url scheme: http
 ```
 
 如关闭 URL 校验或响应头过滤，请加强网络层防护：
+
 - 出站访问白名单限制上游域名/IP
 - 阻断私网/回环/链路本地地址
 - 强制仅允许 TLS 出站
@@ -751,10 +760,10 @@ Sub2API 支持 [Antigravity](https://antigravity.so/) 账户，授权后可通�
 
 ### 专用端点
 
-| 端点 | 模型 |
-|------|------|
+| 端点                       | 模型        |
+| -------------------------- | ----------- |
 | `/antigravity/v1/messages` | Claude 模型 |
-| `/antigravity/v1beta/` | Gemini 模型 |
+| `/antigravity/v1beta/`     | Gemini 模型 |
 
 ### Claude Code 配置示例
 

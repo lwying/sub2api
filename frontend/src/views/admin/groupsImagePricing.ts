@@ -18,11 +18,10 @@ export const imagePricingI18nKey = (_platform: string, key: string): string =>
 export const videoPricingI18nKey = (key: string): string =>
   `admin.groups.videoPricing.${key}`;
 
-type ImagePricingTierKey = "image_price_1k" | "image_price_2k" | "image_price_4k";
+type ImagePricingTierKey =
+  "image_price_1k" | "image_price_2k" | "image_price_4k";
 type VideoPricingTierKey =
-  | "video_price_480p"
-  | "video_price_720p"
-  | "video_price_1080p";
+  "video_price_480p" | "video_price_720p" | "video_price_1080p";
 
 const defaultImagePricePlaceholders: Record<
   string,
@@ -57,7 +56,9 @@ export const getImagePricePlaceholder = (
   platform: string,
   tier: ImagePricingTierKey,
 ): string => {
-  const card = defaultImagePricePlaceholders[platform] ?? defaultImagePricePlaceholders.default;
+  const card =
+    defaultImagePricePlaceholders[platform] ??
+    defaultImagePricePlaceholders.default;
   return card[tier];
 };
 

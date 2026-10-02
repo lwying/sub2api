@@ -3,12 +3,12 @@
  * Handles user profile management and password changes
  */
 
-import { apiClient } from './client'
+import { apiClient } from "./client";
 import {
   resolveWeChatOAuthStartStrict,
   prepareOAuthBindAccessTokenCookie,
   type WeChatOAuthPublicSettings,
-} from './auth'
+} from "./auth";
 import type {
   User,
   ChangePasswordRequest,
@@ -17,15 +17,15 @@ import type {
   UserAffiliateDetail,
   AffiliateTransferResponse,
   PlatformQuotasResponse,
-} from '@/types'
+} from "@/types";
 
 /**
  * Get current user profile
  * @returns User profile data
  */
 export async function getProfile(): Promise<User> {
-  const { data } = await apiClient.get<User>('/user/profile')
-  return data
+  const { data } = await apiClient.get<User>("/user/profile");
+  return data;
 }
 
 /**
@@ -34,14 +34,14 @@ export async function getProfile(): Promise<User> {
  * @returns Updated user profile data
  */
 export async function updateProfile(profile: {
-  username?: string
-  avatar_url?: string | null
-  balance_notify_enabled?: boolean
-  balance_notify_threshold?: number | null
-  balance_notify_extra_emails?: NotifyEmailEntry[]
+  username?: string;
+  avatar_url?: string | null;
+  balance_notify_enabled?: boolean;
+  balance_notify_threshold?: number | null;
+  balance_notify_extra_emails?: NotifyEmailEntry[];
 }): Promise<User> {
-  const { data } = await apiClient.put<User>('/user', profile)
-  return data
+  const { data } = await apiClient.put<User>("/user", profile);
+  return data;
 }
 
 /**
@@ -51,15 +51,18 @@ export async function updateProfile(profile: {
  */
 export async function changePassword(
   oldPassword: string,
-  newPassword: string
+  newPassword: string,
 ): Promise<{ message: string }> {
   const payload: ChangePasswordRequest = {
     old_password: oldPassword,
-    new_password: newPassword
-  }
+    new_password: newPassword,
+  };
 
-  const { data } = await apiClient.put<{ message: string }>('/user/password', payload)
-  return data
+  const { data } = await apiClient.put<{ message: string }>(
+    "/user/password",
+    payload,
+  );
+  return data;
 }
 
 /**
@@ -67,7 +70,7 @@ export async function changePassword(
  * @param email - Email address to verify
  */
 export async function sendNotifyEmailCode(email: string): Promise<void> {
-  await apiClient.post('/user/notify-email/send-code', { email })
+  await apiClient.post("/user/notify-email/send-code", { email });
 }
 
 /**
@@ -75,8 +78,11 @@ export async function sendNotifyEmailCode(email: string): Promise<void> {
  * @param email - Email address to add
  * @param code - Verification code
  */
-export async function verifyNotifyEmail(email: string, code: string): Promise<void> {
-  await apiClient.post('/user/notify-email/verify', { email, code })
+export async function verifyNotifyEmail(
+  email: string,
+  code: string,
+): Promise<void> {
+  await apiClient.post("/user/notify-email/verify", { email, code });
 }
 
 /**
@@ -84,7 +90,7 @@ export async function verifyNotifyEmail(email: string, code: string): Promise<vo
  * @param email - Email address to remove
  */
 export async function removeNotifyEmail(email: string): Promise<void> {
-  await apiClient.delete('/user/notify-email', { data: { email } })
+  await apiClient.delete("/user/notify-email", { data: { email } });
 }
 
 /**
@@ -92,106 +98,123 @@ export async function removeNotifyEmail(email: string): Promise<void> {
  * @param email - Email address (empty string for primary email placeholder)
  * @param disabled - Whether to disable the email
  */
-export async function toggleNotifyEmail(email: string, disabled: boolean): Promise<User> {
-  const { data } = await apiClient.put<User>('/user/notify-email/toggle', { email, disabled })
-  return data
+export async function toggleNotifyEmail(
+  email: string,
+  disabled: boolean,
+): Promise<User> {
+  const { data } = await apiClient.put<User>("/user/notify-email/toggle", {
+    email,
+    disabled,
+  });
+  return data;
 }
 
 export async function sendEmailBindingCode(email: string): Promise<void> {
-  await apiClient.post('/user/account-bindings/email/send-code', { email })
+  await apiClient.post("/user/account-bindings/email/send-code", { email });
 }
 
 export async function bindEmailIdentity(payload: {
-  email: string
-  verify_code: string
-  password: string
+  email: string;
+  verify_code: string;
+  password: string;
 }): Promise<User> {
-  const { data } = await apiClient.post<User>('/user/account-bindings/email', payload)
-  return data
+  const { data } = await apiClient.post<User>(
+    "/user/account-bindings/email",
+    payload,
+  );
+  return data;
 }
 
-export async function unbindAuthIdentity(provider: BindableOAuthProvider): Promise<User> {
-  const { data } = await apiClient.delete<User>(`/user/account-bindings/${provider}`)
-  return data
+export async function unbindAuthIdentity(
+  provider: BindableOAuthProvider,
+): Promise<User> {
+  const { data } = await apiClient.delete<User>(
+    `/user/account-bindings/${provider}`,
+  );
+  return data;
 }
 
-export type BindableOAuthProvider = Exclude<UserAuthProvider, 'email'>
+export type BindableOAuthProvider = Exclude<UserAuthProvider, "email">;
 
 interface BuildOAuthBindingStartURLOptions {
-  redirectTo?: string
-  wechatOAuthSettings?: WeChatOAuthPublicSettings | null
+  redirectTo?: string;
+  wechatOAuthSettings?: WeChatOAuthPublicSettings | null;
 }
 
-export function resolveWeChatOAuthMode(): 'open' | 'mp' {
-  if (typeof navigator === 'undefined') {
-    return 'open'
+export function resolveWeChatOAuthMode(): "open" | "mp" {
+  if (typeof navigator === "undefined") {
+    return "open";
   }
-  return /MicroMessenger/i.test(navigator.userAgent) ? 'mp' : 'open'
+  return /MicroMessenger/i.test(navigator.userAgent) ? "mp" : "open";
 }
 
 function resolveWeChatOAuthBindingMode(
-  settings?: WeChatOAuthPublicSettings | null
-): 'open' | 'mp' | null {
+  settings?: WeChatOAuthPublicSettings | null,
+): "open" | "mp" | null {
   if (settings) {
-    return resolveWeChatOAuthStartStrict(settings).mode
+    return resolveWeChatOAuthStartStrict(settings).mode;
   }
-  return resolveWeChatOAuthMode()
+  return resolveWeChatOAuthMode();
 }
 
 export function buildOAuthBindingStartURL(
   provider: BindableOAuthProvider,
-  options: BuildOAuthBindingStartURLOptions = {}
+  options: BuildOAuthBindingStartURLOptions = {},
 ): string | null {
-  const redirectTo = options.redirectTo?.trim() || '/profile'
-  const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api/v1'
-  const normalized = apiBase.replace(/\/$/, '')
+  const redirectTo = options.redirectTo?.trim() || "/profile";
+  const apiBase =
+    (import.meta.env.VITE_API_BASE_URL as string | undefined) || "/api/v1";
+  const normalized = apiBase.replace(/\/$/, "");
   const params = new URLSearchParams({
     redirect: redirectTo,
-    intent: 'bind_current_user'
-  })
+    intent: "bind_current_user",
+  });
 
-  if (provider === 'wechat') {
-    const mode = resolveWeChatOAuthBindingMode(options.wechatOAuthSettings)
+  if (provider === "wechat") {
+    const mode = resolveWeChatOAuthBindingMode(options.wechatOAuthSettings);
     if (!mode) {
-      return null
+      return null;
     }
-    params.set('mode', mode)
+    params.set("mode", mode);
   }
 
-  return `${normalized}/auth/oauth/${provider}/bind/start?${params.toString()}`
+  return `${normalized}/auth/oauth/${provider}/bind/start?${params.toString()}`;
 }
 
 export async function startOAuthBinding(
   provider: BindableOAuthProvider,
-  options: BuildOAuthBindingStartURLOptions = {}
+  options: BuildOAuthBindingStartURLOptions = {},
 ): Promise<void> {
-  if (typeof window === 'undefined') {
-    return
+  if (typeof window === "undefined") {
+    return;
   }
-  const startURL = buildOAuthBindingStartURL(provider, options)
+  const startURL = buildOAuthBindingStartURL(provider, options);
   if (!startURL) {
-    return
+    return;
   }
-  await prepareOAuthBindAccessTokenCookie()
-  window.location.href = startURL
+  await prepareOAuthBindAccessTokenCookie();
+  window.location.href = startURL;
 }
 
 export async function getAffiliateDetail(): Promise<UserAffiliateDetail> {
-  const { data } = await apiClient.get<UserAffiliateDetail>('/user/aff')
-  return data
+  const { data } = await apiClient.get<UserAffiliateDetail>("/user/aff");
+  return data;
 }
 
 export async function transferAffiliateQuota(): Promise<AffiliateTransferResponse> {
-  const { data } = await apiClient.post<AffiliateTransferResponse>('/user/aff/transfer')
-  return data
+  const { data } =
+    await apiClient.post<AffiliateTransferResponse>("/user/aff/transfer");
+  return data;
 }
 
 /**
  * 获取当前用户的平台限额 + 用量。
  */
 export async function getMyPlatformQuotas(): Promise<PlatformQuotasResponse> {
-  const { data } = await apiClient.get<PlatformQuotasResponse>('/user/platform-quotas')
-  return data
+  const { data } = await apiClient.get<PlatformQuotasResponse>(
+    "/user/platform-quotas",
+  );
+  return data;
 }
 
 export const userAPI = {
@@ -210,6 +233,6 @@ export const userAPI = {
   getAffiliateDetail,
   transferAffiliateQuota,
   getMyPlatformQuotas,
-}
+};
 
-export default userAPI
+export default userAPI;

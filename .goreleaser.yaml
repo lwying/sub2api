@@ -48,7 +48,7 @@ archives:
       - deploy/*
 
 checksum:
-  name_template: 'checksums.txt'
+  name_template: "checksums.txt"
   algorithm: sha256
 
 changelog:

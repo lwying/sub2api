@@ -7,7 +7,7 @@
       :class="[
         'select-trigger',
         isOpen && 'select-trigger-open',
-        disabled && 'select-trigger-disabled'
+        disabled && 'select-trigger-disabled',
       ]"
     >
       <span class="select-value">
@@ -45,7 +45,12 @@
             class="batch-test-btn"
             :title="t('admin.proxies.batchTest')"
           >
-            <svg v-if="batchTesting" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <svg
+              v-if="batchTesting"
+              class="h-4 w-4 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
               <circle
                 class="opacity-25"
                 cx="12"
@@ -69,10 +74,20 @@
           <!-- No Proxy option -->
           <div
             @click="selectOption(null)"
-            :class="['select-option', modelValue === null && 'select-option-selected']"
+            :class="[
+              'select-option',
+              modelValue === null && 'select-option-selected',
+            ]"
           >
-            <span class="select-option-label">{{ t('admin.accounts.noProxy') }}</span>
-            <Icon v-if="modelValue === null" name="check" size="sm" class="text-primary-500" />
+            <span class="select-option-label">{{
+              t("admin.accounts.noProxy")
+            }}</span>
+            <Icon
+              v-if="modelValue === null"
+              name="check"
+              size="sm"
+              class="text-primary-500"
+            />
           </div>
 
           <!-- Proxy options -->
@@ -80,7 +95,10 @@
             v-for="proxy in filteredProxies"
             :key="proxy.id"
             @click="selectOption(proxy.id)"
-            :class="['select-option', modelValue === proxy.id && 'select-option-selected']"
+            :class="[
+              'select-option',
+              modelValue === proxy.id && 'select-option-selected',
+            ]"
           >
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
@@ -109,7 +127,7 @@
                     v-else
                     class="inline-flex flex-shrink-0 items-center rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-400"
                   >
-                    {{ t('admin.proxies.testFailed') }}
+                    {{ t("admin.proxies.testFailed") }}
                   </span>
                 </template>
               </div>
@@ -158,8 +176,11 @@
           </div>
 
           <!-- Empty state -->
-          <div v-if="filteredProxies.length === 0 && searchQuery" class="select-empty">
-            {{ t('common.noOptionsFound') }}
+          <div
+            v-if="filteredProxies.length === 0 && searchQuery"
+            class="select-empty"
+          >
+            {{ t("common.noOptionsFound") }}
           </div>
         </div>
       </div>
@@ -168,141 +189,144 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { adminAPI } from '@/api/admin'
-import Icon from '@/components/icons/Icon.vue'
-import type { Proxy } from '@/types'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { useI18n } from "vue-i18n";
+import { adminAPI } from "@/api/admin";
+import Icon from "@/components/icons/Icon.vue";
+import type { Proxy } from "@/types";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 interface ProxyTestResult {
-  success: boolean
-  message: string
-  latency_ms?: number
-  ip_address?: string
-  city?: string
-  region?: string
-  country?: string
+  success: boolean;
+  message: string;
+  latency_ms?: number;
+  ip_address?: string;
+  city?: string;
+  region?: string;
+  country?: string;
 }
 
 interface Props {
-  modelValue: number | null
-  proxies: Proxy[]
-  disabled?: boolean
+  modelValue: number | null;
+  proxies: Proxy[];
+  disabled?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  disabled: false
-})
+  disabled: false,
+});
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | null]
-}>()
+  "update:modelValue": [value: number | null];
+}>();
 
-const isOpen = ref(false)
-const searchQuery = ref('')
-const containerRef = ref<HTMLElement | null>(null)
-const searchInputRef = ref<HTMLInputElement | null>(null)
+const isOpen = ref(false);
+const searchQuery = ref("");
+const containerRef = ref<HTMLElement | null>(null);
+const searchInputRef = ref<HTMLInputElement | null>(null);
 
 // Test state
-const testResults = reactive<Record<number, ProxyTestResult>>({})
-const testingProxyIds = reactive(new Set<number>())
-const batchTesting = ref(false)
+const testResults = reactive<Record<number, ProxyTestResult>>({});
+const testingProxyIds = reactive(new Set<number>());
+const batchTesting = ref(false);
 
 const selectedProxy = computed(() => {
-  if (props.modelValue === null) return null
-  return props.proxies.find((p) => p.id === props.modelValue) || null
-})
+  if (props.modelValue === null) return null;
+  return props.proxies.find((p) => p.id === props.modelValue) || null;
+});
 
 const selectedLabel = computed(() => {
   if (!selectedProxy.value) {
-    return t('admin.accounts.noProxy')
+    return t("admin.accounts.noProxy");
   }
-  const proxy = selectedProxy.value
-  return `${proxy.name} (${proxy.protocol}://${proxy.host}:${proxy.port})`
-})
+  const proxy = selectedProxy.value;
+  return `${proxy.name} (${proxy.protocol}://${proxy.host}:${proxy.port})`;
+});
 
 const filteredProxies = computed(() => {
   if (!searchQuery.value) {
-    return props.proxies
+    return props.proxies;
   }
-  const query = searchQuery.value.toLowerCase()
+  const query = searchQuery.value.toLowerCase();
   return props.proxies.filter((proxy) => {
-    const name = proxy.name.toLowerCase()
-    const host = proxy.host.toLowerCase()
-    return name.includes(query) || host.includes(query)
-  })
-})
+    const name = proxy.name.toLowerCase();
+    const host = proxy.host.toLowerCase();
+    return name.includes(query) || host.includes(query);
+  });
+});
 
 const toggle = () => {
-  if (props.disabled) return
-  isOpen.value = !isOpen.value
+  if (props.disabled) return;
+  isOpen.value = !isOpen.value;
   if (isOpen.value) {
     nextTick(() => {
-      searchInputRef.value?.focus()
-    })
+      searchInputRef.value?.focus();
+    });
   }
-}
+};
 
 const selectOption = (value: number | null) => {
-  emit('update:modelValue', value)
-  isOpen.value = false
-  searchQuery.value = ''
-}
+  emit("update:modelValue", value);
+  isOpen.value = false;
+  searchQuery.value = "";
+};
 
 const handleTestProxy = async (proxy: Proxy) => {
-  if (testingProxyIds.has(proxy.id)) return
+  if (testingProxyIds.has(proxy.id)) return;
 
-  testingProxyIds.add(proxy.id)
+  testingProxyIds.add(proxy.id);
   try {
-    const result = await adminAPI.proxies.testProxy(proxy.id)
-    testResults[proxy.id] = result
+    const result = await adminAPI.proxies.testProxy(proxy.id);
+    testResults[proxy.id] = result;
   } catch (error: any) {
     testResults[proxy.id] = {
       success: false,
-      message: error.response?.data?.detail || 'Test failed'
-    }
+      message: error.response?.data?.detail || "Test failed",
+    };
   } finally {
-    testingProxyIds.delete(proxy.id)
+    testingProxyIds.delete(proxy.id);
   }
-}
+};
 
 const handleBatchTest = async () => {
-  if (batchTesting.value || props.proxies.length === 0) return
+  if (batchTesting.value || props.proxies.length === 0) return;
 
-  batchTesting.value = true
+  batchTesting.value = true;
 
   // Test all proxies in parallel
-  const testPromises = props.proxies.map(handleTestProxy)
+  const testPromises = props.proxies.map(handleTestProxy);
 
-  await Promise.all(testPromises)
-  batchTesting.value = false
-}
+  await Promise.all(testPromises);
+  batchTesting.value = false;
+};
 
 const handleClickOutside = (event: MouseEvent) => {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    isOpen.value = false
-    searchQuery.value = ''
+  if (
+    containerRef.value &&
+    !containerRef.value.contains(event.target as Node)
+  ) {
+    isOpen.value = false;
+    searchQuery.value = "";
   }
-}
+};
 
 const handleEscape = (event: KeyboardEvent) => {
-  if (event.key === 'Escape' && isOpen.value) {
-    isOpen.value = false
-    searchQuery.value = ''
+  if (event.key === "Escape" && isOpen.value) {
+    isOpen.value = false;
+    searchQuery.value = "";
   }
-}
+};
 
 onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-  document.addEventListener('keydown', handleEscape)
-})
+  document.addEventListener("click", handleClickOutside);
+  document.addEventListener("keydown", handleEscape);
+});
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-  document.removeEventListener('keydown', handleEscape)
-})
+  document.removeEventListener("click", handleClickOutside);
+  document.removeEventListener("keydown", handleEscape);
+});
 </script>
 
 <style scoped>

@@ -6,158 +6,158 @@
 
 ```typescript
 // In your view files
-import { AppLayout, AuthLayout } from '@/components/layout'
+import { AppLayout, AuthLayout } from "@/components/layout";
 ```
 
 ### 2. Use in Routes
 
 ```typescript
 // src/router/index.ts
-import { createRouter, createWebHistory } from 'vue-router'
-import type { RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory } from "vue-router";
+import type { RouteRecordRaw } from "vue-router";
 
 // Views
-import DashboardView from '@/views/DashboardView.vue'
-import LoginView from '@/views/auth/LoginView.vue'
-import RegisterView from '@/views/auth/RegisterView.vue'
+import DashboardView from "@/views/DashboardView.vue";
+import LoginView from "@/views/auth/LoginView.vue";
+import RegisterView from "@/views/auth/RegisterView.vue";
 
 const routes: RouteRecordRaw[] = [
   // Auth routes (no layout needed - views use AuthLayout internally)
   {
-    path: '/login',
-    name: 'Login',
+    path: "/login",
+    name: "Login",
     component: LoginView,
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false },
   },
   {
-    path: '/register',
-    name: 'Register',
+    path: "/register",
+    name: "Register",
     component: RegisterView,
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false },
   },
 
   // User routes (use AppLayout)
   {
-    path: '/dashboard',
-    name: 'Dashboard',
+    path: "/dashboard",
+    name: "Dashboard",
     component: DashboardView,
-    meta: { requiresAuth: true, title: 'Dashboard' }
+    meta: { requiresAuth: true, title: "Dashboard" },
   },
   {
-    path: '/api-keys',
-    name: 'ApiKeys',
-    component: () => import('@/views/ApiKeysView.vue'),
-    meta: { requiresAuth: true, title: 'API Keys' }
+    path: "/api-keys",
+    name: "ApiKeys",
+    component: () => import("@/views/ApiKeysView.vue"),
+    meta: { requiresAuth: true, title: "API Keys" },
   },
   {
-    path: '/usage',
-    name: 'Usage',
-    component: () => import('@/views/UsageView.vue'),
-    meta: { requiresAuth: true, title: 'Usage Statistics' }
+    path: "/usage",
+    name: "Usage",
+    component: () => import("@/views/UsageView.vue"),
+    meta: { requiresAuth: true, title: "Usage Statistics" },
   },
   {
-    path: '/redeem',
-    name: 'Redeem',
-    component: () => import('@/views/RedeemView.vue'),
-    meta: { requiresAuth: true, title: 'Redeem Code' }
+    path: "/redeem",
+    name: "Redeem",
+    component: () => import("@/views/RedeemView.vue"),
+    meta: { requiresAuth: true, title: "Redeem Code" },
   },
   {
-    path: '/profile',
-    name: 'Profile',
-    component: () => import('@/views/ProfileView.vue'),
-    meta: { requiresAuth: true, title: 'Profile Settings' }
+    path: "/profile",
+    name: "Profile",
+    component: () => import("@/views/ProfileView.vue"),
+    meta: { requiresAuth: true, title: "Profile Settings" },
   },
 
   // Admin routes (use AppLayout, admin only)
   {
-    path: '/admin/dashboard',
-    name: 'AdminDashboard',
-    component: () => import('@/views/admin/DashboardView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Admin Dashboard' }
+    path: "/admin/dashboard",
+    name: "AdminDashboard",
+    component: () => import("@/views/admin/DashboardView.vue"),
+    meta: { requiresAuth: true, requiresAdmin: true, title: "Admin Dashboard" },
   },
   {
-    path: '/admin/users',
-    name: 'AdminUsers',
-    component: () => import('@/views/admin/UsersView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'User Management' }
+    path: "/admin/users",
+    name: "AdminUsers",
+    component: () => import("@/views/admin/UsersView.vue"),
+    meta: { requiresAuth: true, requiresAdmin: true, title: "User Management" },
   },
   {
-    path: '/admin/groups',
-    name: 'AdminGroups',
-    component: () => import('@/views/admin/GroupsView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Groups' }
+    path: "/admin/groups",
+    name: "AdminGroups",
+    component: () => import("@/views/admin/GroupsView.vue"),
+    meta: { requiresAuth: true, requiresAdmin: true, title: "Groups" },
   },
   {
-    path: '/admin/accounts',
-    name: 'AdminAccounts',
-    component: () => import('@/views/admin/AccountsView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Accounts' }
+    path: "/admin/accounts",
+    name: "AdminAccounts",
+    component: () => import("@/views/admin/AccountsView.vue"),
+    meta: { requiresAuth: true, requiresAdmin: true, title: "Accounts" },
   },
   {
-    path: '/admin/proxies',
-    name: 'AdminProxies',
-    component: () => import('@/views/admin/ProxiesView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Proxies' }
+    path: "/admin/proxies",
+    name: "AdminProxies",
+    component: () => import("@/views/admin/ProxiesView.vue"),
+    meta: { requiresAuth: true, requiresAdmin: true, title: "Proxies" },
   },
   {
-    path: '/admin/redeem-codes',
-    name: 'AdminRedeemCodes',
-    component: () => import('@/views/admin/RedeemCodesView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Redeem Codes' }
+    path: "/admin/redeem-codes",
+    name: "AdminRedeemCodes",
+    component: () => import("@/views/admin/RedeemCodesView.vue"),
+    meta: { requiresAuth: true, requiresAdmin: true, title: "Redeem Codes" },
   },
 
   // Default redirect
   {
-    path: '/',
-    redirect: '/dashboard'
-  }
-]
+    path: "/",
+    redirect: "/dashboard",
+  },
+];
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
-})
+  routes,
+});
 
 // Navigation guards
 router.beforeEach((to, from, next) => {
-  const authStore = useAuthStore()
+  const authStore = useAuthStore();
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     // Redirect to login if not authenticated
-    next('/login')
+    next("/login");
   } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
     // Redirect to dashboard if not admin
-    next('/dashboard')
+    next("/dashboard");
   } else {
-    next()
+    next();
   }
-})
+});
 
-export default router
+export default router;
 ```
 
 ### 3. Initialize Stores in main.ts
 
 ```typescript
 // src/main.ts
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
-import App from './App.vue'
-import router from './router'
-import './style.css'
+import { createApp } from "vue";
+import { createPinia } from "pinia";
+import App from "./App.vue";
+import router from "./router";
+import "./style.css";
 
-const app = createApp(App)
-const pinia = createPinia()
+const app = createApp(App);
+const pinia = createPinia();
 
-app.use(pinia)
-app.use(router)
+app.use(pinia);
+app.use(router);
 
 // Initialize auth state on app startup
-import { useAuthStore } from '@/stores'
-const authStore = useAuthStore()
-authStore.checkAuth()
+import { useAuthStore } from "@/stores";
+const authStore = useAuthStore();
+authStore.checkAuth();
 
-app.mount('#app')
+app.mount("#app");
 ```
 
 ### 4. Update App.vue
@@ -193,7 +193,7 @@ app.mount('#app')
 </template>
 
 <script setup lang="ts">
-import { AppLayout } from '@/components/layout'
+import { AppLayout } from "@/components/layout";
 
 // Your component logic here
 </script>
@@ -212,14 +212,16 @@ import { AppLayout } from '@/components/layout'
     <template #footer>
       <p class="text-gray-600">
         Don't have an account?
-        <router-link to="/register" class="text-indigo-600 hover:underline"> Sign up </router-link>
+        <router-link to="/register" class="text-indigo-600 hover:underline">
+          Sign up
+        </router-link>
       </p>
     </template>
   </AuthLayout>
 </template>
 
 <script setup lang="ts">
-import { AuthLayout } from '@/components/layout'
+import { AuthLayout } from "@/components/layout";
 
 // Your login logic here
 </script>
@@ -258,10 +260,10 @@ Modify navigation items in `AppSidebar.vue`:
 ```typescript
 // Add/remove/modify navigation items
 const userNavItems = [
-  { path: '/dashboard', label: 'Dashboard', icon: '&#128200;' },
-  { path: '/new-page', label: 'New Page', icon: '&#128196;' } // Add new item
+  { path: "/dashboard", label: "Dashboard", icon: "&#128200;" },
+  { path: "/new-page", label: "New Page", icon: "&#128196;" }, // Add new item
   // ...
-]
+];
 ```
 
 ### Header Customization
@@ -304,7 +306,7 @@ To improve mobile experience, you can add overlay and transitions:
     sidebarCollapsed ? 'w-16' : 'w-64',
     // Hide on mobile when collapsed
     'md:translate-x-0',
-    sidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0'
+    sidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0',
   ]"
 >
   <!-- ... -->
@@ -325,9 +327,9 @@ To improve mobile experience, you can add overlay and transitions:
 ### Auth Store Usage
 
 ```typescript
-import { useAuthStore } from '@/stores'
+import { useAuthStore } from "@/stores";
 
-const authStore = useAuthStore()
+const authStore = useAuthStore();
 
 // Check if user is authenticated
 if (authStore.isAuthenticated) {
@@ -340,34 +342,34 @@ if (authStore.isAdmin) {
 }
 
 // Get current user
-const user = authStore.user
+const user = authStore.user;
 ```
 
 ### App Store Usage
 
 ```typescript
-import { useAppStore } from '@/stores'
+import { useAppStore } from "@/stores";
 
-const appStore = useAppStore()
+const appStore = useAppStore();
 
 // Toggle sidebar
-appStore.toggleSidebar()
+appStore.toggleSidebar();
 
 // Show notifications
-appStore.showSuccess('Operation completed!')
-appStore.showError('Something went wrong')
-appStore.showInfo('Did you know...')
-appStore.showWarning('Be careful!')
+appStore.showSuccess("Operation completed!");
+appStore.showError("Something went wrong");
+appStore.showInfo("Did you know...");
+appStore.showWarning("Be careful!");
 
 // Loading state
-appStore.setLoading(true)
+appStore.setLoading(true);
 // ... perform operation
-appStore.setLoading(false)
+appStore.setLoading(false);
 
 // Or use helper
 await appStore.withLoading(async () => {
   // Your async operation
-})
+});
 ```
 
 ---
@@ -406,27 +408,27 @@ To enhance further:
 
 ```typescript
 // AppHeader.test.ts
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { createPinia, setActivePinia } from 'pinia'
-import AppHeader from '@/components/layout/AppHeader.vue'
+import { describe, it, expect, beforeEach } from "vitest";
+import { mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import AppHeader from "@/components/layout/AppHeader.vue";
 
-describe('AppHeader', () => {
+describe("AppHeader", () => {
   beforeEach(() => {
-    setActivePinia(createPinia())
-  })
+    setActivePinia(createPinia());
+  });
 
-  it('renders user info when authenticated', () => {
-    const wrapper = mount(AppHeader)
+  it("renders user info when authenticated", () => {
+    const wrapper = mount(AppHeader);
     // Add assertions
-  })
+  });
 
-  it('shows dropdown when clicked', async () => {
-    const wrapper = mount(AppHeader)
-    await wrapper.find('button').trigger('click')
-    expect(wrapper.find('.dropdown').exists()).toBe(true)
-  })
-})
+  it("shows dropdown when clicked", async () => {
+    const wrapper = mount(AppHeader);
+    await wrapper.find("button").trigger("click");
+    expect(wrapper.find(".dropdown").exists()).toBe(true);
+  });
+});
 ```
 
 ---
@@ -443,7 +445,7 @@ Layout components are automatically code-split when imported:
 
 ```typescript
 // This creates a separate chunk for layout components
-import { AppLayout } from '@/components/layout'
+import { AppLayout } from "@/components/layout";
 ```
 
 ### Reducing Re-renders
@@ -451,7 +453,7 @@ import { AppLayout } from '@/components/layout'
 Layout components use `computed` refs to prevent unnecessary re-renders:
 
 ```typescript
-const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
+const sidebarCollapsed = computed(() => appStore.sidebarCollapsed);
 // This only re-renders when sidebarCollapsed changes
 ```
 

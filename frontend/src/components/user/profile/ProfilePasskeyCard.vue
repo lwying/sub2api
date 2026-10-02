@@ -1,12 +1,14 @@
 <template>
   <div class="card">
-    <div class="flex items-start justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+    <div
+      class="flex items-start justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+    >
       <div>
         <h2 class="text-lg font-medium text-gray-900 dark:text-white">
-          {{ t('profile.passkey.title') }}
+          {{ t("profile.passkey.title") }}
         </h2>
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          {{ t('profile.passkey.description') }}
+          {{ t("profile.passkey.description") }}
         </p>
       </div>
       <button
@@ -16,16 +18,22 @@
         :disabled="busy"
         @click="showAddForm = true"
       >
-        {{ t('profile.passkey.add') }}
+        {{ t("profile.passkey.add") }}
       </button>
     </div>
 
     <div class="px-6 py-6">
-      <div v-if="!enabled" class="mb-5 text-sm text-gray-500 dark:text-gray-400">
-        {{ t('profile.passkey.featureDisabled') }}
+      <div
+        v-if="!enabled"
+        class="mb-5 text-sm text-gray-500 dark:text-gray-400"
+      >
+        {{ t("profile.passkey.featureDisabled") }}
       </div>
-      <div v-if="enabled && !supported" class="mb-5 text-sm text-amber-600 dark:text-amber-400">
-        {{ t('profile.passkey.unsupported') }}
+      <div
+        v-if="enabled && !supported"
+        class="mb-5 text-sm text-amber-600 dark:text-amber-400"
+      >
+        {{ t("profile.passkey.unsupported") }}
       </div>
       <div>
         <form
@@ -35,7 +43,9 @@
         >
           <div class="grid gap-3 sm:grid-cols-2">
             <div>
-              <label for="passkey-name" class="input-label">{{ t('profile.passkey.name') }}</label>
+              <label for="passkey-name" class="input-label">{{
+                t("profile.passkey.name")
+              }}</label>
               <input
                 id="passkey-name"
                 v-model="newName"
@@ -47,7 +57,7 @@
             </div>
             <div>
               <label for="passkey-add-password" class="input-label">{{
-                t('profile.currentPassword')
+                t("profile.currentPassword")
               }}</label>
               <input
                 id="passkey-add-password"
@@ -60,24 +70,37 @@
             </div>
           </div>
           <div class="flex justify-end gap-2">
-            <button type="button" class="btn btn-secondary" :disabled="busy" @click="cancelAdd">
-              {{ t('common.cancel') }}
+            <button
+              type="button"
+              class="btn btn-secondary"
+              :disabled="busy"
+              @click="cancelAdd"
+            >
+              {{ t("common.cancel") }}
             </button>
-            <button type="submit" class="btn btn-primary" :disabled="busy || newPassword.length === 0">
-              {{ busy ? t('common.processing') : t('profile.passkey.continue') }}
+            <button
+              type="submit"
+              class="btn btn-primary"
+              :disabled="busy || newPassword.length === 0"
+            >
+              {{
+                busy ? t("common.processing") : t("profile.passkey.continue")
+              }}
             </button>
           </div>
         </form>
 
         <div v-if="loading" class="flex justify-center py-6">
-          <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-500"></div>
+          <div
+            class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-500"
+          ></div>
         </div>
 
         <div
           v-else-if="credentials.length === 0"
           class="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
         >
-          {{ t('profile.passkey.empty') }}
+          {{ t("profile.passkey.empty") }}
         </div>
 
         <div v-else class="divide-y divide-gray-100 dark:divide-dark-700">
@@ -96,13 +119,22 @@
                   v-if="credential.backup"
                   class="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-300"
                 >
-                  {{ t('profile.passkey.synced') }}
+                  {{ t("profile.passkey.synced") }}
                 </span>
               </div>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('profile.passkey.createdAt', { date: formatDate(credential.created_at) }) }}
+                {{
+                  t("profile.passkey.createdAt", {
+                    date: formatDate(credential.created_at),
+                  })
+                }}
                 <template v-if="credential.last_used_at">
-                  · {{ t('profile.passkey.lastUsed', { date: formatDate(credential.last_used_at) }) }}
+                  ·
+                  {{
+                    t("profile.passkey.lastUsed", {
+                      date: formatDate(credential.last_used_at),
+                    })
+                  }}
                 </template>
               </p>
             </div>
@@ -113,7 +145,7 @@
                 :disabled="busy"
                 @click="renamePasskey(credential)"
               >
-                {{ t('common.edit') }}
+                {{ t("common.edit") }}
               </button>
               <button
                 type="button"
@@ -121,7 +153,7 @@
                 :disabled="busy"
                 @click="deletePasskey(credential)"
               >
-                {{ t('common.delete') }}
+                {{ t("common.delete") }}
               </button>
             </div>
           </div>
@@ -132,20 +164,25 @@
     <!-- 删除确认：吊销凭据需验证当前密码，防止被窃会话静默移除 Passkey -->
     <div v-if="deleteTarget" class="fixed inset-0 z-50 overflow-y-auto">
       <div class="flex min-h-full items-center justify-center p-4">
-        <div class="fixed inset-0 bg-black/50 transition-opacity" @click="closeDeleteDialog"></div>
+        <div
+          class="fixed inset-0 bg-black/50 transition-opacity"
+          @click="closeDeleteDialog"
+        ></div>
         <div
           class="relative w-full max-w-md transform rounded-xl bg-white p-6 shadow-xl transition-all dark:bg-dark-800"
         >
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ t('profile.passkey.deleteTitle') }}
+            {{ t("profile.passkey.deleteTitle") }}
           </h3>
           <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-            {{ t('profile.passkey.deleteConfirm', { name: deleteTarget.name }) }}
+            {{
+              t("profile.passkey.deleteConfirm", { name: deleteTarget.name })
+            }}
           </p>
           <form class="mt-4 space-y-4" @submit.prevent="confirmDelete">
             <div>
               <label for="passkey-delete-password" class="input-label">{{
-                t('profile.currentPassword')
+                t("profile.currentPassword")
               }}</label>
               <input
                 id="passkey-delete-password"
@@ -158,15 +195,20 @@
               />
             </div>
             <div class="flex justify-end gap-3">
-              <button type="button" class="btn btn-secondary" :disabled="busy" @click="closeDeleteDialog">
-                {{ t('common.cancel') }}
+              <button
+                type="button"
+                class="btn btn-secondary"
+                :disabled="busy"
+                @click="closeDeleteDialog"
+              >
+                {{ t("common.cancel") }}
               </button>
               <button
                 type="submit"
                 class="btn btn-danger"
                 :disabled="busy || deletePassword.length === 0"
               >
-                {{ busy ? t('common.processing') : t('common.delete') }}
+                {{ busy ? t("common.processing") : t("common.delete") }}
               </button>
             </div>
           </form>
@@ -177,131 +219,141 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
-import { Icon } from '@/components/icons'
-import { useAppStore } from '@/stores/app'
+import { ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { passkeyAPI, type PasskeyCredentialSummary } from "@/api";
+import { Icon } from "@/components/icons";
+import { useAppStore } from "@/stores/app";
 
-const props = defineProps<{ enabled: boolean }>()
+const props = defineProps<{ enabled: boolean }>();
 
-const { t } = useI18n()
-const appStore = useAppStore()
-const supported = passkeyAPI.isSupported()
-const loading = ref(false)
-const busy = ref(false)
-const showAddForm = ref(false)
-const newName = ref('')
-const newPassword = ref('')
-const deleteTarget = ref<PasskeyCredentialSummary | null>(null)
-const deletePassword = ref('')
-const credentials = ref<PasskeyCredentialSummary[]>([])
+const { t } = useI18n();
+const appStore = useAppStore();
+const supported = passkeyAPI.isSupported();
+const loading = ref(false);
+const busy = ref(false);
+const showAddForm = ref(false);
+const newName = ref("");
+const newPassword = ref("");
+const deleteTarget = ref<PasskeyCredentialSummary | null>(null);
+const deletePassword = ref("");
+const credentials = ref<PasskeyCredentialSummary[]>([]);
 
 // apiClient 拦截器把错误规范化为 { code, reason, message }；
 // 透出后端消息（如密码错误），否则回退到通用文案。
 function extractErrorMessage(error: unknown, fallback: string): string {
-  const message = (error as { message?: string }).message
-  return typeof message === 'string' && message.length > 0 ? message : fallback
+  const message = (error as { message?: string }).message;
+  return typeof message === "string" && message.length > 0 ? message : fallback;
 }
 
 async function loadCredentials(): Promise<void> {
   if (!props.enabled) {
-    credentials.value = []
-    return
+    credentials.value = [];
+    return;
   }
-  loading.value = true
+  loading.value = true;
   try {
-    credentials.value = await passkeyAPI.list()
+    credentials.value = await passkeyAPI.list();
   } catch (error) {
     // 字符串错误码在 reason 字段（code 是数字状态码）；
     // 设置变更竞态下后端仍可能返回 PASSKEY_DISABLED，静默处理
-    const reason = (error as { reason?: string }).reason
-    if (reason !== 'PASSKEY_DISABLED') {
-      appStore.showError(t('profile.passkey.loadFailed'))
+    const reason = (error as { reason?: string }).reason;
+    if (reason !== "PASSKEY_DISABLED") {
+      appStore.showError(t("profile.passkey.loadFailed"));
     }
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
 async function addPasskey(): Promise<void> {
-  if (newPassword.value.length === 0) return
-  busy.value = true
+  if (newPassword.value.length === 0) return;
+  busy.value = true;
   try {
-    await passkeyAPI.register(newName.value.trim(), newPassword.value)
-    appStore.showSuccess(t('profile.passkey.added'))
-    cancelAdd()
-    await loadCredentials()
+    await passkeyAPI.register(newName.value.trim(), newPassword.value);
+    appStore.showSuccess(t("profile.passkey.added"));
+    cancelAdd();
+    await loadCredentials();
   } catch (error) {
-    if (!(error instanceof DOMException && error.name === 'NotAllowedError')) {
-      appStore.showError(extractErrorMessage(error, t('profile.passkey.addFailed')))
+    if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
+      appStore.showError(
+        extractErrorMessage(error, t("profile.passkey.addFailed")),
+      );
     }
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 function cancelAdd(): void {
-  showAddForm.value = false
-  newName.value = ''
-  newPassword.value = ''
+  showAddForm.value = false;
+  newName.value = "";
+  newPassword.value = "";
 }
 
-async function renamePasskey(credential: PasskeyCredentialSummary): Promise<void> {
-  const name = window.prompt(t('profile.passkey.renamePrompt'), credential.name)?.trim()
-  if (!name || name === credential.name) return
-  busy.value = true
+async function renamePasskey(
+  credential: PasskeyCredentialSummary,
+): Promise<void> {
+  const name = window
+    .prompt(t("profile.passkey.renamePrompt"), credential.name)
+    ?.trim();
+  if (!name || name === credential.name) return;
+  busy.value = true;
   try {
-    await passkeyAPI.rename(credential.id, name)
-    credential.name = name
-    appStore.showSuccess(t('profile.passkey.renamed'))
+    await passkeyAPI.rename(credential.id, name);
+    credential.name = name;
+    appStore.showSuccess(t("profile.passkey.renamed"));
   } catch {
-    appStore.showError(t('profile.passkey.renameFailed'))
+    appStore.showError(t("profile.passkey.renameFailed"));
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 function deletePasskey(credential: PasskeyCredentialSummary): void {
-  deleteTarget.value = credential
-  deletePassword.value = ''
+  deleteTarget.value = credential;
+  deletePassword.value = "";
 }
 
 function closeDeleteDialog(): void {
-  deleteTarget.value = null
-  deletePassword.value = ''
+  deleteTarget.value = null;
+  deletePassword.value = "";
 }
 
 async function confirmDelete(): Promise<void> {
-  const credential = deleteTarget.value
-  if (!credential || deletePassword.value.length === 0) return
-  busy.value = true
+  const credential = deleteTarget.value;
+  if (!credential || deletePassword.value.length === 0) return;
+  busy.value = true;
   try {
-    await passkeyAPI.remove(credential.id, deletePassword.value)
-    credentials.value = credentials.value.filter((item) => item.id !== credential.id)
-    appStore.showSuccess(t('profile.passkey.deleted'))
-    closeDeleteDialog()
+    await passkeyAPI.remove(credential.id, deletePassword.value);
+    credentials.value = credentials.value.filter(
+      (item) => item.id !== credential.id,
+    );
+    appStore.showSuccess(t("profile.passkey.deleted"));
+    closeDeleteDialog();
   } catch (error) {
     // 密码错误等失败保持对话框打开，允许重试
-    appStore.showError(extractErrorMessage(error, t('profile.passkey.deleteFailed')))
+    appStore.showError(
+      extractErrorMessage(error, t("profile.passkey.deleteFailed")),
+    );
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  }).format(new Date(value))
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
 watch(
   () => props.enabled,
   () => {
-    void loadCredentials()
+    void loadCredentials();
   },
-  { immediate: true }
-)
+  { immediate: true },
+);
 </script>

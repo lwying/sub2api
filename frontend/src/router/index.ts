@@ -3,20 +3,24 @@
  * Defines all application routes with lazy loading and navigation guards
  */
 
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import { useAppStore } from '@/stores/app'
-import { useAdminSettingsStore } from '@/stores/adminSettings'
-import { useAdminComplianceStore } from '@/stores/adminCompliance'
-import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
-import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
-import { getSetupStatus } from '@/api/setup'
-import { resolveCompletedSetupRedirectPath } from './setupRedirect'
-import { resolveRouteDocumentTitle } from './title'
+import {
+  createRouter,
+  createWebHistory,
+  type RouteRecordRaw,
+} from "vue-router";
+import { useAuthStore } from "@/stores/auth";
+import { useAppStore } from "@/stores/app";
+import { useAdminSettingsStore } from "@/stores/adminSettings";
+import { useAdminComplianceStore } from "@/stores/adminCompliance";
+import { useNavigationLoadingState } from "@/composables/useNavigationLoading";
+import { useRoutePrefetch } from "@/composables/useRoutePrefetch";
+import { getSetupStatus } from "@/api/setup";
+import { resolveCompletedSetupRedirectPath } from "./setupRedirect";
+import { resolveRouteDocumentTitle } from "./title";
 import {
   ASSIGNED_ACCOUNTS_FALLBACK_PATH,
-  resolveAssignedAccountsRedirect
-} from './assignedAccountsAccess'
+  resolveAssignedAccountsRedirect,
+} from "./assignedAccountsAccess";
 
 /**
  * Route definitions with lazy loading
@@ -24,738 +28,741 @@ import {
 const routes: RouteRecordRaw[] = [
   // ==================== Setup Routes ====================
   {
-    path: '/setup',
-    name: 'Setup',
-    component: () => import('@/views/setup/SetupWizardView.vue'),
+    path: "/setup",
+    name: "Setup",
+    component: () => import("@/views/setup/SetupWizardView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Setup'
-    }
+      title: "Setup",
+    },
   },
 
   // ==================== Public Routes ====================
   {
-    path: '/home',
-    name: 'Home',
-    component: () => import('@/views/HomeView.vue'),
+    path: "/home",
+    name: "Home",
+    component: () => import("@/views/HomeView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Home'
-    }
+      title: "Home",
+    },
   },
   {
-    path: '/login',
-    name: 'Login',
-    component: () => import('@/views/auth/LoginView.vue'),
+    path: "/login",
+    name: "Login",
+    component: () => import("@/views/auth/LoginView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Login',
-      titleKey: 'home.login'
-    }
+      title: "Login",
+      titleKey: "home.login",
+    },
   },
   {
-    path: '/register',
-    name: 'Register',
-    component: () => import('@/views/auth/RegisterView.vue'),
+    path: "/register",
+    name: "Register",
+    component: () => import("@/views/auth/RegisterView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Register',
-      titleKey: 'auth.createAccount'
-    }
+      title: "Register",
+      titleKey: "auth.createAccount",
+    },
   },
   {
-    path: '/email-verify',
-    name: 'EmailVerify',
-    component: () => import('@/views/auth/EmailVerifyView.vue'),
+    path: "/email-verify",
+    name: "EmailVerify",
+    component: () => import("@/views/auth/EmailVerifyView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Verify Email'
-    }
+      title: "Verify Email",
+    },
   },
   {
-    path: '/auth/callback',
-    name: 'OAuthCallback',
-    alias: '/auth/oauth/callback',
-    component: () => import('@/views/auth/OAuthCallbackView.vue'),
+    path: "/auth/callback",
+    name: "OAuthCallback",
+    alias: "/auth/oauth/callback",
+    component: () => import("@/views/auth/OAuthCallbackView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'OAuth Callback',
-      titleKey: 'auth.oauthCallbackPageTitle'
-    }
+      title: "OAuth Callback",
+      titleKey: "auth.oauthCallbackPageTitle",
+    },
   },
   {
-    path: '/auth/linuxdo/callback',
-    name: 'LinuxDoOAuthCallback',
-    component: () => import('@/views/auth/LinuxDoCallbackView.vue'),
+    path: "/auth/linuxdo/callback",
+    name: "LinuxDoOAuthCallback",
+    component: () => import("@/views/auth/LinuxDoCallbackView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'LinuxDo OAuth Callback',
-      titleKey: 'auth.linuxdoCallbackPageTitle'
-    }
+      title: "LinuxDo OAuth Callback",
+      titleKey: "auth.linuxdoCallbackPageTitle",
+    },
   },
   {
-    path: '/auth/wechat/callback',
-    name: 'WeChatOAuthCallback',
-    component: () => import('@/views/auth/WechatCallbackView.vue'),
+    path: "/auth/wechat/callback",
+    name: "WeChatOAuthCallback",
+    component: () => import("@/views/auth/WechatCallbackView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'WeChat OAuth Callback',
-      titleKey: 'auth.wechatCallbackPageTitle'
-    }
+      title: "WeChat OAuth Callback",
+      titleKey: "auth.wechatCallbackPageTitle",
+    },
   },
   {
-    path: '/auth/wechat/payment/callback',
-    name: 'WeChatPaymentOAuthCallback',
-    component: () => import('@/views/auth/WechatPaymentCallbackView.vue'),
+    path: "/auth/wechat/payment/callback",
+    name: "WeChatPaymentOAuthCallback",
+    component: () => import("@/views/auth/WechatPaymentCallbackView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'WeChat Payment Callback',
-      titleKey: 'auth.wechatPaymentCallbackPageTitle'
-    }
+      title: "WeChat Payment Callback",
+      titleKey: "auth.wechatPaymentCallbackPageTitle",
+    },
   },
   {
-    path: '/auth/dingtalk/callback',
-    name: 'DingTalkOAuthCallback',
-    component: () => import('@/views/auth/DingTalkCallbackView.vue'),
+    path: "/auth/dingtalk/callback",
+    name: "DingTalkOAuthCallback",
+    component: () => import("@/views/auth/DingTalkCallbackView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'DingTalk OAuth Callback',
-      titleKey: 'auth.dingtalkCallbackPageTitle'
-    }
+      title: "DingTalk OAuth Callback",
+      titleKey: "auth.dingtalkCallbackPageTitle",
+    },
   },
   {
-    path: '/auth/dingtalk/email-completion',
-    name: 'dingtalk-email-completion',
-    component: () => import('@/views/auth/DingTalkEmailCompletionView.vue'),
+    path: "/auth/dingtalk/email-completion",
+    name: "dingtalk-email-completion",
+    component: () => import("@/views/auth/DingTalkEmailCompletionView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'DingTalk Email Completion'
-    }
+      title: "DingTalk Email Completion",
+    },
   },
   {
-    path: '/auth/oidc/callback',
-    name: 'OIDCOAuthCallback',
-    component: () => import('@/views/auth/OidcCallbackView.vue'),
+    path: "/auth/oidc/callback",
+    name: "OIDCOAuthCallback",
+    component: () => import("@/views/auth/OidcCallbackView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'OIDC OAuth Callback',
-      titleKey: 'auth.oidcCallbackPageTitle'
-    }
+      title: "OIDC OAuth Callback",
+      titleKey: "auth.oidcCallbackPageTitle",
+    },
   },
   {
-    path: '/forgot-password',
-    name: 'ForgotPassword',
-    component: () => import('@/views/auth/ForgotPasswordView.vue'),
+    path: "/forgot-password",
+    name: "ForgotPassword",
+    component: () => import("@/views/auth/ForgotPasswordView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Forgot Password',
-      titleKey: 'auth.forgotPasswordTitle'
-    }
+      title: "Forgot Password",
+      titleKey: "auth.forgotPasswordTitle",
+    },
   },
   {
-    path: '/reset-password',
-    name: 'ResetPassword',
-    component: () => import('@/views/auth/ResetPasswordView.vue'),
+    path: "/reset-password",
+    name: "ResetPassword",
+    component: () => import("@/views/auth/ResetPasswordView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Reset Password'
-    }
+      title: "Reset Password",
+    },
   },
   {
-    path: '/key-usage',
-    name: 'KeyUsage',
-    component: () => import('@/views/KeyUsageView.vue'),
+    path: "/key-usage",
+    name: "KeyUsage",
+    component: () => import("@/views/KeyUsageView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Key Usage',
-    }
+      title: "Key Usage",
+    },
   },
   {
-    path: '/legal/:documentId',
-    name: 'LegalDocument',
-    component: () => import('@/views/public/LegalDocumentView.vue'),
+    path: "/legal/:documentId",
+    name: "LegalDocument",
+    component: () => import("@/views/public/LegalDocumentView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Legal Document'
-    }
+      title: "Legal Document",
+    },
   },
   {
-    path: '/model-plaza',
-    name: 'ModelPlaza',
-    component: () => import('@/views/ModelPlazaView.vue'),
+    path: "/model-plaza",
+    name: "ModelPlaza",
+    component: () => import("@/views/ModelPlazaView.vue"),
     meta: {
       requiresAuth: false,
-      title: 'Model Plaza',
-      titleKey: 'modelPlaza.title'
-    }
+      title: "Model Plaza",
+      titleKey: "modelPlaza.title",
+    },
   },
 
   // ==================== User Routes ====================
   {
-    path: '/',
-    redirect: '/home'
+    path: "/",
+    redirect: "/home",
   },
   {
-    path: '/dashboard',
-    name: 'Dashboard',
-    component: () => import('@/views/user/DashboardView.vue'),
+    path: "/dashboard",
+    name: "Dashboard",
+    component: () => import("@/views/user/DashboardView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Dashboard',
-      titleKey: 'dashboard.title',
-      descriptionKey: 'dashboard.welcomeMessage'
-    }
+      title: "Dashboard",
+      titleKey: "dashboard.title",
+      descriptionKey: "dashboard.welcomeMessage",
+    },
   },
   {
-    path: '/keys',
-    name: 'Keys',
-    component: () => import('@/views/user/KeysView.vue'),
+    path: "/keys",
+    name: "Keys",
+    component: () => import("@/views/user/KeysView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'API Keys',
-      titleKey: 'keys.title',
-      descriptionKey: 'keys.description'
-    }
+      title: "API Keys",
+      titleKey: "keys.title",
+      descriptionKey: "keys.description",
+    },
   },
   {
     // 普通用户的只读账号视图：只呈现管理员逐用户分配且当前仍启用的账号，
     // 与 /admin/accounts 完全独立（专用页面与专用 API，不复用管理员组件/DTO）。
-    path: '/accounts',
-    name: 'AssignedAccounts',
-    component: () => import('@/views/user/AssignedAccountsView.vue'),
+    path: "/accounts",
+    name: "AssignedAccounts",
+    component: () => import("@/views/user/AssignedAccountsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
       requiresAssignedAccounts: true,
-      title: 'My Accounts',
-      titleKey: 'nav.assignedAccounts',
-      descriptionKey: 'assignedAccounts.description'
-    }
+      title: "My Accounts",
+      titleKey: "nav.assignedAccounts",
+      descriptionKey: "assignedAccounts.description",
+    },
   },
   {
-    path: '/batch-image',
-    name: 'BatchImageGuide',
-    alias: '/docs/batch-image',
-    component: () => import('@/views/user/BatchImageGuideView.vue'),
+    path: "/batch-image",
+    name: "BatchImageGuide",
+    alias: "/docs/batch-image",
+    component: () => import("@/views/user/BatchImageGuideView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Batch Image Guide',
-      titleKey: 'batchImageGuide.title',
-      descriptionKey: 'batchImageGuide.description'
-    }
+      title: "Batch Image Guide",
+      titleKey: "batchImageGuide.title",
+      descriptionKey: "batchImageGuide.description",
+    },
   },
   {
-    path: '/usage',
-    name: 'Usage',
-    component: () => import('@/views/user/UsageView.vue'),
+    path: "/usage",
+    name: "Usage",
+    component: () => import("@/views/user/UsageView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Usage Records',
-      titleKey: 'usage.title',
-      descriptionKey: 'usage.description'
-    }
+      title: "Usage Records",
+      titleKey: "usage.title",
+      descriptionKey: "usage.description",
+    },
   },
   {
-    path: '/redeem',
-    name: 'Redeem',
-    component: () => import('@/views/user/RedeemView.vue'),
+    path: "/redeem",
+    name: "Redeem",
+    component: () => import("@/views/user/RedeemView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Redeem Code',
-      titleKey: 'redeem.title',
-      descriptionKey: 'redeem.description'
-    }
+      title: "Redeem Code",
+      titleKey: "redeem.title",
+      descriptionKey: "redeem.description",
+    },
   },
   {
-    path: '/affiliate',
-    name: 'Affiliate',
-    component: () => import('@/views/user/AffiliateView.vue'),
+    path: "/affiliate",
+    name: "Affiliate",
+    component: () => import("@/views/user/AffiliateView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Affiliate',
-      titleKey: 'affiliate.title',
-      descriptionKey: 'affiliate.description'
-    }
+      title: "Affiliate",
+      titleKey: "affiliate.title",
+      descriptionKey: "affiliate.description",
+    },
   },
   {
-    path: '/available-channels',
-    name: 'UserAvailableChannels',
-    component: () => import('@/views/user/AvailableChannelsView.vue'),
+    path: "/available-channels",
+    name: "UserAvailableChannels",
+    component: () => import("@/views/user/AvailableChannelsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Available Channels',
-      titleKey: 'availableChannels.title',
-      descriptionKey: 'availableChannels.description'
-    }
+      title: "Available Channels",
+      titleKey: "availableChannels.title",
+      descriptionKey: "availableChannels.description",
+    },
   },
   {
-    path: '/profile',
-    name: 'Profile',
-    component: () => import('@/views/user/ProfileView.vue'),
+    path: "/profile",
+    name: "Profile",
+    component: () => import("@/views/user/ProfileView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Profile',
-      titleKey: 'profile.title',
-      descriptionKey: 'profile.description'
-    }
+      title: "Profile",
+      titleKey: "profile.title",
+      descriptionKey: "profile.description",
+    },
   },
   {
-    path: '/subscriptions',
-    name: 'Subscriptions',
-    component: () => import('@/views/user/SubscriptionsView.vue'),
+    path: "/subscriptions",
+    name: "Subscriptions",
+    component: () => import("@/views/user/SubscriptionsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'My Subscriptions',
-      titleKey: 'userSubscriptions.title',
-      descriptionKey: 'userSubscriptions.description',
-      requiresSubscription: true
-    }
+      title: "My Subscriptions",
+      titleKey: "userSubscriptions.title",
+      descriptionKey: "userSubscriptions.description",
+      requiresSubscription: true,
+    },
   },
   {
-    path: '/purchase',
-    name: 'PurchaseSubscription',
-    component: () => import('@/views/user/PaymentView.vue'),
+    path: "/purchase",
+    name: "PurchaseSubscription",
+    component: () => import("@/views/user/PaymentView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Purchase Subscription',
-      titleKey: 'nav.buySubscription',
-      descriptionKey: 'purchase.description',
-      requiresPayment: true
-    }
+      title: "Purchase Subscription",
+      titleKey: "nav.buySubscription",
+      descriptionKey: "purchase.description",
+      requiresPayment: true,
+    },
   },
   {
-    path: '/orders',
-    name: 'OrderList',
-    component: () => import('@/views/user/UserOrdersView.vue'),
+    path: "/orders",
+    name: "OrderList",
+    component: () => import("@/views/user/UserOrdersView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'My Orders',
-      titleKey: 'nav.myOrders',
-      requiresPayment: true
-    }
+      title: "My Orders",
+      titleKey: "nav.myOrders",
+      requiresPayment: true,
+    },
   },
   {
-    path: '/payment/qrcode',
-    name: 'PaymentQRCode',
-    component: () => import('@/views/user/PaymentQRCodeView.vue'),
+    path: "/payment/qrcode",
+    name: "PaymentQRCode",
+    component: () => import("@/views/user/PaymentQRCodeView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Payment',
-      titleKey: 'payment.qr.scanToPay',
-      requiresPayment: true
-    }
+      title: "Payment",
+      titleKey: "payment.qr.scanToPay",
+      requiresPayment: true,
+    },
   },
   {
-    path: '/payment/result',
-    name: 'PaymentResult',
-    component: () => import('@/views/user/PaymentResultView.vue'),
+    path: "/payment/result",
+    name: "PaymentResult",
+    component: () => import("@/views/user/PaymentResultView.vue"),
     meta: {
       requiresAuth: false,
       requiresAdmin: false,
-      title: 'Payment Result',
-      titleKey: 'payment.result.success',
-      requiresPayment: false
-    }
+      title: "Payment Result",
+      titleKey: "payment.result.success",
+      requiresPayment: false,
+    },
   },
   {
-    path: '/payment/stripe',
-    name: 'StripePayment',
-    component: () => import('@/views/user/StripePaymentView.vue'),
+    path: "/payment/stripe",
+    name: "StripePayment",
+    component: () => import("@/views/user/StripePaymentView.vue"),
     meta: {
       requiresAuth: false,
       requiresAdmin: false,
-      title: 'Stripe Payment',
-      titleKey: 'payment.stripePay',
-      requiresPayment: false
-    }
+      title: "Stripe Payment",
+      titleKey: "payment.stripePay",
+      requiresPayment: false,
+    },
   },
   {
-    path: '/payment/airwallex',
-    name: 'AirwallexPayment',
-    component: () => import('@/views/user/AirwallexPaymentView.vue'),
+    path: "/payment/airwallex",
+    name: "AirwallexPayment",
+    component: () => import("@/views/user/AirwallexPaymentView.vue"),
     meta: {
       requiresAuth: false,
       requiresAdmin: false,
-      title: 'Airwallex Payment',
-      titleKey: 'payment.airwallexPay',
-      requiresPayment: false
-    }
+      title: "Airwallex Payment",
+      titleKey: "payment.airwallexPay",
+      requiresPayment: false,
+    },
   },
   {
-    path: '/payment/stripe-popup',
-    name: 'StripePopup',
-    component: () => import('@/views/user/StripePopupView.vue'),
+    path: "/payment/stripe-popup",
+    name: "StripePopup",
+    component: () => import("@/views/user/StripePopupView.vue"),
     meta: {
       requiresAuth: false,
       requiresAdmin: false,
-      title: 'Payment',
-      requiresPayment: false
-    }
+      title: "Payment",
+      requiresPayment: false,
+    },
   },
   {
-    path: '/custom/:id',
-    name: 'CustomPage',
-    component: () => import('@/views/user/CustomPageView.vue'),
+    path: "/custom/:id",
+    name: "CustomPage",
+    component: () => import("@/views/user/CustomPageView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Custom Page',
-      titleKey: 'customPage.title',
-    }
+      title: "Custom Page",
+      titleKey: "customPage.title",
+    },
   },
 
   // ==================== Admin Routes ====================
   {
-    path: '/admin',
-    redirect: '/admin/dashboard'
+    path: "/admin",
+    redirect: "/admin/dashboard",
   },
   {
-    path: '/admin/dashboard',
-    name: 'AdminDashboard',
-    component: () => import('@/views/admin/DashboardView.vue'),
+    path: "/admin/dashboard",
+    name: "AdminDashboard",
+    component: () => import("@/views/admin/DashboardView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Admin Dashboard',
-      titleKey: 'admin.dashboard.title',
-      descriptionKey: 'admin.dashboard.description'
-    }
+      title: "Admin Dashboard",
+      titleKey: "admin.dashboard.title",
+      descriptionKey: "admin.dashboard.description",
+    },
   },
   {
-    path: '/admin/ops',
-    name: 'AdminOps',
-    component: () => import('@/views/admin/ops/OpsDashboard.vue'),
+    path: "/admin/ops",
+    name: "AdminOps",
+    component: () => import("@/views/admin/ops/OpsDashboard.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Ops Monitoring',
-      titleKey: 'admin.ops.title',
-      descriptionKey: 'admin.ops.description'
-    }
+      title: "Ops Monitoring",
+      titleKey: "admin.ops.title",
+      descriptionKey: "admin.ops.description",
+    },
   },
   {
-    path: '/admin/audit-logs',
-    name: 'AdminAuditLogs',
-    component: () => import('@/views/admin/AuditLogView.vue'),
+    path: "/admin/audit-logs",
+    name: "AdminAuditLogs",
+    component: () => import("@/views/admin/AuditLogView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Audit Logs',
-      titleKey: 'admin.audit.title',
-      descriptionKey: 'admin.audit.description'
-    }
+      title: "Audit Logs",
+      titleKey: "admin.audit.title",
+      descriptionKey: "admin.audit.description",
+    },
   },
   {
-    path: '/admin/users',
-    name: 'AdminUsers',
-    component: () => import('@/views/admin/UsersView.vue'),
+    path: "/admin/users",
+    name: "AdminUsers",
+    component: () => import("@/views/admin/UsersView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'User Management',
-      titleKey: 'admin.users.title',
-      descriptionKey: 'admin.users.description'
-    }
+      title: "User Management",
+      titleKey: "admin.users.title",
+      descriptionKey: "admin.users.description",
+    },
   },
   {
-    path: '/admin/groups',
-    name: 'AdminGroups',
-    component: () => import('@/views/admin/GroupsView.vue'),
+    path: "/admin/groups",
+    name: "AdminGroups",
+    component: () => import("@/views/admin/GroupsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Group Management',
-      titleKey: 'admin.groups.title',
-      descriptionKey: 'admin.groups.description'
-    }
+      title: "Group Management",
+      titleKey: "admin.groups.title",
+      descriptionKey: "admin.groups.description",
+    },
   },
   {
-    path: '/admin/channels',
-    redirect: '/admin/channels/pricing'
+    path: "/admin/channels",
+    redirect: "/admin/channels/pricing",
   },
   {
-    path: '/admin/channels/pricing',
-    name: 'AdminChannels',
-    component: () => import('@/views/admin/ChannelsView.vue'),
+    path: "/admin/channels/pricing",
+    name: "AdminChannels",
+    component: () => import("@/views/admin/ChannelsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Channel Management',
-      titleKey: 'admin.channels.title',
-      descriptionKey: 'admin.channels.description'
-    }
+      title: "Channel Management",
+      titleKey: "admin.channels.title",
+      descriptionKey: "admin.channels.description",
+    },
   },
   {
-    path: '/admin/channels/monitor',
-    name: 'AdminChannelMonitor',
-    component: () => import('@/views/admin/ChannelMonitorView.vue'),
+    path: "/admin/channels/monitor",
+    name: "AdminChannelMonitor",
+    component: () => import("@/views/admin/ChannelMonitorView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Channel Monitor',
-      titleKey: 'admin.channelMonitor.title',
-      descriptionKey: 'admin.channelMonitor.description'
-    }
+      title: "Channel Monitor",
+      titleKey: "admin.channelMonitor.title",
+      descriptionKey: "admin.channelMonitor.description",
+    },
   },
   {
-    path: '/monitor',
-    name: 'ChannelStatus',
-    component: () => import('@/views/user/ChannelStatusView.vue'),
+    path: "/monitor",
+    name: "ChannelStatus",
+    component: () => import("@/views/user/ChannelStatusView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Channel Status',
-      titleKey: 'nav.channelStatus'
-    }
+      title: "Channel Status",
+      titleKey: "nav.channelStatus",
+    },
   },
   {
-    path: '/admin/subscriptions',
-    name: 'AdminSubscriptions',
-    component: () => import('@/views/admin/SubscriptionsView.vue'),
+    path: "/admin/subscriptions",
+    name: "AdminSubscriptions",
+    component: () => import("@/views/admin/SubscriptionsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Subscription Management',
-      titleKey: 'admin.subscriptions.title',
-      descriptionKey: 'admin.subscriptions.description'
-    }
+      title: "Subscription Management",
+      titleKey: "admin.subscriptions.title",
+      descriptionKey: "admin.subscriptions.description",
+    },
   },
   {
-    path: '/admin/accounts',
-    name: 'AdminAccounts',
-    component: () => import('@/views/admin/AccountsView.vue'),
+    path: "/admin/accounts",
+    name: "AdminAccounts",
+    component: () => import("@/views/admin/AccountsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Account Management',
-      titleKey: 'admin.accounts.title',
-      descriptionKey: 'admin.accounts.description'
-    }
+      title: "Account Management",
+      titleKey: "admin.accounts.title",
+      descriptionKey: "admin.accounts.description",
+    },
   },
   {
-    path: '/admin/request-traces',
-    name: 'AdminRequestTraces',
-    component: () => import('@/features/request-trace/RequestTraceView.vue'),
+    path: "/admin/request-traces",
+    name: "AdminRequestTraces",
+    component: () => import("@/features/request-trace/RequestTraceView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Request Traces',
-      titleKey: 'admin.requestTrace.title',
-      descriptionKey: 'admin.requestTrace.description'
-    }
+      title: "Request Traces",
+      titleKey: "admin.requestTrace.title",
+      descriptionKey: "admin.requestTrace.description",
+    },
   },
   {
-    path: '/admin/plugins',
-    name: 'AdminPlugins',
-    component: () => import('@/views/admin/PluginsView.vue'),
+    path: "/admin/plugins",
+    name: "AdminPlugins",
+    component: () => import("@/views/admin/PluginsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Plugin Management',
-      titleKey: 'admin.plugins.title',
-      descriptionKey: 'admin.plugins.description'
-    }
+      title: "Plugin Management",
+      titleKey: "admin.plugins.title",
+      descriptionKey: "admin.plugins.description",
+    },
   },
   {
-    path: '/admin/announcements',
-    name: 'AdminAnnouncements',
-    component: () => import('@/views/admin/AnnouncementsView.vue'),
+    path: "/admin/announcements",
+    name: "AdminAnnouncements",
+    component: () => import("@/views/admin/AnnouncementsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Announcements',
-      titleKey: 'admin.announcements.title',
-      descriptionKey: 'admin.announcements.description'
-    }
+      title: "Announcements",
+      titleKey: "admin.announcements.title",
+      descriptionKey: "admin.announcements.description",
+    },
   },
   {
-    path: '/admin/proxies',
-    name: 'AdminProxies',
-    component: () => import('@/views/admin/ProxiesView.vue'),
+    path: "/admin/proxies",
+    name: "AdminProxies",
+    component: () => import("@/views/admin/ProxiesView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Proxy Management',
-      titleKey: 'admin.proxies.title',
-      descriptionKey: 'admin.proxies.description'
-    }
+      title: "Proxy Management",
+      titleKey: "admin.proxies.title",
+      descriptionKey: "admin.proxies.description",
+    },
   },
   {
-    path: '/admin/redeem',
-    name: 'AdminRedeem',
-    component: () => import('@/views/admin/RedeemView.vue'),
+    path: "/admin/redeem",
+    name: "AdminRedeem",
+    component: () => import("@/views/admin/RedeemView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Redeem Code Management',
-      titleKey: 'admin.redeem.title',
-      descriptionKey: 'admin.redeem.description'
-    }
+      title: "Redeem Code Management",
+      titleKey: "admin.redeem.title",
+      descriptionKey: "admin.redeem.description",
+    },
   },
   {
-    path: '/admin/promo-codes',
-    name: 'AdminPromoCodes',
-    component: () => import('@/views/admin/PromoCodesView.vue'),
+    path: "/admin/promo-codes",
+    name: "AdminPromoCodes",
+    component: () => import("@/views/admin/PromoCodesView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Promo Code Management',
-      titleKey: 'admin.promo.title',
-      descriptionKey: 'admin.promo.description'
-    }
+      title: "Promo Code Management",
+      titleKey: "admin.promo.title",
+      descriptionKey: "admin.promo.description",
+    },
   },
   {
-    path: '/admin/settings',
-    name: 'AdminSettings',
-    component: () => import('@/views/admin/SettingsView.vue'),
+    path: "/admin/settings",
+    name: "AdminSettings",
+    component: () => import("@/views/admin/SettingsView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'System Settings',
-      titleKey: 'admin.settings.title',
-      descriptionKey: 'admin.settings.description'
-    }
+      title: "System Settings",
+      titleKey: "admin.settings.title",
+      descriptionKey: "admin.settings.description",
+    },
   },
   {
-    path: '/admin/risk-control',
-    name: 'AdminRiskControl',
-    component: () => import('@/views/admin/RiskControlView.vue'),
+    path: "/admin/risk-control",
+    name: "AdminRiskControl",
+    component: () => import("@/views/admin/RiskControlView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Risk Control',
-      titleKey: 'admin.riskControl.title',
-      descriptionKey: 'admin.riskControl.description',
-      requiresRiskControl: true
-    }
+      title: "Risk Control",
+      titleKey: "admin.riskControl.title",
+      descriptionKey: "admin.riskControl.description",
+      requiresRiskControl: true,
+    },
   },
   {
-    path: '/admin/prompt-audit',
-    name: 'AdminPromptAudit',
-    component: () => import('@/features/prompt-audit/PromptAuditView.vue'),
+    path: "/admin/prompt-audit",
+    name: "AdminPromptAudit",
+    component: () => import("@/features/prompt-audit/PromptAuditView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Prompt Audit',
-      titleKey: 'admin.promptAudit.title',
-      descriptionKey: 'admin.promptAudit.description',
-      requiresRiskControl: true
-    }
+      title: "Prompt Audit",
+      titleKey: "admin.promptAudit.title",
+      descriptionKey: "admin.promptAudit.description",
+      requiresRiskControl: true,
+    },
   },
   {
-    path: '/admin/usage',
-    name: 'AdminUsage',
-    component: () => import('@/views/admin/UsageView.vue'),
+    path: "/admin/usage",
+    name: "AdminUsage",
+    component: () => import("@/views/admin/UsageView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Usage Records',
-      titleKey: 'admin.usage.title',
-      descriptionKey: 'admin.usage.description'
-    }
+      title: "Usage Records",
+      titleKey: "admin.usage.title",
+      descriptionKey: "admin.usage.description",
+    },
   },
   {
-    path: '/admin/affiliates',
-    redirect: '/admin/affiliates/invites'
+    path: "/admin/affiliates",
+    redirect: "/admin/affiliates/invites",
   },
   {
-    path: '/admin/affiliates/invites',
-    name: 'AdminAffiliateInvites',
-    component: () => import('@/views/admin/affiliates/AdminAffiliateInvitesView.vue'),
+    path: "/admin/affiliates/invites",
+    name: "AdminAffiliateInvites",
+    component: () =>
+      import("@/views/admin/affiliates/AdminAffiliateInvitesView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Affiliate Invite Records',
-      titleKey: 'nav.affiliateInviteRecords',
-      descriptionKey: 'admin.affiliates.invitesDescription'
-    }
+      title: "Affiliate Invite Records",
+      titleKey: "nav.affiliateInviteRecords",
+      descriptionKey: "admin.affiliates.invitesDescription",
+    },
   },
   {
-    path: '/admin/affiliates/rebates',
-    name: 'AdminAffiliateRebates',
-    component: () => import('@/views/admin/affiliates/AdminAffiliateRebatesView.vue'),
+    path: "/admin/affiliates/rebates",
+    name: "AdminAffiliateRebates",
+    component: () =>
+      import("@/views/admin/affiliates/AdminAffiliateRebatesView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Affiliate Rebate Records',
-      titleKey: 'nav.affiliateRebateRecords',
-      descriptionKey: 'admin.affiliates.rebatesDescription'
-    }
+      title: "Affiliate Rebate Records",
+      titleKey: "nav.affiliateRebateRecords",
+      descriptionKey: "admin.affiliates.rebatesDescription",
+    },
   },
   {
-    path: '/admin/affiliates/transfers',
-    name: 'AdminAffiliateTransfers',
-    component: () => import('@/views/admin/affiliates/AdminAffiliateTransfersView.vue'),
+    path: "/admin/affiliates/transfers",
+    name: "AdminAffiliateTransfers",
+    component: () =>
+      import("@/views/admin/affiliates/AdminAffiliateTransfersView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Affiliate Transfer Records',
-      titleKey: 'nav.affiliateTransferRecords',
-      descriptionKey: 'admin.affiliates.transfersDescription'
-    }
+      title: "Affiliate Transfer Records",
+      titleKey: "nav.affiliateTransferRecords",
+      descriptionKey: "admin.affiliates.transfersDescription",
+    },
   },
-
 
   // ==================== Payment Admin Routes ====================
   {
-    path: '/admin/orders/dashboard',
-    name: 'AdminPaymentDashboard',
-    component: () => import('@/views/admin/orders/AdminPaymentDashboardView.vue'),
+    path: "/admin/orders/dashboard",
+    name: "AdminPaymentDashboard",
+    component: () =>
+      import("@/views/admin/orders/AdminPaymentDashboardView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Payment Dashboard',
-      titleKey: 'nav.paymentDashboard',
-      requiresPayment: true
-    }
+      title: "Payment Dashboard",
+      titleKey: "nav.paymentDashboard",
+      requiresPayment: true,
+    },
   },
   {
-    path: '/admin/orders',
-    name: 'AdminOrders',
-    component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
+    path: "/admin/orders",
+    name: "AdminOrders",
+    component: () => import("@/views/admin/orders/AdminOrdersView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Order Management',
-      titleKey: 'nav.orderManagement',
-      requiresPayment: true
-    }
+      title: "Order Management",
+      titleKey: "nav.orderManagement",
+      requiresPayment: true,
+    },
   },
   {
-    path: '/admin/orders/plans',
-    name: 'AdminPaymentPlans',
-    component: () => import('@/views/admin/orders/AdminPaymentPlansView.vue'),
+    path: "/admin/orders/plans",
+    name: "AdminPaymentPlans",
+    component: () => import("@/views/admin/orders/AdminPaymentPlansView.vue"),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Subscription Plans',
-      titleKey: 'nav.paymentPlans',
-      requiresPayment: true
-    }
+      title: "Subscription Plans",
+      titleKey: "nav.paymentPlans",
+      requiresPayment: true,
+    },
   },
 
   // ==================== 404 Not Found ====================
   {
-    path: '/:pathMatch(.*)*',
-    name: 'NotFound',
-    component: () => import('@/views/NotFoundView.vue'),
+    path: "/:pathMatch(.*)*",
+    name: "NotFound",
+    component: () => import("@/views/NotFoundView.vue"),
     meta: {
-      title: '404 Not Found'
-    }
-  }
-]
+      title: "404 Not Found",
+    },
+  },
+];
 
 /**
  * Create router instance
@@ -766,81 +773,109 @@ const router = createRouter({
   scrollBehavior(_to, _from, savedPosition) {
     // Scroll to saved position when using browser back/forward
     if (savedPosition) {
-      return savedPosition
+      return savedPosition;
     }
     // Scroll to top for new routes
-    return { top: 0 }
-  }
-})
+    return { top: 0 };
+  },
+});
 
 /**
  * Navigation guard: Authentication check
  */
-let authInitialized = false
+let authInitialized = false;
 
 // 初始化导航加载状态和预加载
-const navigationLoading = useNavigationLoadingState()
+const navigationLoading = useNavigationLoadingState();
 // 延迟初始化预加载，传入 router 实例
-let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null;
+const BACKEND_MODE_ALLOWED_PATHS = [
+  "/login",
+  "/key-usage",
+  "/setup",
+  "/payment/result",
+  "/payment/airwallex",
+  "/legal",
+];
 const BACKEND_MODE_CALLBACK_PATHS = [
-  '/auth/callback',
-  '/auth/linuxdo/callback',
-  '/auth/dingtalk/callback',
-  '/auth/dingtalk/email-completion',
-  '/auth/oidc/callback',
-  '/auth/wechat/callback',
-  '/auth/wechat/payment/callback',
-]
-const BACKEND_MODE_PENDING_AUTH_PATHS = ['/register', '/email-verify']
+  "/auth/callback",
+  "/auth/linuxdo/callback",
+  "/auth/dingtalk/callback",
+  "/auth/dingtalk/email-completion",
+  "/auth/oidc/callback",
+  "/auth/wechat/callback",
+  "/auth/wechat/payment/callback",
+];
+const BACKEND_MODE_PENDING_AUTH_PATHS = ["/register", "/email-verify"];
 
-function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: boolean): boolean {
-  if (BACKEND_MODE_ALLOWED_PATHS.some((allowedPath) => path === allowedPath || path.startsWith(allowedPath))) {
-    return true
+function isBackendModePublicRouteAllowed(
+  path: string,
+  hasPendingAuthSession: boolean,
+): boolean {
+  if (
+    BACKEND_MODE_ALLOWED_PATHS.some(
+      (allowedPath) => path === allowedPath || path.startsWith(allowedPath),
+    )
+  ) {
+    return true;
   }
 
-  if (BACKEND_MODE_CALLBACK_PATHS.some((callbackPath) => path === callbackPath)) {
-    return true
+  if (
+    BACKEND_MODE_CALLBACK_PATHS.some((callbackPath) => path === callbackPath)
+  ) {
+    return true;
   }
 
-  if (hasPendingAuthSession && BACKEND_MODE_PENDING_AUTH_PATHS.some((allowedPath) => path === allowedPath)) {
-    return true
+  if (
+    hasPendingAuthSession &&
+    BACKEND_MODE_PENDING_AUTH_PATHS.some((allowedPath) => path === allowedPath)
+  ) {
+    return true;
   }
 
-  return false
+  return false;
 }
 
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
-  navigationLoading.startNavigation()
+  navigationLoading.startNavigation();
 
-  const authStore = useAuthStore()
+  const authStore = useAuthStore();
 
   // Restore auth state from localStorage on first navigation (page refresh)
   if (!authInitialized) {
-    authStore.checkAuth()
-    authInitialized = true
+    authStore.checkAuth();
+    authInitialized = true;
   }
 
   // Set page title
-  const appStore = useAppStore()
-  const adminSettingsStore = useAdminSettingsStore()
+  const appStore = useAppStore();
+  const adminSettingsStore = useAdminSettingsStore();
   const customMenuItems = [
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
-  ]
-  document.title = resolveRouteDocumentTitle(to, appStore.siteName, customMenuItems)
+  ];
+  document.title = resolveRouteDocumentTitle(
+    to,
+    appStore.siteName,
+    customMenuItems,
+  );
 
   // Check if route requires authentication
-  const requiresAuth = to.meta.requiresAuth !== false // Default to true
-  const requiresAdmin = to.meta.requiresAdmin === true
+  const requiresAuth = to.meta.requiresAuth !== false; // Default to true
+  const requiresAdmin = to.meta.requiresAdmin === true;
 
-  if (to.path === '/setup') {
+  if (to.path === "/setup") {
     try {
-      const status = await getSetupStatus()
+      const status = await getSetupStatus();
       if (!status.needs_setup) {
-        next(resolveCompletedSetupRedirectPath(authStore.isAuthenticated, authStore.isAdmin))
-        return
+        next(
+          resolveCompletedSetupRedirectPath(
+            authStore.isAuthenticated,
+            authStore.isAdmin,
+          ),
+        );
+        return;
       }
     } catch {
       // If setup status cannot be determined, keep the setup page reachable.
@@ -850,100 +885,127 @@ router.beforeEach(async (to, _from, next) => {
   // If route doesn't require auth, allow access
   if (!requiresAuth) {
     // If already authenticated and trying to access login/register, redirect to appropriate dashboard
-    if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
+    if (
+      authStore.isAuthenticated &&
+      (to.path === "/login" || to.path === "/register")
+    ) {
       // In backend mode, non-admin users should NOT be redirected away from login
       // (they are blocked from all protected routes, so redirecting would cause a loop)
       if (appStore.backendModeEnabled && !authStore.isAdmin) {
-        next()
-        return
+        next();
+        return;
       }
       // Admin users go to admin dashboard, regular users go to user dashboard
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-      return
+      next(authStore.isAdmin ? "/admin/dashboard" : "/dashboard");
+      return;
     }
     // Model Plaza:公开路由但受「启用开关 + 可选强制登录」双重控制(后端同口径 fail-closed)
-    if (to.path === '/model-plaza') {
+    if (to.path === "/model-plaza") {
       if (!appStore.publicSettingsLoaded) {
         try {
-          await appStore.fetchPublicSettings()
+          await appStore.fetchPublicSettings();
         } catch (error) {
-          console.warn('Failed to load public settings in route guard', error)
+          console.warn("Failed to load public settings in route guard", error);
         }
       }
-      const plazaSettings = appStore.cachedPublicSettings
+      const plazaSettings = appStore.cachedPublicSettings;
       // 仅在设置成功加载且明确为 false 时拦截(瞬时加载失败视为未知,由后端 404 兜底)
-      if (appStore.publicSettingsLoaded && plazaSettings?.model_plaza_enabled === false) {
+      if (
+        appStore.publicSettingsLoaded &&
+        plazaSettings?.model_plaza_enabled === false
+      ) {
         next(
           authStore.isAuthenticated
             ? authStore.isAdmin
-              ? '/admin/dashboard'
-              : '/dashboard'
-            : '/home'
-        )
-        return
+              ? "/admin/dashboard"
+              : "/dashboard"
+            : "/home",
+        );
+        return;
       }
-      if (plazaSettings?.model_plaza_require_auth === true && !authStore.isAuthenticated) {
-        next({ path: '/login', query: { redirect: to.fullPath } })
-        return
+      if (
+        plazaSettings?.model_plaza_require_auth === true &&
+        !authStore.isAuthenticated
+      ) {
+        next({ path: "/login", query: { redirect: to.fullPath } });
+        return;
       }
       // Backend mode:登录的非管理员也不可见(匿名由下方公共拦截处理,广场不在白名单)
-      if (appStore.backendModeEnabled && authStore.isAuthenticated && !authStore.isAdmin) {
-        next('/login')
-        return
+      if (
+        appStore.backendModeEnabled &&
+        authStore.isAuthenticated &&
+        !authStore.isAdmin
+      ) {
+        next("/login");
+        return;
       }
     }
     // Backend mode: block public pages for unauthenticated users (except login, key-usage, setup)
     if (appStore.backendModeEnabled && !authStore.isAuthenticated) {
-      const isAllowed = isBackendModePublicRouteAllowed(to.path, authStore.hasPendingAuthSession)
+      const isAllowed = isBackendModePublicRouteAllowed(
+        to.path,
+        authStore.hasPendingAuthSession,
+      );
       if (!isAllowed) {
-        next('/login')
-        return
+        next("/login");
+        return;
       }
     }
-    next()
-    return
+    next();
+    return;
   }
 
   // Route requires authentication
   if (!authStore.isAuthenticated) {
     // Not authenticated, redirect to login
     next({
-      path: '/login',
-      query: { redirect: to.fullPath } // Save intended destination
-    })
-    return
+      path: "/login",
+      query: { redirect: to.fullPath }, // Save intended destination
+    });
+    return;
   }
 
   // Check admin requirement
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
-    next('/dashboard')
-    return
+    next("/dashboard");
+    return;
   }
 
   if (requiresAdmin && authStore.isAdmin) {
-    const adminComplianceStore = useAdminComplianceStore()
+    const adminComplianceStore = useAdminComplianceStore();
     if (!adminComplianceStore.initialized) {
       try {
-        await adminComplianceStore.fetchStatus()
+        await adminComplianceStore.fetchStatus();
       } catch (error) {
-        const err = error as { status?: number; code?: string; metadata?: Record<string, string> }
-        if (err.status === 423 && err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
-          adminComplianceStore.requireAcknowledgement(err.metadata)
+        const err = error as {
+          status?: number;
+          code?: string;
+          metadata?: Record<string, string>;
+        };
+        if (
+          err.status === 423 &&
+          err.code === "ADMIN_COMPLIANCE_ACK_REQUIRED"
+        ) {
+          adminComplianceStore.requireAcknowledgement(err.metadata);
         }
       }
     }
   }
 
-
   // 公共设置可能尚未加载（App.vue 的 onMounted 异步拉取晚于首次导航，且纯静态部署
   // 无 __APP_CONFIG__ 注入）。此时 cachedPublicSettings 为空会把 payment/risk_control
   // 误判为“未启用”而错误拦截，故这里先确保设置加载完成。
-  if ((to.meta.requiresPayment || to.meta.requiresRiskControl || to.meta.requiresSubscription) && !appStore.publicSettingsLoaded) {
+  if (
+    (to.meta.requiresPayment ||
+      to.meta.requiresRiskControl ||
+      to.meta.requiresSubscription) &&
+    !appStore.publicSettingsLoaded
+  ) {
     try {
-      await appStore.fetchPublicSettings()
+      await appStore.fetchPublicSettings();
     } catch (error) {
-      console.warn('Failed to load public settings in route guard', error)
+      console.warn("Failed to load public settings in route guard", error);
     }
   }
 
@@ -954,8 +1016,8 @@ router.beforeEach(async (to, _from, next) => {
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.payment_enabled === false
   ) {
-    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-    return
+    next(authStore.isAdmin ? "/admin/dashboard" : "/dashboard");
+    return;
   }
 
   if (
@@ -963,8 +1025,8 @@ router.beforeEach(async (to, _from, next) => {
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.risk_control_enabled === false
   ) {
-    next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
-    return
+    next(authStore.isAdmin ? "/admin/settings" : "/dashboard");
+    return;
   }
 
   // 订阅功能是 opt-out 开关：只有显式 false 才拦截「我的订阅」页直达。
@@ -973,23 +1035,23 @@ router.beforeEach(async (to, _from, next) => {
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.subscription_enabled === false
   ) {
-    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-    return
+    next(authStore.isAdmin ? "/admin/dashboard" : "/dashboard");
+    return;
   }
 
   // 简易模式下限制访问某些页面
   if (authStore.isSimpleMode) {
     const restrictedPaths = [
-      '/admin/subscriptions',
-      '/admin/redeem',
-      '/subscriptions',
-      '/redeem'
-    ]
+      "/admin/subscriptions",
+      "/admin/redeem",
+      "/subscriptions",
+      "/redeem",
+    ];
 
     if (restrictedPaths.some((path) => to.path.startsWith(path))) {
       // 简易模式下访问受限页面,重定向到仪表板
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-      return
+      next(authStore.isAdmin ? "/admin/dashboard" : "/dashboard");
+      return;
     }
   }
 
@@ -999,18 +1061,18 @@ router.beforeEach(async (to, _from, next) => {
   if (to.meta.requiresAssignedAccounts) {
     const assignedAccountsRedirect = resolveAssignedAccountsRedirect({
       isAuthenticated: authStore.isAuthenticated,
-      isAdmin: authStore.isAdmin
-    })
+      isAdmin: authStore.isAdmin,
+    });
     if (assignedAccountsRedirect) {
-      next(assignedAccountsRedirect)
-      return
+      next(assignedAccountsRedirect);
+      return;
     }
 
     if (!appStore.backendModeEnabled) {
-      const allowed = await authStore.verifyAssignedAccountAccess()
+      const allowed = await authStore.verifyAssignedAccountAccess();
       if (!allowed) {
-        next(ASSIGNED_ACCOUNTS_FALLBACK_PATH)
-        return
+        next(ASSIGNED_ACCOUNTS_FALLBACK_PATH);
+        return;
       }
     }
   }
@@ -1018,64 +1080,71 @@ router.beforeEach(async (to, _from, next) => {
   // Backend mode: admin gets full access, non-admin blocked
   if (appStore.backendModeEnabled) {
     if (authStore.isAuthenticated && authStore.isAdmin) {
-      next()
-      return
+      next();
+      return;
     }
-    const isAllowed = isBackendModePublicRouteAllowed(to.path, authStore.hasPendingAuthSession)
+    const isAllowed = isBackendModePublicRouteAllowed(
+      to.path,
+      authStore.hasPendingAuthSession,
+    );
     if (!isAllowed) {
-      next('/login')
-      return
+      next("/login");
+      return;
     }
   }
 
   // All checks passed, allow navigation
-  next()
-})
+  next();
+});
 
 /**
  * Navigation guard: End loading and trigger prefetch
  */
 router.afterEach((to) => {
   // 结束导航加载状态
-  navigationLoading.endNavigation()
+  navigationLoading.endNavigation();
 
   // 懒初始化预加载（首次导航时创建，传入 router 实例）
   if (!routePrefetch) {
-    routePrefetch = useRoutePrefetch(router)
+    routePrefetch = useRoutePrefetch(router);
   }
   // 触发路由预加载（在浏览器空闲时执行）
-  routePrefetch.triggerPrefetch(to)
-})
+  routePrefetch.triggerPrefetch(to);
+});
 
 /**
  * Navigation guard: Error handling
  * Handles dynamic import failures caused by deployment updates
  */
 router.onError((error) => {
-  console.error('Router error:', error)
+  console.error("Router error:", error);
 
   // Check if this is a dynamic import failure (chunk loading error)
   const isChunkLoadError =
-    error.message?.includes('Failed to fetch dynamically imported module') ||
-    error.message?.includes('Loading chunk') ||
-    error.message?.includes('Loading CSS chunk') ||
-    error.name === 'ChunkLoadError'
+    error.message?.includes("Failed to fetch dynamically imported module") ||
+    error.message?.includes("Loading chunk") ||
+    error.message?.includes("Loading CSS chunk") ||
+    error.name === "ChunkLoadError";
 
   if (isChunkLoadError) {
     // Avoid infinite reload loop by checking sessionStorage
-    const reloadKey = 'chunk_reload_attempted'
-    const lastReload = sessionStorage.getItem(reloadKey)
-    const now = Date.now()
+    const reloadKey = "chunk_reload_attempted";
+    const lastReload = sessionStorage.getItem(reloadKey);
+    const now = Date.now();
 
     // Allow reload if never attempted or more than 10 seconds ago
     if (!lastReload || now - parseInt(lastReload) > 10000) {
-      sessionStorage.setItem(reloadKey, now.toString())
-      console.warn('Chunk load error detected, reloading page to fetch latest version...')
-      window.location.reload()
+      sessionStorage.setItem(reloadKey, now.toString());
+      console.warn(
+        "Chunk load error detected, reloading page to fetch latest version...",
+      );
+      window.location.reload();
     } else {
-      console.error('Chunk load error persists after reload. Please clear browser cache.')
+      console.error(
+        "Chunk load error persists after reload. Please clear browser cache.",
+      );
     }
   }
-})
+});
 
-export default router
+export default router;

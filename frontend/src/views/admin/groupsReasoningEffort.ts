@@ -47,7 +47,11 @@ const reasoningEffortValuesForPlatform = (
 export function supportsReasoningEffortPolicyPlatform(
   platform: GroupPlatform,
 ): boolean {
-  return platform === "anthropic" || platform === "openai" || platform === "composite";
+  return (
+    platform === "anthropic" ||
+    platform === "openai" ||
+    platform === "composite"
+  );
 }
 
 export function reasoningEffortOptionsForPlatform(platform: GroupPlatform) {
@@ -60,9 +64,10 @@ export function reasoningEffortOptionsForPlatform(platform: GroupPlatform) {
 export function reasoningEffortSourceOptionsForPlatform(
   platform: GroupPlatform,
 ) {
-  return (supportsReasoningEffortPolicyPlatform(platform)
-    ? openAIReasoningEffortSourceValues
-    : []
+  return (
+    supportsReasoningEffortPolicyPlatform(platform)
+      ? openAIReasoningEffortSourceValues
+      : []
   ).map((value) => ({ value, label: value }));
 }
 
@@ -274,7 +279,10 @@ export function validateReasoningEffortMappings(
     const rawMatchType = row.match_type.trim().toLowerCase();
     const matchType = normalizeReasoningEffortMatchType(row.match_type);
     if (rawMatchType && !matchType) {
-      errors[row.id] = { ...errors[row.id], match_type: "unsupportedMatchType" };
+      errors[row.id] = {
+        ...errors[row.id],
+        match_type: "unsupportedMatchType",
+      };
     }
 
     const scope = mappingScopeKey(row.match_type, row.model);

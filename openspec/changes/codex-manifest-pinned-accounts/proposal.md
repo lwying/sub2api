@@ -15,10 +15,12 @@ OpenAI 分组在没有账号模型映射时，每次 Codex 客户端请求 Model
 ## Capabilities
 
 ### New Capabilities
+
 - `codex-manifest-pinned-accounts`：OpenAI 分组的固定账号 Manifest 配置（数据模型、管理端校验与 UI）、运行时的固定账号并发拉取与合并、不可用时的回退策略。
 - `codex-manifest-cache`：Codex Model Manifest 的按账号缓存策略：新鲜期、乐观期与强制刷新期的行为，以及对所有账号类型生效。
 
 ### Modified Capabilities
+
 <!-- openspec/specs 目前为空，没有既有能力需要修改。 -->
 
 ## Impact

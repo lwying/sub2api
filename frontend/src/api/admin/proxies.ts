@@ -3,7 +3,7 @@
  * Handles proxy server management for administrators
  */
 
-import { apiClient } from '../client'
+import { apiClient } from "../client";
 import type {
   Proxy,
   ProxyAccountSummary,
@@ -12,12 +12,12 @@ import type {
   UpdateProxyRequest,
   PaginatedResponse,
   AdminDataPayload,
-  AdminDataImportResult
-} from '@/types'
+  AdminDataImportResult,
+} from "@/types";
 
 function assertProxyArray(value: unknown): asserts value is Proxy[] {
   if (!Array.isArray(value)) {
-    throw new Error('Invalid proxy list response')
+    throw new Error("Invalid proxy list response");
   }
 }
 
@@ -32,26 +32,29 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    protocol?: string
-    status?: 'active' | 'inactive' | 'expired'
-    search?: string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    protocol?: string;
+    status?: "active" | "inactive" | "expired";
+    search?: string;
+    sort_by?: string;
+    sort_order?: "asc" | "desc";
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal;
+  },
 ): Promise<PaginatedResponse<Proxy>> {
-  const { data } = await apiClient.get<PaginatedResponse<Proxy>>('/admin/proxies', {
-    params: {
-      page,
-      page_size: pageSize,
-      ...filters
+  const { data } = await apiClient.get<PaginatedResponse<Proxy>>(
+    "/admin/proxies",
+    {
+      params: {
+        page,
+        page_size: pageSize,
+        ...filters,
+      },
+      signal: options?.signal,
     },
-    signal: options?.signal
-  })
-  assertProxyArray(data?.items)
-  return data
+  );
+  assertProxyArray(data?.items);
+  return data;
 }
 
 /**
@@ -59,9 +62,9 @@ export async function list(
  * @returns List of all active proxies
  */
 export async function getAll(): Promise<Proxy[]> {
-  const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all')
-  assertProxyArray(data)
-  return data
+  const { data } = await apiClient.get<Proxy[]>("/admin/proxies/all");
+  assertProxyArray(data);
+  return data;
 }
 
 /**
@@ -69,11 +72,11 @@ export async function getAll(): Promise<Proxy[]> {
  * @returns List of all active proxies with account count
  */
 export async function getAllWithCount(): Promise<Proxy[]> {
-  const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all', {
-    params: { with_count: 'true' }
-  })
-  assertProxyArray(data)
-  return data
+  const { data } = await apiClient.get<Proxy[]>("/admin/proxies/all", {
+    params: { with_count: "true" },
+  });
+  assertProxyArray(data);
+  return data;
 }
 
 /**
@@ -82,8 +85,8 @@ export async function getAllWithCount(): Promise<Proxy[]> {
  * @returns Proxy details
  */
 export async function getById(id: number): Promise<Proxy> {
-  const { data } = await apiClient.get<Proxy>(`/admin/proxies/${id}`)
-  return data
+  const { data } = await apiClient.get<Proxy>(`/admin/proxies/${id}`);
+  return data;
 }
 
 /**
@@ -92,8 +95,8 @@ export async function getById(id: number): Promise<Proxy> {
  * @returns Created proxy
  */
 export async function create(proxyData: CreateProxyRequest): Promise<Proxy> {
-  const { data } = await apiClient.post<Proxy>('/admin/proxies', proxyData)
-  return data
+  const { data } = await apiClient.post<Proxy>("/admin/proxies", proxyData);
+  return data;
 }
 
 /**
@@ -102,9 +105,12 @@ export async function create(proxyData: CreateProxyRequest): Promise<Proxy> {
  * @param updates - Fields to update
  * @returns Updated proxy
  */
-export async function update(id: number, updates: UpdateProxyRequest): Promise<Proxy> {
-  const { data } = await apiClient.put<Proxy>(`/admin/proxies/${id}`, updates)
-  return data
+export async function update(
+  id: number,
+  updates: UpdateProxyRequest,
+): Promise<Proxy> {
+  const { data } = await apiClient.put<Proxy>(`/admin/proxies/${id}`, updates);
+  return data;
 }
 
 /**
@@ -113,8 +119,10 @@ export async function update(id: number, updates: UpdateProxyRequest): Promise<P
  * @returns Success confirmation
  */
 export async function deleteProxy(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/proxies/${id}`)
-  return data
+  const { data } = await apiClient.delete<{ message: string }>(
+    `/admin/proxies/${id}`,
+  );
+  return data;
 }
 
 /**
@@ -123,8 +131,11 @@ export async function deleteProxy(id: number): Promise<{ message: string }> {
  * @param status - New status
  * @returns Updated proxy
  */
-export async function toggleStatus(id: number, status: 'active' | 'inactive'): Promise<Proxy> {
-  return update(id, { status })
+export async function toggleStatus(
+  id: number,
+  status: "active" | "inactive",
+): Promise<Proxy> {
+  return update(id, { status });
 }
 
 /**
@@ -133,26 +144,26 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
  * @returns Test result with IP info
  */
 export async function testProxy(id: number): Promise<{
-  success: boolean
-  message: string
-  latency_ms?: number
-  ip_address?: string
-  city?: string
-  region?: string
-  country?: string
-  country_code?: string
+  success: boolean;
+  message: string;
+  latency_ms?: number;
+  ip_address?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  country_code?: string;
 }> {
   const { data } = await apiClient.post<{
-    success: boolean
-    message: string
-    latency_ms?: number
-    ip_address?: string
-    city?: string
-    region?: string
-    country?: string
-    country_code?: string
-  }>(`/admin/proxies/${id}/test`)
-  return data
+    success: boolean;
+    message: string;
+    latency_ms?: number;
+    ip_address?: string;
+    city?: string;
+    region?: string;
+    country?: string;
+    country_code?: string;
+  }>(`/admin/proxies/${id}/test`);
+  return data;
 }
 
 /**
@@ -160,9 +171,13 @@ export async function testProxy(id: number): Promise<{
  * @param id - Proxy ID
  * @returns Quality check result
  */
-export async function checkProxyQuality(id: number): Promise<ProxyQualityCheckResult> {
-  const { data } = await apiClient.post<ProxyQualityCheckResult>(`/admin/proxies/${id}/quality-check`)
-  return data
+export async function checkProxyQuality(
+  id: number,
+): Promise<ProxyQualityCheckResult> {
+  const { data } = await apiClient.post<ProxyQualityCheckResult>(
+    `/admin/proxies/${id}/quality-check`,
+  );
+  return data;
 }
 
 /**
@@ -171,20 +186,20 @@ export async function checkProxyQuality(id: number): Promise<ProxyQualityCheckRe
  * @returns Proxy usage statistics
  */
 export async function getStats(id: number): Promise<{
-  total_accounts: number
-  active_accounts: number
-  total_requests: number
-  success_rate: number
-  average_latency: number
+  total_accounts: number;
+  active_accounts: number;
+  total_requests: number;
+  success_rate: number;
+  average_latency: number;
 }> {
   const { data } = await apiClient.get<{
-    total_accounts: number
-    active_accounts: number
-    total_requests: number
-    success_rate: number
-    average_latency: number
-  }>(`/admin/proxies/${id}/stats`)
-  return data
+    total_accounts: number;
+    active_accounts: number;
+    total_requests: number;
+    success_rate: number;
+    average_latency: number;
+  }>(`/admin/proxies/${id}/stats`);
+  return data;
 }
 
 /**
@@ -192,9 +207,13 @@ export async function getStats(id: number): Promise<{
  * @param id - Proxy ID
  * @returns List of accounts using the proxy
  */
-export async function getProxyAccounts(id: number): Promise<ProxyAccountSummary[]> {
-  const { data } = await apiClient.get<ProxyAccountSummary[]>(`/admin/proxies/${id}/accounts`)
-  return data
+export async function getProxyAccounts(
+  id: number,
+): Promise<ProxyAccountSummary[]> {
+  const { data } = await apiClient.get<ProxyAccountSummary[]>(
+    `/admin/proxies/${id}/accounts`,
+  );
+  return data;
 }
 
 /**
@@ -204,64 +223,70 @@ export async function getProxyAccounts(id: number): Promise<ProxyAccountSummary[
  */
 export async function batchCreate(
   proxies: Array<{
-    protocol: string
-    host: string
-    port: number
-    username?: string
-    password?: string
-  }>
+    protocol: string;
+    host: string;
+    port: number;
+    username?: string;
+    password?: string;
+  }>,
 ): Promise<{
-  created: number
-  skipped: number
+  created: number;
+  skipped: number;
 }> {
   const { data } = await apiClient.post<{
-    created: number
-    skipped: number
-  }>('/admin/proxies/batch', { proxies })
-  return data
+    created: number;
+    skipped: number;
+  }>("/admin/proxies/batch", { proxies });
+  return data;
 }
 
 export async function batchDelete(ids: number[]): Promise<{
-  deleted_ids: number[]
-  skipped: Array<{ id: number; reason: string }>
+  deleted_ids: number[];
+  skipped: Array<{ id: number; reason: string }>;
 }> {
   const { data } = await apiClient.post<{
-    deleted_ids: number[]
-    skipped: Array<{ id: number; reason: string }>
-  }>('/admin/proxies/batch-delete', { ids })
-  return data
+    deleted_ids: number[];
+    skipped: Array<{ id: number; reason: string }>;
+  }>("/admin/proxies/batch-delete", { ids });
+  return data;
 }
 
 export async function exportData(options?: {
-  ids?: number[]
+  ids?: number[];
   filters?: {
-    protocol?: string
-    status?: 'active' | 'inactive' | 'expired'
-    search?: string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
-  }
+    protocol?: string;
+    status?: "active" | "inactive" | "expired";
+    search?: string;
+    sort_by?: string;
+    sort_order?: "asc" | "desc";
+  };
 }): Promise<AdminDataPayload> {
-  const params: Record<string, string> = {}
+  const params: Record<string, string> = {};
   if (options?.ids && options.ids.length > 0) {
-    params.ids = options.ids.join(',')
+    params.ids = options.ids.join(",");
   } else if (options?.filters) {
-    const { protocol, status, search, sort_by, sort_order } = options.filters
-    if (protocol) params.protocol = protocol
-    if (status) params.status = status
-    if (search) params.search = search
-    if (sort_by) params.sort_by = sort_by
-    if (sort_order) params.sort_order = sort_order
+    const { protocol, status, search, sort_by, sort_order } = options.filters;
+    if (protocol) params.protocol = protocol;
+    if (status) params.status = status;
+    if (search) params.search = search;
+    if (sort_by) params.sort_by = sort_by;
+    if (sort_order) params.sort_order = sort_order;
   }
-  const { data } = await apiClient.get<AdminDataPayload>('/admin/proxies/data', { params })
-  return data
+  const { data } = await apiClient.get<AdminDataPayload>(
+    "/admin/proxies/data",
+    { params },
+  );
+  return data;
 }
 
 export async function importData(payload: {
-  data: AdminDataPayload
+  data: AdminDataPayload;
 }): Promise<AdminDataImportResult> {
-  const { data } = await apiClient.post<AdminDataImportResult>('/admin/proxies/data', payload)
-  return data
+  const { data } = await apiClient.post<AdminDataImportResult>(
+    "/admin/proxies/data",
+    payload,
+  );
+  return data;
 }
 
 export const proxiesAPI = {
@@ -280,7 +305,7 @@ export const proxiesAPI = {
   batchCreate,
   batchDelete,
   exportData,
-  importData
-}
+  importData,
+};
 
-export default proxiesAPI
+export default proxiesAPI;

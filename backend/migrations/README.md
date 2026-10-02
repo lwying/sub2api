@@ -7,6 +7,7 @@ This directory contains SQL migration files for database schema changes. The mig
 ## Migration File Naming
 
 Format: `NNN_description.sql`
+
 - `NNN`: Sequential number (e.g., 001, 002, 003)
 - `description`: Brief description in snake_case
 
@@ -53,6 +54,7 @@ ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS example_column VARCHAR(100);
 **Once a migration is applied to ANY environment (dev, staging, production), it MUST NOT be modified.**
 
 Why?
+
 - Each migration has a SHA256 checksum stored in the `schema_migrations` table
 - Modifying an applied migration causes checksum mismatch errors
 - Different environments would have inconsistent database states
@@ -61,6 +63,7 @@ Why?
 ### ✅ Correct Workflow
 
 1. **Create new migration**
+
    ```bash
    # Create new file with next sequential number
    touch migrations/018_your_change.sql
@@ -71,6 +74,7 @@ Why?
    - If rollback is needed, create a new migration file to revert
 
 3. **Test locally**
+
    ```bash
    # Apply migration
    make migrate-up
@@ -95,11 +99,13 @@ Why?
 ### 🔧 If You Accidentally Modified an Applied Migration
 
 **Error message:**
+
 ```
 migration 017_add_gemini_tier_id.sql checksum mismatch (db=abc123... file=def456...)
 ```
 
 **Solution:**
+
 ```bash
 # 1. Find the original version
 git log --oneline -- migrations/017_add_gemini_tier_id.sql
@@ -160,9 +166,11 @@ WHERE platform = 'gemini'
 ## Troubleshooting
 
 ### Checksum Mismatch
+
 See "If You Accidentally Modified an Applied Migration" above.
 
 ### Migration Failed
+
 ```bash
 # Check migration status
 psql -d sub2api -c "SELECT * FROM schema_migrations ORDER BY applied_at DESC;"
@@ -172,6 +180,7 @@ psql -d sub2api -c "SELECT * FROM schema_migrations ORDER BY applied_at DESC;"
 ```
 
 ### Need to Skip a Migration (Emergency Only)
+
 ```sql
 -- DANGEROUS: Only use in development or with extreme caution
 INSERT INTO schema_migrations (filename, checksum, applied_at)

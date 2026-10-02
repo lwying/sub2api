@@ -16,7 +16,7 @@ docker run -d \
 ## Docker Compose
 
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
   sub2api:
@@ -65,13 +65,13 @@ Docker restores existing containers after a host restart.
 
 ## Environment Variables
 
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Yes | - |
-| `REDIS_URL` | Redis connection string | Yes | - |
-| `PORT` | Server port | No | `8080` |
-| `GIN_MODE` | Gin framework mode (`debug`/`release`) | No | `release` |
-| `SUB2API_DEPLOYMENT` | Deployment marker for images that package a prebuilt binary. Set to `docker` by the published images; only `docker` is meaningful, any other value (or none) means a native install. | No | - |
+| Variable             | Description                                                                                                                                                                          | Required | Default   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | --------- |
+| `DATABASE_URL`       | PostgreSQL connection string                                                                                                                                                         | Yes      | -         |
+| `REDIS_URL`          | Redis connection string                                                                                                                                                              | Yes      | -         |
+| `PORT`               | Server port                                                                                                                                                                          | No       | `8080`    |
+| `GIN_MODE`           | Gin framework mode (`debug`/`release`)                                                                                                                                               | No       | `release` |
+| `SUB2API_DEPLOYMENT` | Deployment marker for images that package a prebuilt binary. Set to `docker` by the published images; only `docker` is meaningful, any other value (or none) means a native install. | No       | -         |
 
 ## Updating a Container Deployment
 
@@ -91,7 +91,7 @@ The swap is a **writable-layer change, not an image upgrade**:
   on the process exit that the in-app **Restart Now** button performs.
 - **Recreating** the container discards it. `docker compose up -d` after
   changing the tag, `docker compose up -d --force-recreate`, `docker compose
-  down && docker compose up -d`, `docker rm` plus `docker run`, or any other
+down && docker compose up -d`, `docker rm` plus `docker run`, or any other
   re-created container starts again from the image — the instance silently
   reverts to the binary the tag pins, and the in-app update is gone.
 
@@ -128,7 +128,7 @@ versioned rollback) still returns HTTP 409 with reason
 `BINARY_UPDATE_UNSUPPORTED`, and the badge keeps its in-app rollback disabled
 for a container deployment. The in-app update writes its own `.backup` file into
 the writable layer as well, so a rollback through it would be undone by the next
-container recreate. Rolling *back* is the same image operation with an older
+container recreate. Rolling _back_ is the same image operation with an older
 tag:
 
 ```yaml

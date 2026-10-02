@@ -53,14 +53,14 @@ my-plugin/
 
 运行时实现 `TransportPlugin` 服务，必须满足以下约定：
 
-| 方法 | 要求 |
-| --- | --- |
-| `GetInfo` | 返回的插件 ID、版本、协议版本、传输 API 版本和能力必须与清单一致。 |
-| `Health` | 快速返回进程是否可以接收新请求，不执行长时间网络探测。 |
-| `ValidateConfig` | 严格解析 JSON，拒绝未知字段和非法范围，并返回完整的规范化配置。 |
-| `ApplyConfig` | 成功后原子切换配置；失败时保留旧配置和旧连接。 |
-| `TestConfig` | 针对已保存配置进行快速诊断，返回简短、可展示的结果。 |
-| `Forward` | 按协议接收请求流，发出上游请求，再按顺序返回响应流。 |
+| 方法             | 要求                                                               |
+| ---------------- | ------------------------------------------------------------------ |
+| `GetInfo`        | 返回的插件 ID、版本、协议版本、传输 API 版本和能力必须与清单一致。 |
+| `Health`         | 快速返回进程是否可以接收新请求，不执行长时间网络探测。             |
+| `ValidateConfig` | 严格解析 JSON，拒绝未知字段和非法范围，并返回完整的规范化配置。    |
+| `ApplyConfig`    | 成功后原子切换配置；失败时保留旧配置和旧连接。                     |
+| `TestConfig`     | 针对已保存配置进行快速诊断，返回简短、可展示的结果。               |
+| `Forward`        | 按协议接收请求流，发出上游请求，再按顺序返回响应流。               |
 
 请求帧顺序为 `start`、零到多个 `body_chunk`、`body_end`；响应帧顺序为 `start`、零到多个 `body_chunk`、`end`。不能继续处理时发送 `error` 帧。
 
@@ -96,13 +96,13 @@ UI 是插件包内的静态页面，不需要修改 Sub2API 前端源码。宿�
 
 当前 Bridge 支持：
 
-| 消息 | 用途 |
-| --- | --- |
-| `config.load` | 读取当前配置。 |
+| 消息          | 用途                                     |
+| ------------- | ---------------------------------------- |
+| `config.load` | 读取当前配置。                           |
 | `config.save` | 提交配置，由运行时校验、应用并加密保存。 |
-| `config.test` | 运行已保存配置的诊断。 |
-| `ui.resize` | 调整配置 iframe 高度。 |
-| `ui.notify` | 显示成功、错误或提示消息。 |
+| `config.test` | 运行已保存配置的诊断。                   |
+| `ui.resize`   | 调整配置 iframe 高度。                   |
+| `ui.notify`   | 显示成功、错误或提示消息。               |
 
 每条消息都必须带 `request_id`，并校验 `event.source`、消息来源标识和 Bridge Token。不要依赖 CDN、远程脚本、Cookie 或本地存储。页面需要兼容窄屏和明暗主题，并正确处理加载、保存、测试、超时和未保存状态。
 
@@ -213,14 +213,14 @@ SUB2API_TEST_PLUGIN_PACKAGE=plugins/my-openai-plugin/dist/my-openai-plugin.s2plu
 
 ## 10. 常见问题
 
-| 现象 | 排查方向 |
-| --- | --- |
-| 安装提示签名不受信任 | 检查 `signature.json.key_id`、Base64 公钥和配置键是否完全一致。 |
-| 插件显示不兼容 | 检查 `requires.sub2api`、`plugin_protocol`、`transport_api` 和 `ui_bridge`。 |
-| 插件进程无法启动 | 检查目标系统和架构对应的运行时路径、可执行权限和运行用户权限。 |
-| 配置页无法加载 | 检查 `ui.entrypoint`、UI 文件哈希、Bridge Token 校验和 iframe 消息来源。 |
-| 保存后配置未生效 | 查看 `ValidateConfig`、`ApplyConfig` 返回的规范化配置和诊断信息。 |
-| 请求失败后重复执行 | 检查 `ForwardResponseError.request_sent` 是否准确反映请求是否可能已发出。 |
+| 现象                 | 排查方向                                                                     |
+| -------------------- | ---------------------------------------------------------------------------- |
+| 安装提示签名不受信任 | 检查 `signature.json.key_id`、Base64 公钥和配置键是否完全一致。              |
+| 插件显示不兼容       | 检查 `requires.sub2api`、`plugin_protocol`、`transport_api` 和 `ui_bridge`。 |
+| 插件进程无法启动     | 检查目标系统和架构对应的运行时路径、可执行权限和运行用户权限。               |
+| 配置页无法加载       | 检查 `ui.entrypoint`、UI 文件哈希、Bridge Token 校验和 iframe 消息来源。     |
+| 保存后配置未生效     | 查看 `ValidateConfig`、`ApplyConfig` 返回的规范化配置和诊断信息。            |
+| 请求失败后重复执行   | 检查 `ForwardResponseError.request_sent` 是否准确反映请求是否可能已发出。    |
 
 ## 11. 需要扩展能力时
 

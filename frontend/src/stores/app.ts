@@ -3,67 +3,69 @@
  * Manages global UI state including sidebar, loading indicators, and toast notifications
  */
 
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import type { Toast, ToastType, PublicSettings } from '@/types'
-import { i18n } from '@/i18n'
+import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+import type { Toast, ToastType, PublicSettings } from "@/types";
+import { i18n } from "@/i18n";
 import {
   checkUpdates as checkUpdatesAPI,
   type VersionInfo,
-  type ReleaseInfo
-} from '@/api/admin/system'
-import { getPublicSettings as fetchPublicSettingsAPI } from '@/api/auth'
+  type ReleaseInfo,
+} from "@/api/admin/system";
+import { getPublicSettings as fetchPublicSettingsAPI } from "@/api/auth";
 
-export const useAppStore = defineStore('app', () => {
+export const useAppStore = defineStore("app", () => {
   // ==================== State ====================
 
-  const sidebarCollapsed = ref<boolean>(false)
-  const mobileOpen = ref<boolean>(false)
-  const sidebarScrollTop = ref<number>(0)
-  const loading = ref<boolean>(false)
-  const toasts = ref<Toast[]>([])
+  const sidebarCollapsed = ref<boolean>(false);
+  const mobileOpen = ref<boolean>(false);
+  const sidebarScrollTop = ref<number>(0);
+  const loading = ref<boolean>(false);
+  const toasts = ref<Toast[]>([]);
 
   // Public settings cache state
-  const publicSettingsLoaded = ref<boolean>(false)
-  const publicSettingsLoading = ref<boolean>(false)
-  const siteName = ref<string>('Sub2API')
-  const siteLogo = ref<string>('')
-  const siteVersion = ref<string>('')
-  const contactInfo = ref<string>('')
-  const apiBaseUrl = ref<string>('')
-  const docUrl = ref<string>('')
-  const cachedPublicSettings = ref<PublicSettings | null>(null)
-  let publicSettingsRequest: Promise<PublicSettings | null> | null = null
+  const publicSettingsLoaded = ref<boolean>(false);
+  const publicSettingsLoading = ref<boolean>(false);
+  const siteName = ref<string>("Sub2API");
+  const siteLogo = ref<string>("");
+  const siteVersion = ref<string>("");
+  const contactInfo = ref<string>("");
+  const apiBaseUrl = ref<string>("");
+  const docUrl = ref<string>("");
+  const cachedPublicSettings = ref<PublicSettings | null>(null);
+  let publicSettingsRequest: Promise<PublicSettings | null> | null = null;
 
   // Version cache state
-  const versionLoaded = ref<boolean>(false)
-  const versionLoading = ref<boolean>(false)
-  const currentVersion = ref<string>('')
-  const latestVersion = ref<string>('')
-  const hasUpdate = ref<boolean>(false)
-  const buildType = ref<string>('source')
-  const releaseInfo = ref<ReleaseInfo | null>(null)
+  const versionLoaded = ref<boolean>(false);
+  const versionLoading = ref<boolean>(false);
+  const currentVersion = ref<string>("");
+  const latestVersion = ref<string>("");
+  const hasUpdate = ref<boolean>(false);
+  const buildType = ref<string>("source");
+  const releaseInfo = ref<ReleaseInfo | null>(null);
   // A version check can conclude "no update" for reasons that are not "you are
   // on the latest version" (no matching binary asset, GitHub unreachable).
   // The backend reports those through `warning`; a failed request is tracked
   // separately. Both mean the result is unknown and must not be shown as
   // "up to date". A normal `cached: true` hit is not a failure.
-  const versionWarning = ref<string>('')
-  const versionCheckFailed = ref<boolean>(false)
+  const versionWarning = ref<string>("");
+  const versionCheckFailed = ref<boolean>(false);
   // Whether the backend offers a verified in-place binary update. Docker may
   // support a temporary writable-layer swap; an old backend with no flag does not.
-  const binaryUpdateSupported = ref<boolean>(false)
-  const deploymentType = ref<'' | 'native' | 'docker'>('')
+  const binaryUpdateSupported = ref<boolean>(false);
+  const deploymentType = ref<"" | "native" | "docker">("");
 
   // Auto-incrementing ID for toasts
-  let toastIdCounter = 0
+  let toastIdCounter = 0;
 
   // ==================== Computed ====================
 
-  const hasActiveToasts = computed(() => toasts.value.length > 0)
-  const backendModeEnabled = computed(() => cachedPublicSettings.value?.backend_mode_enabled ?? false)
+  const hasActiveToasts = computed(() => toasts.value.length > 0);
+  const backendModeEnabled = computed(
+    () => cachedPublicSettings.value?.backend_mode_enabled ?? false,
+  );
 
-  const loadingCount = ref<number>(0)
+  const loadingCount = ref<number>(0);
 
   // ==================== Actions ====================
 
@@ -71,7 +73,7 @@ export const useAppStore = defineStore('app', () => {
    * Toggle sidebar collapsed state
    */
   function toggleSidebar(): void {
-    sidebarCollapsed.value = !sidebarCollapsed.value
+    sidebarCollapsed.value = !sidebarCollapsed.value;
   }
 
   /**
@@ -79,14 +81,14 @@ export const useAppStore = defineStore('app', () => {
    * @param collapsed - Whether sidebar should be collapsed
    */
   function setSidebarCollapsed(collapsed: boolean): void {
-    sidebarCollapsed.value = collapsed
+    sidebarCollapsed.value = collapsed;
   }
 
   /**
    * Toggle mobile sidebar open state
    */
   function toggleMobileSidebar(): void {
-    mobileOpen.value = !mobileOpen.value
+    mobileOpen.value = !mobileOpen.value;
   }
 
   /**
@@ -94,7 +96,7 @@ export const useAppStore = defineStore('app', () => {
    * @param open - Whether mobile sidebar should be open
    */
   function setMobileOpen(open: boolean): void {
-    mobileOpen.value = open
+    mobileOpen.value = open;
   }
 
   /**
@@ -103,11 +105,11 @@ export const useAppStore = defineStore('app', () => {
    */
   function setLoading(isLoading: boolean): void {
     if (isLoading) {
-      loadingCount.value++
+      loadingCount.value++;
     } else {
-      loadingCount.value = Math.max(0, loadingCount.value - 1)
+      loadingCount.value = Math.max(0, loadingCount.value - 1);
     }
-    loading.value = loadingCount.value > 0
+    loading.value = loadingCount.value > 0;
   }
 
   /**
@@ -117,26 +119,30 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (undefined = no auto-dismiss)
    * @returns Toast ID for manual dismissal
    */
-  function showToast(type: ToastType, message: string, duration?: number): string {
-    const id = `toast-${++toastIdCounter}`
+  function showToast(
+    type: ToastType,
+    message: string,
+    duration?: number,
+  ): string {
+    const id = `toast-${++toastIdCounter}`;
     const toast: Toast = {
       id,
       type,
       message,
       duration,
-      startTime: duration !== undefined ? Date.now() : undefined
-    }
+      startTime: duration !== undefined ? Date.now() : undefined,
+    };
 
-    toasts.value.push(toast)
+    toasts.value.push(toast);
 
     // Auto-dismiss if duration is specified
     if (duration !== undefined) {
       setTimeout(() => {
-        hideToast(id)
-      }, duration)
+        hideToast(id);
+      }, duration);
     }
 
-    return id
+    return id;
   }
 
   /**
@@ -145,7 +151,7 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (default: 3000)
    */
   function showSuccess(message: string, duration: number = 3000): string {
-    return showToast('success', message, duration)
+    return showToast("success", message, duration);
   }
 
   /**
@@ -154,7 +160,7 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (default: 5000)
    */
   function showError(message: string, duration: number = 5000): string {
-    return showToast('error', message, duration)
+    return showToast("error", message, duration);
   }
 
   /**
@@ -163,7 +169,7 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (default: 3000)
    */
   function showInfo(message: string, duration: number = 3000): string {
-    return showToast('info', message, duration)
+    return showToast("info", message, duration);
   }
 
   /**
@@ -172,7 +178,7 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (default: 4000)
    */
   function showWarning(message: string, duration: number = 4000): string {
-    return showToast('warning', message, duration)
+    return showToast("warning", message, duration);
   }
 
   /**
@@ -180,9 +186,9 @@ export const useAppStore = defineStore('app', () => {
    * @param id - Toast ID to hide
    */
   function hideToast(id: string): void {
-    const index = toasts.value.findIndex((t) => t.id === id)
+    const index = toasts.value.findIndex((t) => t.id === id);
     if (index !== -1) {
-      toasts.value.splice(index, 1)
+      toasts.value.splice(index, 1);
     }
   }
 
@@ -190,7 +196,7 @@ export const useAppStore = defineStore('app', () => {
    * Clear all toasts
    */
   function clearAllToasts(): void {
-    toasts.value = []
+    toasts.value = [];
   }
 
   /**
@@ -200,11 +206,11 @@ export const useAppStore = defineStore('app', () => {
    * @returns Promise resolving to operation result
    */
   async function withLoading<T>(operation: () => Promise<T>): Promise<T> {
-    setLoading(true)
+    setLoading(true);
     try {
-      return await operation()
+      return await operation();
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
@@ -217,20 +223,20 @@ export const useAppStore = defineStore('app', () => {
    */
   async function withLoadingAndError<T>(
     operation: () => Promise<T>,
-    errorMessage?: string
+    errorMessage?: string,
   ): Promise<T | null> {
-    setLoading(true)
+    setLoading(true);
     try {
-      return await operation()
+      return await operation();
     } catch (error) {
       const message =
         errorMessage ||
         (error as { message?: string }).message ||
-        i18n.global.t('common.unknownError')
-      showError(message)
-      return null
+        i18n.global.t("common.unknownError");
+      showError(message);
+      return null;
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
@@ -239,10 +245,10 @@ export const useAppStore = defineStore('app', () => {
    * Useful for cleanup or testing
    */
   function reset(): void {
-    sidebarCollapsed.value = false
-    loading.value = false
-    loadingCount.value = 0
-    toasts.value = []
+    sidebarCollapsed.value = false;
+    loading.value = false;
+    loadingCount.value = 0;
+    toasts.value = [];
   }
 
   // ==================== Version Management ====================
@@ -263,40 +269,40 @@ export const useAppStore = defineStore('app', () => {
         cached: true,
         warning: versionWarning.value || undefined,
         deployment_type: deploymentType.value || undefined,
-        binary_update_supported: binaryUpdateSupported.value
-      }
+        binary_update_supported: binaryUpdateSupported.value,
+      };
     }
 
     // Prevent duplicate requests
     if (versionLoading.value) {
-      return null
+      return null;
     }
 
-    versionLoading.value = true
+    versionLoading.value = true;
     try {
-      const data = await checkUpdatesAPI(force)
-      currentVersion.value = data.current_version
-      latestVersion.value = data.latest_version
-      hasUpdate.value = data.has_update
-      buildType.value = data.build_type || 'source'
-      releaseInfo.value = data.release_info || null
-      versionWarning.value = data.warning || ''
-      versionCheckFailed.value = false
+      const data = await checkUpdatesAPI(force);
+      currentVersion.value = data.current_version;
+      latestVersion.value = data.latest_version;
+      hasUpdate.value = data.has_update;
+      buildType.value = data.build_type || "source";
+      releaseInfo.value = data.release_info || null;
+      versionWarning.value = data.warning || "";
+      versionCheckFailed.value = false;
       // Absent field (older backend) stays false: never offer an in-place
       // binary swap we cannot confirm is safe for this deployment.
-      binaryUpdateSupported.value = data.binary_update_supported === true
-      deploymentType.value = data.deployment_type || ''
-      versionLoaded.value = true
-      return data
+      binaryUpdateSupported.value = data.binary_update_supported === true;
+      deploymentType.value = data.deployment_type || "";
+      versionLoaded.value = true;
+      return data;
     } catch (error) {
-      console.error('Failed to fetch version:', error)
+      console.error("Failed to fetch version:", error);
       // The check failed, so nothing is known about the latest version. Keep
       // the flag set so callers never render this as "already up to date".
-      versionWarning.value = ''
-      versionCheckFailed.value = true
-      return null
+      versionWarning.value = "";
+      versionCheckFailed.value = true;
+      return null;
     } finally {
-      versionLoading.value = false
+      versionLoading.value = false;
     }
   }
 
@@ -304,10 +310,10 @@ export const useAppStore = defineStore('app', () => {
    * Clear version cache (e.g., after update)
    */
   function clearVersionCache(): void {
-    versionLoaded.value = false
-    hasUpdate.value = false
-    versionWarning.value = ''
-    versionCheckFailed.value = false
+    versionLoaded.value = false;
+    hasUpdate.value = false;
+    versionWarning.value = "";
+    versionCheckFailed.value = false;
   }
 
   // ==================== Public Settings Management ====================
@@ -316,17 +322,17 @@ export const useAppStore = defineStore('app', () => {
    * Apply settings to store state (internal helper to avoid code duplication)
    */
   function applySettings(config: PublicSettings): void {
-    if (typeof window !== 'undefined') {
-      window.__APP_CONFIG__ = { ...config }
+    if (typeof window !== "undefined") {
+      window.__APP_CONFIG__ = { ...config };
     }
-    cachedPublicSettings.value = config
-    siteName.value = config.site_name || 'Sub2API'
-    siteLogo.value = config.site_logo || ''
-    siteVersion.value = config.version || ''
-    contactInfo.value = config.contact_info || ''
-    apiBaseUrl.value = config.api_base_url || ''
-    docUrl.value = config.doc_url || ''
-    publicSettingsLoaded.value = true
+    cachedPublicSettings.value = config;
+    siteName.value = config.site_name || "Sub2API";
+    siteLogo.value = config.site_logo || "";
+    siteVersion.value = config.version || "";
+    contactInfo.value = config.contact_info || "";
+    apiBaseUrl.value = config.api_base_url || "";
+    docUrl.value = config.doc_url || "";
+    publicSettingsLoaded.value = true;
   }
 
   /**
@@ -337,19 +343,19 @@ export const useAppStore = defineStore('app', () => {
     // An active request always wins over cache/force semantics so every caller observes
     // the same refresh result and no older request can overwrite a newer one.
     if (publicSettingsRequest) {
-      return publicSettingsRequest
+      return publicSettingsRequest;
     }
 
     // Check for injected config from server (eliminates flash)
     if (!publicSettingsLoaded.value && !force && window.__APP_CONFIG__) {
-      applySettings(window.__APP_CONFIG__)
-      return Promise.resolve(window.__APP_CONFIG__)
+      applySettings(window.__APP_CONFIG__);
+      return Promise.resolve(window.__APP_CONFIG__);
     }
 
     // Return cached data if available and not forcing refresh
     if (publicSettingsLoaded.value && !force) {
       if (cachedPublicSettings.value) {
-        return Promise.resolve({ ...cachedPublicSettings.value })
+        return Promise.resolve({ ...cachedPublicSettings.value });
       }
       return Promise.resolve({
         registration_enabled: false,
@@ -360,18 +366,18 @@ export const useAppStore = defineStore('app', () => {
         password_reset_enabled: false,
         invitation_code_enabled: false,
         turnstile_enabled: false,
-        turnstile_site_key: '',
+        turnstile_site_key: "",
         aliyun_captcha_enabled: false,
-        aliyun_captcha_scene_id: '',
-        aliyun_captcha_prefix: '',
-        aliyun_captcha_region: 'cn',
+        aliyun_captcha_scene_id: "",
+        aliyun_captcha_prefix: "",
+        aliyun_captcha_region: "cn",
         site_name: siteName.value,
         site_logo: siteLogo.value,
-        site_subtitle: '',
+        site_subtitle: "",
         api_base_url: apiBaseUrl.value,
         contact_info: contactInfo.value,
         doc_url: docUrl.value,
-        home_content: '',
+        home_content: "",
         compact_home_enabled: false,
         hide_ccs_import_button: false,
         payment_enabled: false,
@@ -385,7 +391,7 @@ export const useAppStore = defineStore('app', () => {
         wechat_oauth_mp_enabled: false,
         wechat_oauth_mobile_enabled: false,
         oidc_oauth_enabled: false,
-        oidc_oauth_provider_name: 'OIDC',
+        oidc_oauth_provider_name: "OIDC",
         github_oauth_enabled: false,
         google_oauth_enabled: false,
         backend_mode_enabled: false,
@@ -406,45 +412,45 @@ export const useAppStore = defineStore('app', () => {
         service_quota_enabled: false,
         affiliate_enabled: false,
         allow_user_view_error_requests: false,
-      })
+      });
     }
 
-    publicSettingsLoading.value = true
-    let apiRequest: Promise<PublicSettings>
+    publicSettingsLoading.value = true;
+    let apiRequest: Promise<PublicSettings>;
     try {
-      apiRequest = fetchPublicSettingsAPI()
+      apiRequest = fetchPublicSettingsAPI();
     } catch (error) {
-      console.error('Failed to fetch public settings:', error)
-      publicSettingsLoading.value = false
-      return Promise.resolve(null)
+      console.error("Failed to fetch public settings:", error);
+      publicSettingsLoading.value = false;
+      return Promise.resolve(null);
     }
 
     const request = apiRequest
       .then((data) => {
-        applySettings(data)
-        return data
+        applySettings(data);
+        return data;
       })
       .catch((error) => {
-        console.error('Failed to fetch public settings:', error)
-        return null
+        console.error("Failed to fetch public settings:", error);
+        return null;
       })
       .finally(() => {
         if (publicSettingsRequest === request) {
-          publicSettingsRequest = null
-          publicSettingsLoading.value = false
+          publicSettingsRequest = null;
+          publicSettingsLoading.value = false;
         }
-      })
+      });
 
-    publicSettingsRequest = request
-    return request
+    publicSettingsRequest = request;
+    return request;
   }
 
   /**
    * Clear public settings cache
    */
   function clearPublicSettingsCache(): void {
-    publicSettingsLoaded.value = false
-    cachedPublicSettings.value = null
+    publicSettingsLoaded.value = false;
+    cachedPublicSettings.value = null;
   }
 
   /**
@@ -454,10 +460,10 @@ export const useAppStore = defineStore('app', () => {
    */
   function initFromInjectedConfig(): boolean {
     if (window.__APP_CONFIG__) {
-      applySettings(window.__APP_CONFIG__)
-      return true
+      applySettings(window.__APP_CONFIG__);
+      return true;
     }
-    return false
+    return false;
   }
 
   // ==================== Return Store API ====================
@@ -521,6 +527,6 @@ export const useAppStore = defineStore('app', () => {
     // Public settings actions
     fetchPublicSettings,
     clearPublicSettingsCache,
-    initFromInjectedConfig
-  }
-})
+    initFromInjectedConfig,
+  };
+});

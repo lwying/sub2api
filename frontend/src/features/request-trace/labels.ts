@@ -13,39 +13,80 @@ import {
   requestTraceStageViews,
   type RequestTraceExportFilter,
   type TraceAckLanguage,
-} from './types'
+} from "./types";
 
-export type Translate = (key: string, params?: Record<string, unknown>) => string
+export type Translate = (
+  key: string,
+  params?: Record<string, unknown>,
+) => string;
 
-const DETAIL_PREFIX = 'admin.requestTrace.detail'
-const LIST_PREFIX = 'admin.requestTrace.list'
+const DETAIL_PREFIX = "admin.requestTrace.detail";
+const LIST_PREFIX = "admin.requestTrace.list";
 
 /**
  * The one key a closed value renders through: its own label, or the fallback when
  * the value is not part of the set the frontend knows about.
  */
-function closedSetKey(prefix: string, scope: string, values: readonly string[], value: string, fallback: string): string {
-  return `${prefix}.${scope}.${values.includes(value) ? value : fallback}`
+function closedSetKey(
+  prefix: string,
+  scope: string,
+  values: readonly string[],
+  value: string,
+  fallback: string,
+): string {
+  return `${prefix}.${scope}.${values.includes(value) ? value : fallback}`;
 }
 
 /** Which client request/response body view a stage reports. */
 export function stageViewLabel(t: Translate, viewName: string): string {
-  return t(closedSetKey(DETAIL_PREFIX, 'viewLabel', requestTraceStageViews, viewName, 'unknown'))
+  return t(
+    closedSetKey(
+      DETAIL_PREFIX,
+      "viewLabel",
+      requestTraceStageViews,
+      viewName,
+      "unknown",
+    ),
+  );
 }
 
 /** The stage name, e.g. `wire_attempt`. */
 export function stageLabel(t: Translate, stage: string): string {
-  return t(closedSetKey(DETAIL_PREFIX, 'stageLabel', requestTraceStageNames, stage, 'unknown'))
+  return t(
+    closedSetKey(
+      DETAIL_PREFIX,
+      "stageLabel",
+      requestTraceStageNames,
+      stage,
+      "unknown",
+    ),
+  );
 }
 
 /** A stage's body state, e.g. `redaction_unverified`. */
 export function stageStateLabel(t: Translate, state: string): string {
-  return t(closedSetKey(DETAIL_PREFIX, 'stateLabel', requestTraceStageStates, state, 'unknown'))
+  return t(
+    closedSetKey(
+      DETAIL_PREFIX,
+      "stateLabel",
+      requestTraceStageStates,
+      state,
+      "unknown",
+    ),
+  );
 }
 
 /** A summary row's capture state, e.g. `partial`. */
 export function captureStateLabel(t: Translate, state: string): string {
-  return t(closedSetKey(LIST_PREFIX, 'captureStateLabel', requestTraceCaptureStates, state, 'unknown'))
+  return t(
+    closedSetKey(
+      LIST_PREFIX,
+      "captureStateLabel",
+      requestTraceCaptureStates,
+      state,
+      "unknown",
+    ),
+  );
 }
 
 /**
@@ -54,17 +95,30 @@ export function captureStateLabel(t: Translate, state: string): string {
  * visible text (a caller may still surface it in a non-display attribute).
  */
 export function stageReasonLabel(t: Translate, reason: string): string {
-  return t(closedSetKey(DETAIL_PREFIX, 'reasonLabel', requestTraceStageReasons, reason, 'other'))
+  return t(
+    closedSetKey(
+      DETAIL_PREFIX,
+      "reasonLabel",
+      requestTraceStageReasons,
+      reason,
+      "other",
+    ),
+  );
 }
 
 /** The language the risk statement is acknowledged in, as its own name. */
-export function ackLanguageLabel(t: Translate, language: TraceAckLanguage): string {
-  return t(`admin.requestTrace.operator.languages.${language === 'zh' ? 'zh' : 'en'}`)
+export function ackLanguageLabel(
+  t: Translate,
+  language: TraceAckLanguage,
+): string {
+  return t(
+    `admin.requestTrace.operator.languages.${language === "zh" ? "zh" : "en"}`,
+  );
 }
 
 function summaryDate(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 /**
@@ -75,27 +129,84 @@ function summaryDate(value: string): string {
  * no condition says so: "everything" is a scope, and leaving the line blank
  * would let the operator read it as "nothing".
  */
-export function exportScopeSummary(t: Translate, filter: RequestTraceExportFilter): string {
-  const parts: string[] = []
-  if (filter.trace_ids?.length) parts.push(t('admin.requestTrace.export.scope.selected', { count: filter.trace_ids.length }))
-  if (filter.trace_id) parts.push(`${t('admin.requestTrace.list.traceId')}: ${filter.trace_id}`)
-  if (filter.route_family) parts.push(t(`admin.requestTrace.list.${filter.route_family}`))
-  if (filter.client_status !== undefined) parts.push(`${t('admin.requestTrace.list.status')}: ${filter.client_status}`)
-  if (filter.usage_linked !== undefined) parts.push(t(filter.usage_linked ? 'admin.requestTrace.list.linked' : 'admin.requestTrace.list.unlinked'))
-  if (filter.usage_log_id !== undefined) parts.push(`${t('admin.requestTrace.list.usage')}: #${filter.usage_log_id}`)
-  if (filter.account_id !== undefined) parts.push(`${t('admin.requestTrace.list.accountId')}: #${filter.account_id}`)
-  if (filter.group_id !== undefined) parts.push(`${t('admin.requestTrace.list.group')}: #${filter.group_id}`)
-  if (filter.group_unknown) parts.push(`${t('admin.requestTrace.list.group')}: ${t('admin.requestTrace.list.unknownValue')}`)
-  if (filter.requested_model) parts.push(`${t('admin.requestTrace.list.requestedModel')}: ${filter.requested_model}`)
-  if (filter.model_unknown) parts.push(`${t('admin.requestTrace.list.requestedModel')}: ${t('admin.requestTrace.list.unknownValue')}`)
-  if (filter.platform) parts.push(`${t('admin.requestTrace.list.platform')}: ${filter.platform}`)
-  if (filter.platform_unknown) parts.push(`${t('admin.requestTrace.list.platform')}: ${t('admin.requestTrace.list.unknownValue')}`)
-  if (filter.user_id !== undefined) parts.push(`${t('admin.requestTrace.list.user')}: #${filter.user_id}`)
-  if (filter.user_unknown) parts.push(`${t('admin.requestTrace.list.user')}: ${t('admin.requestTrace.list.unknownValue')}`)
-  if (filter.api_key_id !== undefined) parts.push(`${t('admin.requestTrace.list.apiKey')}: #${filter.api_key_id}`)
-  if (filter.api_key_unknown) parts.push(`${t('admin.requestTrace.list.apiKey')}: ${t('admin.requestTrace.list.unknownValue')}`)
-  if (filter.q) parts.push(`${t('admin.requestTrace.list.keyword')}: ${filter.q}`)
-  if (filter.created_from) parts.push(`${t('admin.requestTrace.list.from')}: ${summaryDate(filter.created_from)}`)
-  if (filter.created_to) parts.push(`${t('admin.requestTrace.list.to')}: ${summaryDate(filter.created_to)}`)
-  return parts.length ? parts.join(' · ') : t('admin.requestTrace.export.scope.none')
+export function exportScopeSummary(
+  t: Translate,
+  filter: RequestTraceExportFilter,
+): string {
+  const parts: string[] = [];
+  if (filter.trace_ids?.length)
+    parts.push(
+      t("admin.requestTrace.export.scope.selected", {
+        count: filter.trace_ids.length,
+      }),
+    );
+  if (filter.trace_id)
+    parts.push(`${t("admin.requestTrace.list.traceId")}: ${filter.trace_id}`);
+  if (filter.route_family)
+    parts.push(t(`admin.requestTrace.list.${filter.route_family}`));
+  if (filter.client_status !== undefined)
+    parts.push(
+      `${t("admin.requestTrace.list.status")}: ${filter.client_status}`,
+    );
+  if (filter.usage_linked !== undefined)
+    parts.push(
+      t(
+        filter.usage_linked
+          ? "admin.requestTrace.list.linked"
+          : "admin.requestTrace.list.unlinked",
+      ),
+    );
+  if (filter.usage_log_id !== undefined)
+    parts.push(
+      `${t("admin.requestTrace.list.usage")}: #${filter.usage_log_id}`,
+    );
+  if (filter.account_id !== undefined)
+    parts.push(
+      `${t("admin.requestTrace.list.accountId")}: #${filter.account_id}`,
+    );
+  if (filter.group_id !== undefined)
+    parts.push(`${t("admin.requestTrace.list.group")}: #${filter.group_id}`);
+  if (filter.group_unknown)
+    parts.push(
+      `${t("admin.requestTrace.list.group")}: ${t("admin.requestTrace.list.unknownValue")}`,
+    );
+  if (filter.requested_model)
+    parts.push(
+      `${t("admin.requestTrace.list.requestedModel")}: ${filter.requested_model}`,
+    );
+  if (filter.model_unknown)
+    parts.push(
+      `${t("admin.requestTrace.list.requestedModel")}: ${t("admin.requestTrace.list.unknownValue")}`,
+    );
+  if (filter.platform)
+    parts.push(`${t("admin.requestTrace.list.platform")}: ${filter.platform}`);
+  if (filter.platform_unknown)
+    parts.push(
+      `${t("admin.requestTrace.list.platform")}: ${t("admin.requestTrace.list.unknownValue")}`,
+    );
+  if (filter.user_id !== undefined)
+    parts.push(`${t("admin.requestTrace.list.user")}: #${filter.user_id}`);
+  if (filter.user_unknown)
+    parts.push(
+      `${t("admin.requestTrace.list.user")}: ${t("admin.requestTrace.list.unknownValue")}`,
+    );
+  if (filter.api_key_id !== undefined)
+    parts.push(`${t("admin.requestTrace.list.apiKey")}: #${filter.api_key_id}`);
+  if (filter.api_key_unknown)
+    parts.push(
+      `${t("admin.requestTrace.list.apiKey")}: ${t("admin.requestTrace.list.unknownValue")}`,
+    );
+  if (filter.q)
+    parts.push(`${t("admin.requestTrace.list.keyword")}: ${filter.q}`);
+  if (filter.created_from)
+    parts.push(
+      `${t("admin.requestTrace.list.from")}: ${summaryDate(filter.created_from)}`,
+    );
+  if (filter.created_to)
+    parts.push(
+      `${t("admin.requestTrace.list.to")}: ${summaryDate(filter.created_to)}`,
+    );
+  return parts.length
+    ? parts.join(" · ")
+    : t("admin.requestTrace.export.scope.none");
 }

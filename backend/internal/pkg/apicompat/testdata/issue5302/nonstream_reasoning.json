@@ -10,7 +10,7 @@
         "content": "final answer",
         "reasoning": "fallback reasoning",
         "reasoning_details": [
-          {"type": "reasoning.text", "text": "fallback reasoning"}
+          { "type": "reasoning.text", "text": "fallback reasoning" }
         ]
       },
       "finish_reason": "stop"

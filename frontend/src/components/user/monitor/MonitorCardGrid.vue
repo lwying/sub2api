@@ -21,7 +21,9 @@
           <div class="h-16 rounded-xl bg-gray-100 dark:bg-dark-900/40"></div>
           <div class="h-16 rounded-xl bg-gray-100 dark:bg-dark-900/40"></div>
         </div>
-        <div class="mt-6 h-5 w-full rounded bg-gray-100 dark:bg-dark-900/40"></div>
+        <div
+          class="mt-6 h-5 w-full rounded bg-gray-100 dark:bg-dark-900/40"
+        ></div>
       </div>
     </div>
 
@@ -49,33 +51,35 @@
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import type { UserMonitorView, UserMonitorDetail } from '@/api/channelMonitor'
-import EmptyState from '@/components/common/EmptyState.vue'
-import MonitorCard from './MonitorCard.vue'
+import { useI18n } from "vue-i18n";
+import type { UserMonitorView, UserMonitorDetail } from "@/api/channelMonitor";
+import EmptyState from "@/components/common/EmptyState.vue";
+import MonitorCard from "./MonitorCard.vue";
 
 const props = defineProps<{
-  items: UserMonitorView[]
-  window: '7d' | '15d' | '30d'
-  countdownSeconds: number
-  loading: boolean
-  detailCache: Record<number, UserMonitorDetail>
-}>()
+  items: UserMonitorView[];
+  window: "7d" | "15d" | "30d";
+  countdownSeconds: number;
+  loading: boolean;
+  detailCache: Record<number, UserMonitorDetail>;
+}>();
 
 const emit = defineEmits<{
-  (e: 'cardClick', item: UserMonitorView): void
-}>()
+  (e: "cardClick", item: UserMonitorView): void;
+}>();
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 function resolveAvailability(item: UserMonitorView): number | null {
-  if (props.window === '7d') {
-    return item.availability_7d ?? null
+  if (props.window === "7d") {
+    return item.availability_7d ?? null;
   }
-  const detail = props.detailCache[item.id]
-  if (!detail) return null
-  const primary = detail.models.find(m => m.model === item.primary_model)
-  if (!primary) return null
-  return props.window === '15d' ? primary.availability_15d ?? null : primary.availability_30d ?? null
+  const detail = props.detailCache[item.id];
+  if (!detail) return null;
+  const primary = detail.models.find((m) => m.model === item.primary_model);
+  if (!primary) return null;
+  return props.window === "15d"
+    ? (primary.availability_15d ?? null)
+    : (primary.availability_30d ?? null);
 }
 </script>

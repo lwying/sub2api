@@ -57,7 +57,9 @@ describe("429 account limit settings group", () => {
   it("writes N, the switch, the scope and the seconds in one payload", async () => {
     put.mockResolvedValueOnce({ data: STORED });
 
-    await expect(updateRateLimit429AccountLimit(STORED)).resolves.toEqual(STORED);
+    await expect(updateRateLimit429AccountLimit(STORED)).resolves.toEqual(
+      STORED,
+    );
     expect(put).toHaveBeenCalledWith(SETTINGS_PATH, STORED);
   });
 
@@ -98,31 +100,73 @@ describe("429 account limit stored-shape normalization", () => {
   });
 
   it("falls back to the session scope for an unknown scope", () => {
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, scope: "bucket" }).scope).toBe("session");
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, scope: "device" }).scope).toBe("device");
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, scope: null }).scope).toBe("session");
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, scope: "bucket" }).scope,
+    ).toBe("session");
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, scope: "device" }).scope,
+    ).toBe("device");
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, scope: null }).scope,
+    ).toBe("session");
   });
 
   it("keeps the seconds inside 1-7200 and falls back to 60 outside", () => {
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 1 }).cooldown_seconds).toBe(1);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 7200 }).cooldown_seconds).toBe(7200);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 0 }).cooldown_seconds).toBe(60);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 7201 }).cooldown_seconds).toBe(60);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: "60" }).cooldown_seconds).toBe(60);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: Number.NaN }).cooldown_seconds).toBe(60);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 1 })
+        .cooldown_seconds,
+    ).toBe(1);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 7200 })
+        .cooldown_seconds,
+    ).toBe(7200);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 0 })
+        .cooldown_seconds,
+    ).toBe(60);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: 7201 })
+        .cooldown_seconds,
+    ).toBe(60);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, cooldown_seconds: "60" })
+        .cooldown_seconds,
+    ).toBe(60);
+    expect(
+      normalizeRateLimit429AccountLimit({
+        ...STORED,
+        cooldown_seconds: Number.NaN,
+      }).cooldown_seconds,
+    ).toBe(60);
   });
 
   it("keeps the account limit inside 1-100 and falls back to 2 outside", () => {
-    expect(normalizeRateLimit429AccountLimit({ max_accounts: 1 }).max_accounts).toBe(1);
-    expect(normalizeRateLimit429AccountLimit({ max_accounts: 100 }).max_accounts).toBe(100);
-    expect(normalizeRateLimit429AccountLimit({ max_accounts: 0 }).max_accounts).toBe(2);
-    expect(normalizeRateLimit429AccountLimit({ max_accounts: 101 }).max_accounts).toBe(2);
-    expect(normalizeRateLimit429AccountLimit({ max_accounts: "3" }).max_accounts).toBe(2);
+    expect(
+      normalizeRateLimit429AccountLimit({ max_accounts: 1 }).max_accounts,
+    ).toBe(1);
+    expect(
+      normalizeRateLimit429AccountLimit({ max_accounts: 100 }).max_accounts,
+    ).toBe(100);
+    expect(
+      normalizeRateLimit429AccountLimit({ max_accounts: 0 }).max_accounts,
+    ).toBe(2);
+    expect(
+      normalizeRateLimit429AccountLimit({ max_accounts: 101 }).max_accounts,
+    ).toBe(2);
+    expect(
+      normalizeRateLimit429AccountLimit({ max_accounts: "3" }).max_accounts,
+    ).toBe(2);
   });
 
   it("treats the switch as a real boolean", () => {
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, enabled: true }).enabled).toBe(true);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, enabled: "true" }).enabled).toBe(false);
-    expect(normalizeRateLimit429AccountLimit({ ...STORED, enabled: 1 }).enabled).toBe(false);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, enabled: true }).enabled,
+    ).toBe(true);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, enabled: "true" }).enabled,
+    ).toBe(false);
+    expect(
+      normalizeRateLimit429AccountLimit({ ...STORED, enabled: 1 }).enabled,
+    ).toBe(false);
   });
 });

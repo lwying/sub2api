@@ -8,17 +8,17 @@
  * grant that an administrator may already have revoked.
  */
 
-export const ASSIGNED_ACCOUNTS_PATH = '/accounts'
+export const ASSIGNED_ACCOUNTS_PATH = "/accounts";
 
 /** Regular users land here when the capability is not (or no longer) granted. */
-export const ASSIGNED_ACCOUNTS_FALLBACK_PATH = '/dashboard'
+export const ASSIGNED_ACCOUNTS_FALLBACK_PATH = "/dashboard";
 
 /** Administrators keep using the admin account page for account management. */
-export const ASSIGNED_ACCOUNTS_ADMIN_PATH = '/admin/accounts'
+export const ASSIGNED_ACCOUNTS_ADMIN_PATH = "/admin/accounts";
 
 export interface AssignedAccountsAccessState {
-  isAuthenticated: boolean
-  isAdmin: boolean
+  isAuthenticated: boolean;
+  isAdmin: boolean;
 }
 
 /**
@@ -27,15 +27,15 @@ export interface AssignedAccountsAccessState {
  * capability with the server.
  */
 export function resolveAssignedAccountsRedirect(
-  state: AssignedAccountsAccessState
+  state: AssignedAccountsAccessState,
 ): string | null {
   if (!state.isAuthenticated) {
-    return '/login'
+    return "/login";
   }
 
   if (state.isAdmin) {
-    return ASSIGNED_ACCOUNTS_ADMIN_PATH
+    return ASSIGNED_ACCOUNTS_ADMIN_PATH;
   }
 
-  return null
+  return null;
 }

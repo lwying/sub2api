@@ -9,8 +9,8 @@
  * scheduler state here.
  */
 
-import { apiClient } from './client'
-import type { PaginatedResponse } from '@/types'
+import { apiClient } from "./client";
+import type { PaginatedResponse } from "@/types";
 
 /**
  * One assigned account as the customer is allowed to see it.
@@ -19,12 +19,12 @@ import type { PaginatedResponse } from '@/types'
  * as an empty string (never as a raw account name or credential).
  */
 export interface AssignedAccount {
-  id: number
-  platform: string
-  account_type: string
-  email_masked: string
-  username_masked: string
-  upstream_account_id_masked: string
+  id: number;
+  platform: string;
+  account_type: string;
+  email_masked: string;
+  username_masked: string;
+  upstream_account_id_masked: string;
 }
 
 /**
@@ -35,13 +35,16 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters: { platform?: string; account_type?: string; search?: string } = {},
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<PaginatedResponse<AssignedAccount>> {
-  const { data } = await apiClient.get<PaginatedResponse<AssignedAccount>>('/accounts', {
-    params: { page, page_size: pageSize, ...filters },
-    signal: options?.signal
-  })
-  return data
+  const { data } = await apiClient.get<PaginatedResponse<AssignedAccount>>(
+    "/accounts",
+    {
+      params: { page, page_size: pageSize, ...filters },
+      signal: options?.signal,
+    },
+  );
+  return data;
 }
 
 /**
@@ -52,18 +55,18 @@ export async function list(
  */
 export async function getById(
   id: number,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<AssignedAccount> {
   const { data } = await apiClient.get<AssignedAccount>(`/accounts/${id}`, {
-    signal: options?.signal
-  })
-  return data
+    signal: options?.signal,
+  });
+  return data;
 }
 
 export const assignedAccountsAPI = {
   list,
-  getById
-}
+  getById,
+};
 
 /**
  * True when the backend refused the read-only account view itself (capability
@@ -71,12 +74,13 @@ export const assignedAccountsAPI = {
  * single account.
  */
 export function isAssignedAccountsAccessDenied(error: unknown): boolean {
-  const candidate = error as { status?: number; code?: string | number } | null | undefined
+  const candidate = error as
+    { status?: number; code?: string | number } | null | undefined;
   if (!candidate) {
-    return false
+    return false;
   }
 
-  return candidate.status === 403 || candidate.code === 'ACCOUNT_VIEW_DISABLED'
+  return candidate.status === 403 || candidate.code === "ACCOUNT_VIEW_DISABLED";
 }
 
 /**
@@ -88,8 +92,8 @@ export function isAssignedAccountsAccessDenied(error: unknown): boolean {
  * "not visible".
  */
 export function isAssignedAccountNotFound(error: unknown): boolean {
-  const candidate = error as { status?: number } | null | undefined
-  return candidate?.status === 404
+  const candidate = error as { status?: number } | null | undefined;
+  return candidate?.status === 404;
 }
 
-export default assignedAccountsAPI
+export default assignedAccountsAPI;

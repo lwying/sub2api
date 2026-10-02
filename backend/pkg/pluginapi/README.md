@@ -78,13 +78,13 @@ ui/assets/...
 
 UI 可以发送以下消息。消息按语义分层，鉴权与副作用一致对应（读操作免二次验证，写/主动测试需要二次验证），任何插件都可复用，不针对具体插件定制：
 
-| 消息 | 语义 | 二次验证 | 映射的插件 RPC |
-| --- | --- | --- | --- |
-| `config.load` | 读取已保存配置 | 否 | 宿主数据库 |
-| `config.save` | 写入配置 | 是 | `ValidateConfig` + `ApplyConfig` |
-| `config.test` | 主动测试配置/连通性（可产生副作用） | 是 | `TestConfig` |
-| `plugin.status` | 读取运行时状态（无副作用） | 否 | `Health`（`status_json`） |
-| `ui.resize` / `ui.notify` | 仅 UI 交互 | — | — |
+| 消息                      | 语义                                | 二次验证 | 映射的插件 RPC                   |
+| ------------------------- | ----------------------------------- | -------- | -------------------------------- |
+| `config.load`             | 读取已保存配置                      | 否       | 宿主数据库                       |
+| `config.save`             | 写入配置                            | 是       | `ValidateConfig` + `ApplyConfig` |
+| `config.test`             | 主动测试配置/连通性（可产生副作用） | 是       | `TestConfig`                     |
+| `plugin.status`           | 读取运行时状态（无副作用）          | 否       | `Health`（`status_json`）        |
+| `ui.resize` / `ui.notify` | 仅 UI 交互                          | —        | —                                |
 
 每个请求消息带 `request_id`，宿主以 `<type>.result` 返回结果。
 

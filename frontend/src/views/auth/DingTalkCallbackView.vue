@@ -3,10 +3,14 @@
     <div class="space-y-6">
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
-          {{ t('auth.dingtalk.callbackTitle') }}
+          {{ t("auth.dingtalk.callbackTitle") }}
         </h2>
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          {{ isProcessing ? t('auth.dingtalk.callbackProcessing') : t('auth.dingtalk.callbackHint') }}
+          {{
+            isProcessing
+              ? t("auth.dingtalk.callbackProcessing")
+              : t("auth.dingtalk.callbackHint")
+          }}
         </p>
       </div>
 
@@ -23,16 +27,24 @@
           class="space-y-4"
         >
           <div
-            v-if="adoptionRequired && (suggestedDisplayName || suggestedAvatarUrl)"
+            v-if="
+              adoptionRequired && (suggestedDisplayName || suggestedAvatarUrl)
+            "
             class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60"
           >
             <div class="space-y-3">
               <div class="space-y-1">
                 <p class="text-sm font-medium text-gray-900 dark:text-white">
-                  {{ t('auth.oauthFlow.profileDetailsTitle', { providerName }) }}
+                  {{
+                    t("auth.oauthFlow.profileDetailsTitle", { providerName })
+                  }}
                 </p>
                 <p class="text-xs text-gray-500 dark:text-dark-400">
-                  {{ t('auth.oauthFlow.profileDetailsDescription', { providerName }) }}
+                  {{
+                    t("auth.oauthFlow.profileDetailsDescription", {
+                      providerName,
+                    })
+                  }}
                 </p>
               </div>
 
@@ -40,10 +52,14 @@
                 v-if="suggestedDisplayName"
                 class="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-dark-600 dark:bg-dark-900/50"
               >
-                <input v-model="adoptDisplayName" type="checkbox" class="mt-1 h-4 w-4" />
+                <input
+                  v-model="adoptDisplayName"
+                  type="checkbox"
+                  class="mt-1 h-4 w-4"
+                />
                 <span class="space-y-1">
                   <span class="block font-medium text-gray-900 dark:text-white">
-                    {{ t('auth.oauthFlow.useDisplayName') }}
+                    {{ t("auth.oauthFlow.useDisplayName") }}
                   </span>
                   <span class="block text-gray-500 dark:text-dark-400">
                     {{ suggestedDisplayName }}
@@ -55,7 +71,11 @@
                 v-if="suggestedAvatarUrl"
                 class="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-dark-600 dark:bg-dark-900/50"
               >
-                <input v-model="adoptAvatar" type="checkbox" class="mt-1 h-4 w-4" />
+                <input
+                  v-model="adoptAvatar"
+                  type="checkbox"
+                  class="mt-1 h-4 w-4"
+                />
                 <img
                   :src="suggestedAvatarUrl"
                   :alt="t('auth.oauthFlow.avatarAlt', { providerName })"
@@ -63,9 +83,11 @@
                 />
                 <span class="space-y-1">
                   <span class="block font-medium text-gray-900 dark:text-white">
-                    {{ t('auth.oauthFlow.useAvatar') }}
+                    {{ t("auth.oauthFlow.useAvatar") }}
                   </span>
-                  <span class="block break-all text-gray-500 dark:text-dark-400">
+                  <span
+                    class="block break-all text-gray-500 dark:text-dark-400"
+                  >
                     {{ suggestedAvatarUrl }}
                   </span>
                 </span>
@@ -75,7 +97,7 @@
 
           <template v-if="needsInvitation">
             <p class="text-sm text-gray-700 dark:text-gray-300">
-              {{ t('auth.dingtalk.invitationRequired') }}
+              {{ t("auth.dingtalk.invitationRequired") }}
             </p>
             <div>
               <input
@@ -92,31 +114,47 @@
               :disabled="isSubmitting || !invitationCode.trim()"
               @click="handleSubmitInvitation"
             >
-              {{ isSubmitting ? t('auth.dingtalk.completing') : t('auth.dingtalk.completeRegistration') }}
+              {{
+                isSubmitting
+                  ? t("auth.dingtalk.completing")
+                  : t("auth.dingtalk.completeRegistration")
+              }}
             </button>
           </template>
 
           <template v-else-if="needsAdoptionConfirmation">
             <p class="text-sm text-gray-700 dark:text-gray-300">
-              {{ t('auth.oauthFlow.reviewProfileBeforeContinue', { providerName }) }}
+              {{
+                t("auth.oauthFlow.reviewProfileBeforeContinue", {
+                  providerName,
+                })
+              }}
             </p>
-            <button class="btn btn-primary w-full" :disabled="isSubmitting" @click="handleContinueLogin">
-              {{ isSubmitting ? t('common.processing') : t('auth.continue') }}
+            <button
+              class="btn btn-primary w-full"
+              :disabled="isSubmitting"
+              @click="handleContinueLogin"
+            >
+              {{ isSubmitting ? t("common.processing") : t("auth.continue") }}
             </button>
           </template>
 
           <template v-else-if="needsChooser">
-            <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60">
+            <div
+              class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60"
+            >
               <div class="space-y-4">
                 <div class="space-y-1">
                   <p class="text-sm font-medium text-gray-900 dark:text-white">
-                    {{ t('auth.oauthFlow.chooseHowToContinue') }}
+                    {{ t("auth.oauthFlow.chooseHowToContinue") }}
                   </p>
                   <p class="text-xs text-gray-500 dark:text-dark-400">
                     {{
                       pendingAccountEmail
-                        ? t('auth.oauthFlow.suggestedEmail', { email: pendingAccountEmail })
-                        : t('auth.oauthFlow.chooseAccountActionHint')
+                        ? t("auth.oauthFlow.suggestedEmail", {
+                            email: pendingAccountEmail,
+                          })
+                        : t("auth.oauthFlow.chooseAccountActionHint")
                     }}
                   </p>
                 </div>
@@ -127,14 +165,14 @@
                     :disabled="isSubmitting"
                     @click="switchToBindLoginMode()"
                   >
-                    {{ t('auth.oauthFlow.bindExistingAccount') }}
+                    {{ t("auth.oauthFlow.bindExistingAccount") }}
                   </button>
                   <button
                     class="btn btn-primary w-full"
                     :disabled="isSubmitting"
                     @click="switchToCreateAccountMode"
                   >
-                    {{ t('auth.oauthFlow.createNewAccount') }}
+                    {{ t("auth.oauthFlow.createNewAccount") }}
                   </button>
                 </div>
               </div>
@@ -143,7 +181,7 @@
 
           <template v-else-if="needsCreateAccount">
             <p class="text-sm text-gray-700 dark:text-gray-300">
-              {{ t('auth.oauthFlow.createAccountHint') }}
+              {{ t("auth.oauthFlow.createAccountHint") }}
             </p>
             <PendingOAuthCreateAccountForm
               test-id-prefix="dingtalk"
@@ -157,7 +195,7 @@
 
           <template v-else-if="needsBindLogin">
             <p class="text-sm text-gray-700 dark:text-gray-300">
-              {{ t('auth.oauthFlow.bindLoginHint', { providerName }) }}
+              {{ t("auth.oauthFlow.bindLoginHint", { providerName }) }}
             </p>
             <div class="space-y-3">
               <input
@@ -181,10 +219,16 @@
               <button
                 data-testid="dingtalk-bind-login-submit"
                 class="btn btn-primary w-full"
-                :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword"
+                :disabled="
+                  isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword
+                "
                 @click="handleBindLogin"
               >
-                {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.logInAndBind') }}
+                {{
+                  isSubmitting
+                    ? t("common.processing")
+                    : t("auth.oauthFlow.logInAndBind")
+                }}
               </button>
               <button
                 v-if="canReturnToCreateAccount"
@@ -192,7 +236,7 @@
                 :disabled="isSubmitting"
                 @click="switchToCreateAccountMode"
               >
-                {{ t('auth.oauthFlow.useDifferentEmail') }}
+                {{ t("auth.oauthFlow.useDifferentEmail") }}
               </button>
             </div>
           </template>
@@ -200,9 +244,10 @@
           <template v-else-if="needsTotpChallenge">
             <p class="text-sm text-gray-700 dark:text-gray-300">
               {{
-                t('auth.oauthFlow.totpHint', {
+                t("auth.oauthFlow.totpHint", {
                   providerName,
-                  account: totpUserEmailMasked || t('auth.oauthFlow.yourAccount')
+                  account:
+                    totpUserEmailMasked || t("auth.oauthFlow.yourAccount"),
                 })
               }}
             </p>
@@ -224,7 +269,11 @@
                 :disabled="isSubmitting || totpCode.trim().length !== 6"
                 @click="handleSubmitTotpChallenge"
               >
-                {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.verifyAndContinue') }}
+                {{
+                  isSubmitting
+                    ? t("common.processing")
+                    : t("auth.oauthFlow.verifyAndContinue")
+                }}
               </button>
             </div>
           </template>
@@ -235,15 +284,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
-import { AuthLayout } from '@/components/layout'
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
+import { AuthLayout } from "@/components/layout";
 import PendingOAuthCreateAccountForm, {
-  type PendingOAuthCreateAccountPayload
-} from '@/components/auth/PendingOAuthCreateAccountForm.vue'
-import { apiClient } from '@/api/client'
-import { useAuthStore, useAppStore } from '@/stores'
+  type PendingOAuthCreateAccountPayload,
+} from "@/components/auth/PendingOAuthCreateAccountForm.vue";
+import { apiClient } from "@/api/client";
+import { useAuthStore, useAppStore } from "@/stores";
 import {
   exchangePendingOAuthCompletion,
   getOAuthCompletionKind,
@@ -252,597 +301,690 @@ import {
   persistOAuthTokenContext,
   type OAuthAdoptionDecision,
   type OAuthTokenResponse,
-  type PendingOAuthExchangeResponse
-} from '@/api/auth'
+  type PendingOAuthExchangeResponse,
+} from "@/api/auth";
 import {
   clearAllAffiliateReferralCodes,
   loadOAuthAffiliateCode,
-  oauthAffiliatePayload
-} from '@/utils/oauthAffiliate'
+  oauthAffiliatePayload,
+} from "@/utils/oauthAffiliate";
 
-const route = useRoute()
-const router = useRouter()
-const { t, te } = useI18n()
+const route = useRoute();
+const router = useRouter();
+const { t, te } = useI18n();
 
-const authStore = useAuthStore()
-const appStore = useAppStore()
+const authStore = useAuthStore();
+const appStore = useAppStore();
 
-const isProcessing = ref(true)
-const errorMessage = ref('')
+const isProcessing = ref(true);
+const errorMessage = ref("");
 
 // Invitation code flow state
-const needsInvitation = ref(false)
-const invitationCode = ref('')
-const isSubmitting = ref(false)
-const invitationError = ref('')
-const redirectTo = ref('/dashboard')
-const adoptionRequired = ref(false)
-const suggestedDisplayName = ref('')
-const suggestedAvatarUrl = ref('')
-const adoptDisplayName = ref(true)
-const adoptAvatar = ref(true)
-const needsAdoptionConfirmation = ref(false)
-const pendingAccountAction = ref<'none' | 'choose_account_action' | 'create_account' | 'bind_login'>('none')
-const pendingAccountEmail = ref('')
-const bindLoginEmail = ref('')
-const bindLoginPassword = ref('')
-const legacyPendingOAuthToken = ref('')
-const accountActionError = ref('')
-const canReturnToCreateAccount = ref(false)
-const bindSuccessMessage = t('profile.authBindings.bindSuccess')
-const needsTotpChallenge = ref(false)
-const totpTempToken = ref('')
-const totpCode = ref('')
-const totpError = ref('')
-const totpUserEmailMasked = ref('')
-const providerName = t('auth.dingtalkProviderName')
+const needsInvitation = ref(false);
+const invitationCode = ref("");
+const isSubmitting = ref(false);
+const invitationError = ref("");
+const redirectTo = ref("/dashboard");
+const adoptionRequired = ref(false);
+const suggestedDisplayName = ref("");
+const suggestedAvatarUrl = ref("");
+const adoptDisplayName = ref(true);
+const adoptAvatar = ref(true);
+const needsAdoptionConfirmation = ref(false);
+const pendingAccountAction = ref<
+  "none" | "choose_account_action" | "create_account" | "bind_login"
+>("none");
+const pendingAccountEmail = ref("");
+const bindLoginEmail = ref("");
+const bindLoginPassword = ref("");
+const legacyPendingOAuthToken = ref("");
+const accountActionError = ref("");
+const canReturnToCreateAccount = ref(false);
+const bindSuccessMessage = t("profile.authBindings.bindSuccess");
+const needsTotpChallenge = ref(false);
+const totpTempToken = ref("");
+const totpCode = ref("");
+const totpError = ref("");
+const totpUserEmailMasked = ref("");
+const providerName = t("auth.dingtalkProviderName");
 
-const needsCreateAccount = computed(() => pendingAccountAction.value === 'create_account')
-const needsChooser = computed(() => pendingAccountAction.value === 'choose_account_action')
-const needsBindLogin = computed(() => pendingAccountAction.value === 'bind_login')
+const needsCreateAccount = computed(
+  () => pendingAccountAction.value === "create_account",
+);
+const needsChooser = computed(
+  () => pendingAccountAction.value === "choose_account_action",
+);
+const needsBindLogin = computed(
+  () => pendingAccountAction.value === "bind_login",
+);
 
-watch(invitationError, value => {
+watch(invitationError, (value) => {
   if (value) {
-    appStore.showError(value)
+    appStore.showError(value);
   }
-})
+});
 
-watch(accountActionError, value => {
+watch(accountActionError, (value) => {
   if (value) {
-    appStore.showError(value)
+    appStore.showError(value);
   }
-})
+});
 
-watch(totpError, value => {
+watch(totpError, (value) => {
   if (value) {
-    appStore.showError(value)
+    appStore.showError(value);
   }
-})
+});
 
-watch(errorMessage, value => {
+watch(errorMessage, (value) => {
   if (value) {
-    appStore.showError(value)
+    appStore.showError(value);
   }
-})
+});
 
 type DingTalkPendingActionResponse = PendingOAuthExchangeResponse & {
-  step?: string
-  intent?: string
-  email?: string
-  resolved_email?: string
-  pending_email?: string
-  existing_account_email?: string
-  suggested_email?: string
-}
+  step?: string;
+  intent?: string;
+  email?: string;
+  resolved_email?: string;
+  pending_email?: string;
+  existing_account_email?: string;
+  suggested_email?: string;
+};
 
 function persistPendingAuthSession(redirect?: string) {
   authStore.setPendingAuthSession({
-    token: '',
-    token_field: 'pending_oauth_token',
-    provider: 'dingtalk',
-    redirect: sanitizeRedirectPath(redirect || redirectTo.value)
-  })
+    token: "",
+    token_field: "pending_oauth_token",
+    provider: "dingtalk",
+    redirect: sanitizeRedirectPath(redirect || redirectTo.value),
+  });
 }
 
 function clearPendingAuthSession() {
-  authStore.clearPendingAuthSession()
+  authStore.clearPendingAuthSession();
 }
 
 function parseFragmentParams(): URLSearchParams {
-  const raw = typeof window !== 'undefined' ? window.location.hash : ''
-  const hash = raw.startsWith('#') ? raw.slice(1) : raw
-  return new URLSearchParams(hash)
+  const raw = typeof window !== "undefined" ? window.location.hash : "";
+  const hash = raw.startsWith("#") ? raw.slice(1) : raw;
+  return new URLSearchParams(hash);
 }
 
-function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | null {
-  const accessToken = params.get('access_token')?.trim() || ''
+function readLegacyFragmentLogin(
+  params: URLSearchParams,
+): OAuthTokenResponse | null {
+  const accessToken = params.get("access_token")?.trim() || "";
   if (!accessToken) {
-    return null
+    return null;
   }
 
   const completion: OAuthTokenResponse = {
-    access_token: accessToken
-  }
-  const refreshToken = params.get('refresh_token')?.trim() || ''
+    access_token: accessToken,
+  };
+  const refreshToken = params.get("refresh_token")?.trim() || "";
   if (refreshToken) {
-    completion.refresh_token = refreshToken
+    completion.refresh_token = refreshToken;
   }
-  const expiresIn = Number.parseInt(params.get('expires_in')?.trim() || '', 10)
+  const expiresIn = Number.parseInt(params.get("expires_in")?.trim() || "", 10);
   if (Number.isFinite(expiresIn) && expiresIn > 0) {
-    completion.expires_in = expiresIn
+    completion.expires_in = expiresIn;
   }
-  const tokenType = params.get('token_type')?.trim() || ''
+  const tokenType = params.get("token_type")?.trim() || "";
   if (tokenType) {
-    completion.token_type = tokenType
+    completion.token_type = tokenType;
   }
-  return completion
+  return completion;
 }
 
 function sanitizeRedirectPath(path: string | null | undefined): string {
-  if (!path) return '/dashboard'
-  if (!path.startsWith('/')) return '/dashboard'
-  if (path.startsWith('//')) return '/dashboard'
-  if (path.includes('://')) return '/dashboard'
-  if (path.includes('\n') || path.includes('\r')) return '/dashboard'
-  return path
+  if (!path) return "/dashboard";
+  if (!path.startsWith("/")) return "/dashboard";
+  if (path.startsWith("//")) return "/dashboard";
+  if (path.includes("://")) return "/dashboard";
+  if (path.includes("\n") || path.includes("\r")) return "/dashboard";
+  return path;
 }
 
 function currentAdoptionDecision(): OAuthAdoptionDecision {
   return {
     adoptDisplayName: adoptDisplayName.value,
-    adoptAvatar: adoptAvatar.value
-  }
+    adoptAvatar: adoptAvatar.value,
+  };
 }
 
-function serializeAdoptionDecision(decision: OAuthAdoptionDecision): Record<string, boolean> {
-  const payload: Record<string, boolean> = {}
-  if (typeof decision.adoptDisplayName === 'boolean') {
-    payload.adopt_display_name = decision.adoptDisplayName
+function serializeAdoptionDecision(
+  decision: OAuthAdoptionDecision,
+): Record<string, boolean> {
+  const payload: Record<string, boolean> = {};
+  if (typeof decision.adoptDisplayName === "boolean") {
+    payload.adopt_display_name = decision.adoptDisplayName;
   }
-  if (typeof decision.adoptAvatar === 'boolean') {
-    payload.adopt_avatar = decision.adoptAvatar
+  if (typeof decision.adoptAvatar === "boolean") {
+    payload.adopt_avatar = decision.adoptAvatar;
   }
-  return payload
+  return payload;
 }
 
 function applyAdoptionSuggestionState(completion: {
-  adoption_required?: boolean
-  suggested_display_name?: string
-  suggested_avatar_url?: string
+  adoption_required?: boolean;
+  suggested_display_name?: string;
+  suggested_avatar_url?: string;
 }) {
-  adoptionRequired.value = completion.adoption_required === true
-  suggestedDisplayName.value = completion.suggested_display_name || ''
-  suggestedAvatarUrl.value = completion.suggested_avatar_url || ''
+  adoptionRequired.value = completion.adoption_required === true;
+  suggestedDisplayName.value = completion.suggested_display_name || "";
+  suggestedAvatarUrl.value = completion.suggested_avatar_url || "";
 
   if (!suggestedDisplayName.value) {
-    adoptDisplayName.value = false
+    adoptDisplayName.value = false;
   }
   if (!suggestedAvatarUrl.value) {
-    adoptAvatar.value = false
+    adoptAvatar.value = false;
   }
 }
 
 function hasSuggestedProfile(completion: {
-  suggested_display_name?: string
-  suggested_avatar_url?: string
+  suggested_display_name?: string;
+  suggested_avatar_url?: string;
 }): boolean {
-  return Boolean(completion.suggested_display_name || completion.suggested_avatar_url)
+  return Boolean(
+    completion.suggested_display_name || completion.suggested_avatar_url,
+  );
 }
 
 function normalizedPendingState(value: string | null | undefined): string {
-  return value?.trim().toLowerCase() || ''
+  return value?.trim().toLowerCase() || "";
 }
 
-function extractPendingAccountEmail(completion: DingTalkPendingActionResponse): string {
+function extractPendingAccountEmail(
+  completion: DingTalkPendingActionResponse,
+): string {
   return (
     completion.pending_email ||
     completion.existing_account_email ||
     completion.email ||
     completion.resolved_email ||
     completion.suggested_email ||
-    ''
-  ).trim()
+    ""
+  ).trim();
 }
 
 function resolvePendingAccountAction(
-  completion: DingTalkPendingActionResponse
-): 'none' | 'choose_account_action' | 'create_account' | 'bind_login' {
-  const raw = normalizedPendingState(completion.step || completion.error || completion.intent)
+  completion: DingTalkPendingActionResponse,
+): "none" | "choose_account_action" | "create_account" | "bind_login" {
+  const raw = normalizedPendingState(
+    completion.step || completion.error || completion.intent,
+  );
   if (
-    raw === 'choice' ||
-    raw === 'choose_account_action_required' ||
-    raw === 'choose_account_action' ||
-    raw === 'choose_account' ||
-    raw === 'choose'
+    raw === "choice" ||
+    raw === "choose_account_action_required" ||
+    raw === "choose_account_action" ||
+    raw === "choose_account" ||
+    raw === "choose"
   ) {
-    return 'choose_account_action'
-  }
-  if (raw === 'email_required' || raw === 'create_account_required' || raw === 'create_account') {
-    return 'create_account'
+    return "choose_account_action";
   }
   if (
-    raw === 'bind_login_required' ||
-    raw === 'bind_login' ||
-    raw === 'existing_account' ||
-    raw === 'existing_account_required' ||
-    raw === 'existing_account_binding_required' ||
-    raw === 'adopt_existing_user_by_email'
+    raw === "email_required" ||
+    raw === "create_account_required" ||
+    raw === "create_account"
   ) {
-    return 'bind_login'
+    return "create_account";
   }
-  return 'none'
+  if (
+    raw === "bind_login_required" ||
+    raw === "bind_login" ||
+    raw === "existing_account" ||
+    raw === "existing_account_required" ||
+    raw === "existing_account_binding_required" ||
+    raw === "adopt_existing_user_by_email"
+  ) {
+    return "bind_login";
+  }
+  return "none";
 }
 
 function applyPendingAccountAction(completion: DingTalkPendingActionResponse) {
-  const action = resolvePendingAccountAction(completion)
-  pendingAccountAction.value = action
-  accountActionError.value = ''
-  needsTotpChallenge.value = false
-  totpTempToken.value = ''
-  totpCode.value = ''
-  totpError.value = ''
-  totpUserEmailMasked.value = ''
+  const action = resolvePendingAccountAction(completion);
+  pendingAccountAction.value = action;
+  accountActionError.value = "";
+  needsTotpChallenge.value = false;
+  totpTempToken.value = "";
+  totpCode.value = "";
+  totpError.value = "";
+  totpUserEmailMasked.value = "";
 
-  const email = extractPendingAccountEmail(completion)
-  if (action === 'choose_account_action') {
-    pendingAccountEmail.value = email
-    bindLoginEmail.value = email
-    bindLoginPassword.value = ''
-    canReturnToCreateAccount.value = false
-    return
+  const email = extractPendingAccountEmail(completion);
+  if (action === "choose_account_action") {
+    pendingAccountEmail.value = email;
+    bindLoginEmail.value = email;
+    bindLoginPassword.value = "";
+    canReturnToCreateAccount.value = false;
+    return;
   }
 
-  if (action === 'create_account') {
-    pendingAccountEmail.value = email
-    canReturnToCreateAccount.value = true
-    return
+  if (action === "create_account") {
+    pendingAccountEmail.value = email;
+    canReturnToCreateAccount.value = true;
+    return;
   }
 
-  if (action === 'bind_login') {
-    bindLoginEmail.value = email
-    bindLoginPassword.value = ''
-    canReturnToCreateAccount.value = false
-    return
+  if (action === "bind_login") {
+    bindLoginEmail.value = email;
+    bindLoginPassword.value = "";
+    canReturnToCreateAccount.value = false;
+    return;
   }
 
-  canReturnToCreateAccount.value = false
+  canReturnToCreateAccount.value = false;
 }
 
-function applyTotpChallenge(completion: DingTalkPendingActionResponse): boolean {
+function applyTotpChallenge(
+  completion: DingTalkPendingActionResponse,
+): boolean {
   if (completion.requires_2fa !== true || !completion.temp_token) {
-    return false
+    return false;
   }
 
-  pendingAccountAction.value = 'none'
-  needsInvitation.value = false
-  needsAdoptionConfirmation.value = false
-  needsTotpChallenge.value = true
-  totpTempToken.value = completion.temp_token
-  totpCode.value = ''
-  totpError.value = ''
-  totpUserEmailMasked.value = completion.user_email_masked || ''
-  isProcessing.value = false
-  return true
+  pendingAccountAction.value = "none";
+  needsInvitation.value = false;
+  needsAdoptionConfirmation.value = false;
+  needsTotpChallenge.value = true;
+  totpTempToken.value = completion.temp_token;
+  totpCode.value = "";
+  totpError.value = "";
+  totpUserEmailMasked.value = completion.user_email_masked || "";
+  isProcessing.value = false;
+  return true;
 }
 
 function switchToBindLoginMode(nextEmail?: string) {
-  pendingAccountAction.value = 'bind_login'
-  bindLoginEmail.value = bindLoginEmail.value.trim() || nextEmail?.trim() || pendingAccountEmail.value.trim()
-  bindLoginPassword.value = ''
-  accountActionError.value = ''
-  canReturnToCreateAccount.value = true
+  pendingAccountAction.value = "bind_login";
+  bindLoginEmail.value =
+    bindLoginEmail.value.trim() ||
+    nextEmail?.trim() ||
+    pendingAccountEmail.value.trim();
+  bindLoginPassword.value = "";
+  accountActionError.value = "";
+  canReturnToCreateAccount.value = true;
 }
 
 function switchToCreateAccountMode() {
-  pendingAccountAction.value = 'create_account'
-  pendingAccountEmail.value = pendingAccountEmail.value.trim() || bindLoginEmail.value.trim()
-  accountActionError.value = ''
+  pendingAccountAction.value = "create_account";
+  pendingAccountEmail.value =
+    pendingAccountEmail.value.trim() || bindLoginEmail.value.trim();
+  accountActionError.value = "";
 }
 
 function getRequestErrorMessage(error: unknown, fallback: string): string {
-  const err = error as { message?: string; response?: { data?: { detail?: string; message?: string } } }
-  return err.response?.data?.detail || err.response?.data?.message || err.message || fallback
+  const err = error as {
+    message?: string;
+    response?: { data?: { detail?: string; message?: string } };
+  };
+  return (
+    err.response?.data?.detail ||
+    err.response?.data?.message ||
+    err.message ||
+    fallback
+  );
 }
 
 function isCreateAccountRecoveryError(error: unknown): boolean {
-  const data = (error as {
-    response?: {
-      data?: {
-        reason?: string
-        error?: string
-        code?: string
-        step?: string
-        intent?: string
-      }
+  const data = (
+    error as {
+      response?: {
+        data?: {
+          reason?: string;
+          error?: string;
+          code?: string;
+          step?: string;
+          intent?: string;
+        };
+      };
     }
-  }).response?.data
-  const states = [data?.reason, data?.error, data?.code, data?.step, data?.intent]
-    .map(value => value?.trim().toLowerCase())
-    .filter((value): value is string => Boolean(value))
+  ).response?.data;
+  const states = [
+    data?.reason,
+    data?.error,
+    data?.code,
+    data?.step,
+    data?.intent,
+  ]
+    .map((value) => value?.trim().toLowerCase())
+    .filter((value): value is string => Boolean(value));
 
-  return states.includes('email_exists') ||
-    states.includes('bind_login_required') ||
-    states.includes('bind_login') ||
-    states.includes('adopt_existing_user_by_email') ||
-    states.includes('existing_account_required') ||
-    states.includes('existing_account_binding_required')
+  return (
+    states.includes("email_exists") ||
+    states.includes("bind_login_required") ||
+    states.includes("bind_login") ||
+    states.includes("adopt_existing_user_by_email") ||
+    states.includes("existing_account_required") ||
+    states.includes("existing_account_binding_required")
+  );
 }
 
-async function finalizeCompletion(completion: PendingOAuthExchangeResponse, redirect: string) {
-  if (getOAuthCompletionKind(completion) === 'bind') {
-    const bindRedirect = sanitizeRedirectPath(completion.redirect || '/profile')
-    clearPendingAuthSession()
-    clearAllAffiliateReferralCodes()
-    appStore.showSuccess(bindSuccessMessage)
-    await router.replace(bindRedirect)
-    return
+async function finalizeCompletion(
+  completion: PendingOAuthExchangeResponse,
+  redirect: string,
+) {
+  if (getOAuthCompletionKind(completion) === "bind") {
+    const bindRedirect = sanitizeRedirectPath(
+      completion.redirect || "/profile",
+    );
+    clearPendingAuthSession();
+    clearAllAffiliateReferralCodes();
+    appStore.showSuccess(bindSuccessMessage);
+    await router.replace(bindRedirect);
+    return;
   }
 
   if (!isOAuthLoginCompletion(completion)) {
-    throw new Error(t('auth.dingtalk.callbackMissingToken'))
+    throw new Error(t("auth.dingtalk.callbackMissingToken"));
   }
 
-  persistOAuthTokenContext(completion)
-  await authStore.setToken(completion.access_token)
-  clearAllAffiliateReferralCodes()
-  appStore.showSuccess(t('auth.loginSuccess'))
-  await router.replace(redirect)
+  persistOAuthTokenContext(completion);
+  await authStore.setToken(completion.access_token);
+  clearAllAffiliateReferralCodes();
+  appStore.showSuccess(t("auth.loginSuccess"));
+  await router.replace(redirect);
 }
 
-async function finalizePendingAccountResponse(completion: DingTalkPendingActionResponse) {
-  applyAdoptionSuggestionState(completion)
-  const redirect = sanitizeRedirectPath(completion.redirect || redirectTo.value)
+async function finalizePendingAccountResponse(
+  completion: DingTalkPendingActionResponse,
+) {
+  applyAdoptionSuggestionState(completion);
+  const redirect = sanitizeRedirectPath(
+    completion.redirect || redirectTo.value,
+  );
 
   // step=email_completion: 用户无邮箱，需要跳到补邮箱页面
-  if (completion.step === 'email_completion' || (completion as Record<string, unknown>)['requires_email_completion'] === true) {
-    await router.replace('/auth/dingtalk/email-completion?redirect=' + encodeURIComponent(redirect))
-    return
+  if (
+    completion.step === "email_completion" ||
+    (completion as Record<string, unknown>)["requires_email_completion"] ===
+      true
+  ) {
+    await router.replace(
+      "/auth/dingtalk/email-completion?redirect=" +
+        encodeURIComponent(redirect),
+    );
+    return;
   }
 
-  if (completion.error === 'invitation_required') {
-    pendingAccountAction.value = 'none'
-    needsInvitation.value = true
-    needsAdoptionConfirmation.value = false
-    isProcessing.value = false
-    persistPendingAuthSession(redirect)
-    return
+  if (completion.error === "invitation_required") {
+    pendingAccountAction.value = "none";
+    needsInvitation.value = true;
+    needsAdoptionConfirmation.value = false;
+    isProcessing.value = false;
+    persistPendingAuthSession(redirect);
+    return;
   }
 
   if (applyTotpChallenge(completion)) {
-    persistPendingAuthSession(redirect)
-    return
+    persistPendingAuthSession(redirect);
+    return;
   }
 
-  applyPendingAccountAction(completion)
-  if (pendingAccountAction.value !== 'none') {
-    needsInvitation.value = false
-    needsAdoptionConfirmation.value = false
-    isProcessing.value = false
-    persistPendingAuthSession(redirect)
-    return
+  applyPendingAccountAction(completion);
+  if (pendingAccountAction.value !== "none") {
+    needsInvitation.value = false;
+    needsAdoptionConfirmation.value = false;
+    isProcessing.value = false;
+    persistPendingAuthSession(redirect);
+    return;
   }
 
-  if (completion.auth_result === 'pending_session') {
-    needsInvitation.value = false
-    needsAdoptionConfirmation.value = false
-    isProcessing.value = false
-    persistPendingAuthSession(redirect)
-    return
+  if (completion.auth_result === "pending_session") {
+    needsInvitation.value = false;
+    needsAdoptionConfirmation.value = false;
+    isProcessing.value = false;
+    persistPendingAuthSession(redirect);
+    return;
   }
 
-  await finalizeCompletion(completion, redirect)
+  await finalizeCompletion(completion, redirect);
 }
 
 async function handleSubmitInvitation() {
-  invitationError.value = ''
-  if (!invitationCode.value.trim()) return
+  invitationError.value = "";
+  if (!invitationCode.value.trim()) return;
 
-  isSubmitting.value = true
+  isSubmitting.value = true;
   try {
-    const affCode = loadOAuthAffiliateCode()
-    const decision = currentAdoptionDecision()
-    const { data: completion } = await apiClient.post<DingTalkPendingActionResponse>(
-      '/auth/oauth/dingtalk/complete-registration',
-      {
-        pending_oauth_token: legacyPendingOAuthToken.value || undefined,
-        invitation_code: invitationCode.value.trim(),
-        ...oauthAffiliatePayload(affCode),
-        ...serializeAdoptionDecision(decision)
-      }
-    )
-    await finalizePendingAccountResponse(completion)
+    const affCode = loadOAuthAffiliateCode();
+    const decision = currentAdoptionDecision();
+    const { data: completion } =
+      await apiClient.post<DingTalkPendingActionResponse>(
+        "/auth/oauth/dingtalk/complete-registration",
+        {
+          pending_oauth_token: legacyPendingOAuthToken.value || undefined,
+          invitation_code: invitationCode.value.trim(),
+          ...oauthAffiliatePayload(affCode),
+          ...serializeAdoptionDecision(decision),
+        },
+      );
+    await finalizePendingAccountResponse(completion);
   } catch (e: unknown) {
-    const err = e as { message?: string; response?: { data?: { message?: string } } }
+    const err = e as {
+      message?: string;
+      response?: { data?: { message?: string } };
+    };
     invitationError.value =
-      err.response?.data?.message || err.message || t('auth.dingtalk.completeRegistrationFailed')
+      err.response?.data?.message ||
+      err.message ||
+      t("auth.dingtalk.completeRegistrationFailed");
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
 }
 
 async function handleContinueLogin() {
-  isSubmitting.value = true
+  isSubmitting.value = true;
   try {
-    const completion = await exchangePendingOAuthCompletion(currentAdoptionDecision()) as DingTalkPendingActionResponse
-    await finalizePendingAccountResponse(completion)
+    const completion = (await exchangePendingOAuthCompletion(
+      currentAdoptionDecision(),
+    )) as DingTalkPendingActionResponse;
+    await finalizePendingAccountResponse(completion);
   } catch (e: unknown) {
-    errorMessage.value = getRequestErrorMessage(e, t('auth.loginFailed'))
-    needsAdoptionConfirmation.value = false
+    errorMessage.value = getRequestErrorMessage(e, t("auth.loginFailed"));
+    needsAdoptionConfirmation.value = false;
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
 }
 
 async function handleCreateAccount(payload: PendingOAuthCreateAccountPayload) {
-  accountActionError.value = ''
-  if (!payload.email || !payload.password) return
+  accountActionError.value = "";
+  if (!payload.email || !payload.password) return;
 
-  isSubmitting.value = true
+  isSubmitting.value = true;
   try {
-    const { data } = await apiClient.post<DingTalkPendingActionResponse>('/auth/oauth/pending/create-account', {
-      email: payload.email,
-      password: payload.password,
-      verify_code: payload.verifyCode || undefined,
-      ...(payload.turnstileToken ? { turnstile_token: payload.turnstileToken } : {}),
-      ...(payload.tencentCaptchaTicket
-        ? {
-            tencent_captcha_ticket: payload.tencentCaptchaTicket,
-            tencent_captcha_randstr: payload.tencentCaptchaRandstr
-        }
-        : {}),
-      invitation_code: payload.invitationCode || undefined,
-      ...oauthAffiliatePayload(loadOAuthAffiliateCode()),
-      ...serializeAdoptionDecision(currentAdoptionDecision())
-    })
-    await finalizePendingAccountResponse(data)
+    const { data } = await apiClient.post<DingTalkPendingActionResponse>(
+      "/auth/oauth/pending/create-account",
+      {
+        email: payload.email,
+        password: payload.password,
+        verify_code: payload.verifyCode || undefined,
+        ...(payload.turnstileToken
+          ? { turnstile_token: payload.turnstileToken }
+          : {}),
+        ...(payload.tencentCaptchaTicket
+          ? {
+              tencent_captcha_ticket: payload.tencentCaptchaTicket,
+              tencent_captcha_randstr: payload.tencentCaptchaRandstr,
+            }
+          : {}),
+        invitation_code: payload.invitationCode || undefined,
+        ...oauthAffiliatePayload(loadOAuthAffiliateCode()),
+        ...serializeAdoptionDecision(currentAdoptionDecision()),
+      },
+    );
+    await finalizePendingAccountResponse(data);
   } catch (e: unknown) {
     if (isCreateAccountRecoveryError(e)) {
-      switchToBindLoginMode(payload.email.trim())
-      return
+      switchToBindLoginMode(payload.email.trim());
+      return;
     }
-    accountActionError.value = getRequestErrorMessage(e, t('auth.loginFailed'))
+    accountActionError.value = getRequestErrorMessage(e, t("auth.loginFailed"));
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
 }
 
 async function handleBindLogin() {
-  accountActionError.value = ''
-  const email = bindLoginEmail.value.trim()
-  const password = bindLoginPassword.value
-  if (!email || !password) return
+  accountActionError.value = "";
+  const email = bindLoginEmail.value.trim();
+  const password = bindLoginPassword.value;
+  if (!email || !password) return;
 
-  isSubmitting.value = true
+  isSubmitting.value = true;
   try {
-    const { data } = await apiClient.post<DingTalkPendingActionResponse>('/auth/oauth/pending/bind-login', {
-      email,
-      password,
-      ...serializeAdoptionDecision(currentAdoptionDecision())
-    })
-    await finalizePendingAccountResponse(data)
+    const { data } = await apiClient.post<DingTalkPendingActionResponse>(
+      "/auth/oauth/pending/bind-login",
+      {
+        email,
+        password,
+        ...serializeAdoptionDecision(currentAdoptionDecision()),
+      },
+    );
+    await finalizePendingAccountResponse(data);
   } catch (e: unknown) {
-    accountActionError.value = getRequestErrorMessage(e, t('auth.loginFailed'))
+    accountActionError.value = getRequestErrorMessage(e, t("auth.loginFailed"));
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
 }
 
 async function handleSubmitTotpChallenge() {
-  totpError.value = ''
-  const code = totpCode.value.trim()
-  if (!totpTempToken.value || code.length !== 6) return
+  totpError.value = "";
+  const code = totpCode.value.trim();
+  if (!totpTempToken.value || code.length !== 6) return;
 
-  isSubmitting.value = true
+  isSubmitting.value = true;
   try {
     const completion = await login2FA({
       temp_token: totpTempToken.value,
-      totp_code: code
-    })
-    await authStore.setToken(completion.access_token)
-    clearAllAffiliateReferralCodes()
-    appStore.showSuccess(t('auth.loginSuccess'))
-    await router.replace(redirectTo.value)
+      totp_code: code,
+    });
+    await authStore.setToken(completion.access_token);
+    clearAllAffiliateReferralCodes();
+    appStore.showSuccess(t("auth.loginSuccess"));
+    await router.replace(redirectTo.value);
   } catch (e: unknown) {
-    totpError.value = getRequestErrorMessage(e, t('auth.loginFailed'))
+    totpError.value = getRequestErrorMessage(e, t("auth.loginFailed"));
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
 }
 
 onMounted(async () => {
-  const params = parseFragmentParams()
-  const legacyLogin = readLegacyFragmentLogin(params)
-  const legacyPendingToken = params.get('pending_oauth_token')?.trim() || ''
-  const error = params.get('error')
-  const errorDesc = params.get('error_description') || params.get('error_message') || ''
+  const params = parseFragmentParams();
+  const legacyLogin = readLegacyFragmentLogin(params);
+  const legacyPendingToken = params.get("pending_oauth_token")?.trim() || "";
+  const error = params.get("error");
+  const errorDesc =
+    params.get("error_description") || params.get("error_message") || "";
   const redirect = sanitizeRedirectPath(
-    params.get('redirect') || (route.query.redirect as string | undefined) || '/dashboard'
-  )
+    params.get("redirect") ||
+      (route.query.redirect as string | undefined) ||
+      "/dashboard",
+  );
 
   try {
     if (legacyLogin) {
-      persistOAuthTokenContext(legacyLogin)
-      await authStore.setToken(legacyLogin.access_token)
-      clearAllAffiliateReferralCodes()
-      appStore.showSuccess(t('auth.loginSuccess'))
-      await router.replace(redirect)
-      return
+      persistOAuthTokenContext(legacyLogin);
+      await authStore.setToken(legacyLogin.access_token);
+      clearAllAffiliateReferralCodes();
+      appStore.showSuccess(t("auth.loginSuccess"));
+      await router.replace(redirect);
+      return;
     }
 
-    if (error === 'invitation_required' && legacyPendingToken) {
-      legacyPendingOAuthToken.value = legacyPendingToken
-      redirectTo.value = redirect
-      needsInvitation.value = true
-      isProcessing.value = false
-      return
+    if (error === "invitation_required" && legacyPendingToken) {
+      legacyPendingOAuthToken.value = legacyPendingToken;
+      redirectTo.value = redirect;
+      needsInvitation.value = true;
+      isProcessing.value = false;
+      return;
     }
 
     if (error) {
-      const i18nKey = `auth.dingtalk.error.${error}`
-      errorMessage.value = te(i18nKey) ? t(i18nKey) : (errorDesc || error)
-      isProcessing.value = false
-      return
+      const i18nKey = `auth.dingtalk.error.${error}`;
+      errorMessage.value = te(i18nKey) ? t(i18nKey) : errorDesc || error;
+      isProcessing.value = false;
+      return;
     }
 
-    const completion = await exchangePendingOAuthCompletion()
+    const completion = await exchangePendingOAuthCompletion();
     const completionRedirect = sanitizeRedirectPath(
-      completion.redirect || (route.query.redirect as string | undefined) || '/dashboard'
-    )
-    applyAdoptionSuggestionState(completion)
-    redirectTo.value = completionRedirect
+      completion.redirect ||
+        (route.query.redirect as string | undefined) ||
+        "/dashboard",
+    );
+    applyAdoptionSuggestionState(completion);
+    redirectTo.value = completionRedirect;
 
-    const completionData = completion as DingTalkPendingActionResponse
+    const completionData = completion as DingTalkPendingActionResponse;
     // 用户从补邮箱页"我已有账户"按钮跳回时携带 bind=1，跳过 email_completion 自动 redirect，
     // 直接进入 bind_login 输入密码绑定已有账户。
-    const wantsBindExisting = (route.query.bind as string | undefined) === '1'
-    const presetEmail = ((route.query.email as string | undefined) || '').trim()
-    if (completionData.step === 'email_completion' || (completionData as unknown as Record<string, unknown>)['requires_email_completion'] === true) {
+    const wantsBindExisting = (route.query.bind as string | undefined) === "1";
+    const presetEmail = (
+      (route.query.email as string | undefined) || ""
+    ).trim();
+    if (
+      completionData.step === "email_completion" ||
+      (completionData as unknown as Record<string, unknown>)[
+        "requires_email_completion"
+      ] === true
+    ) {
       if (wantsBindExisting) {
-        pendingAccountAction.value = 'bind_login'
-        bindLoginEmail.value = presetEmail
-        bindLoginPassword.value = ''
-        canReturnToCreateAccount.value = true
-        isProcessing.value = false
-        persistPendingAuthSession(completionRedirect)
-        return
+        pendingAccountAction.value = "bind_login";
+        bindLoginEmail.value = presetEmail;
+        bindLoginPassword.value = "";
+        canReturnToCreateAccount.value = true;
+        isProcessing.value = false;
+        persistPendingAuthSession(completionRedirect);
+        return;
       }
-      await router.replace('/auth/dingtalk/email-completion?redirect=' + encodeURIComponent(completionRedirect))
-      return
+      await router.replace(
+        "/auth/dingtalk/email-completion?redirect=" +
+          encodeURIComponent(completionRedirect),
+      );
+      return;
     }
 
-    if (completion.error === 'invitation_required') {
-      needsInvitation.value = true
-      isProcessing.value = false
-      persistPendingAuthSession(completionRedirect)
-      return
+    if (completion.error === "invitation_required") {
+      needsInvitation.value = true;
+      isProcessing.value = false;
+      persistPendingAuthSession(completionRedirect);
+      return;
     }
 
     if (applyTotpChallenge(completion as DingTalkPendingActionResponse)) {
-      persistPendingAuthSession(completionRedirect)
-      return
+      persistPendingAuthSession(completionRedirect);
+      return;
     }
 
-    applyPendingAccountAction(completion as DingTalkPendingActionResponse)
-    if (pendingAccountAction.value !== 'none') {
-      isProcessing.value = false
-      persistPendingAuthSession(completionRedirect)
-      return
+    applyPendingAccountAction(completion as DingTalkPendingActionResponse);
+    if (pendingAccountAction.value !== "none") {
+      isProcessing.value = false;
+      persistPendingAuthSession(completionRedirect);
+      return;
     }
 
     if (adoptionRequired.value && hasSuggestedProfile(completion)) {
-      needsAdoptionConfirmation.value = true
-      isProcessing.value = false
-      persistPendingAuthSession(completionRedirect)
-      return
+      needsAdoptionConfirmation.value = true;
+      isProcessing.value = false;
+      persistPendingAuthSession(completionRedirect);
+      return;
     }
 
-    await finalizeCompletion(completion, completionRedirect)
+    await finalizeCompletion(completion, completionRedirect);
   } catch (e: unknown) {
-    clearPendingAuthSession()
-    errorMessage.value = getRequestErrorMessage(e, t('auth.loginFailed'))
-    isProcessing.value = false
+    clearPendingAuthSession();
+    errorMessage.value = getRequestErrorMessage(e, t("auth.loginFailed"));
+    isProcessing.value = false;
   }
-})
+});
 </script>
 
 <style scoped>

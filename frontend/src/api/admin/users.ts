@@ -3,56 +3,61 @@
  * Handles user management for administrators
  */
 
-import { apiClient } from '../client'
-import type { AdminUser, UpdateUserRequest, PaginatedResponse, ApiKey } from '@/types'
+import { apiClient } from "../client";
+import type {
+  AdminUser,
+  UpdateUserRequest,
+  PaginatedResponse,
+  ApiKey,
+} from "@/types";
 
 export interface AdminBindAuthIdentityChannelRequest {
-  channel: string
-  channel_app_id: string
-  channel_subject: string
-  metadata?: Record<string, unknown> | null
+  channel: string;
+  channel_app_id: string;
+  channel_subject: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface AdminBindAuthIdentityRequest {
-  provider_type: string
-  provider_key: string
-  provider_subject: string
-  issuer?: string | null
-  metadata?: Record<string, unknown> | null
-  channel?: AdminBindAuthIdentityChannelRequest
+  provider_type: string;
+  provider_key: string;
+  provider_subject: string;
+  issuer?: string | null;
+  metadata?: Record<string, unknown> | null;
+  channel?: AdminBindAuthIdentityChannelRequest;
 }
 
 export interface AdminBoundAuthIdentityChannel {
-  channel: string
-  channel_app_id: string
-  channel_subject: string
-  metadata: Record<string, unknown> | null
-  created_at: string
-  updated_at: string
+  channel: string;
+  channel_app_id: string;
+  channel_subject: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AdminBoundAuthIdentity {
-  user_id: number
-  provider_type: string
-  provider_key: string
-  provider_subject: string
-  verified_at?: string | null
-  issuer?: string | null
-  metadata: Record<string, unknown> | null
-  created_at: string
-  updated_at: string
-  channel?: AdminBoundAuthIdentityChannel | null
+  user_id: number;
+  provider_type: string;
+  provider_key: string;
+  provider_subject: string;
+  verified_at?: string | null;
+  issuer?: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  channel?: AdminBoundAuthIdentityChannel | null;
 }
 
 export interface BatchUpdateUserLimitsRequest {
-  user_ids: number[]
-  all?: boolean
-  concurrency?: number
-  rpm_limit?: number
+  user_ids: number[];
+  all?: boolean;
+  concurrency?: number;
+  rpm_limit?: number;
 }
 
 export interface BatchUpdateUserLimitsResponse {
-  affected: number
+  affected: number;
 }
 
 /**
@@ -67,19 +72,19 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    status?: 'active' | 'disabled'
-    role?: 'admin' | 'user'
-    search?: string
-    group_name?: string         // fuzzy filter by allowed group name
-    api_key_group_id?: number   // filter users by the group their API keys are bound to
-    attributes?: Record<number, string>  // attributeId -> value
-    include_subscriptions?: boolean
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    status?: "active" | "disabled";
+    role?: "admin" | "user";
+    search?: string;
+    group_name?: string; // fuzzy filter by allowed group name
+    api_key_group_id?: number; // filter users by the group their API keys are bound to
+    attributes?: Record<number, string>; // attributeId -> value
+    include_subscriptions?: boolean;
+    sort_by?: string;
+    sort_order?: "asc" | "desc";
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal;
+  },
 ): Promise<PaginatedResponse<AdminUser>> {
   // Build params with attribute filters in attr[id]=value format
   const params: Record<string, any> = {
@@ -92,22 +97,25 @@ export async function list(
     api_key_group_id: filters?.api_key_group_id,
     include_subscriptions: filters?.include_subscriptions,
     sort_by: filters?.sort_by,
-    sort_order: filters?.sort_order
-  }
+    sort_order: filters?.sort_order,
+  };
 
   // Add attribute filters as attr[id]=value
   if (filters?.attributes) {
     for (const [attrId, value] of Object.entries(filters.attributes)) {
       if (value) {
-        params[`attr[${attrId}]`] = value
+        params[`attr[${attrId}]`] = value;
       }
     }
   }
-  const { data } = await apiClient.get<PaginatedResponse<AdminUser>>('/admin/users', {
-    params,
-    signal: options?.signal
-  })
-  return data
+  const { data } = await apiClient.get<PaginatedResponse<AdminUser>>(
+    "/admin/users",
+    {
+      params,
+      signal: options?.signal,
+    },
+  );
+  return data;
 }
 
 /**
@@ -116,10 +124,15 @@ export async function list(
  * @param includeDeleted - Whether to include soft-deleted users
  * @returns User details
  */
-export async function getById(id: number, includeDeleted = false): Promise<AdminUser> {
-  const url = includeDeleted ? `/admin/users/${id}?include_deleted=true` : `/admin/users/${id}`
-  const { data } = await apiClient.get<AdminUser>(url)
-  return data
+export async function getById(
+  id: number,
+  includeDeleted = false,
+): Promise<AdminUser> {
+  const url = includeDeleted
+    ? `/admin/users/${id}?include_deleted=true`
+    : `/admin/users/${id}`;
+  const { data } = await apiClient.get<AdminUser>(url);
+  return data;
 }
 
 /**
@@ -128,18 +141,18 @@ export async function getById(id: number, includeDeleted = false): Promise<Admin
  * @returns Created user
  */
 export async function create(userData: {
-  email: string
-  password: string
-  username?: string
-  notes?: string
-  role?: 'admin' | 'user'
-  balance?: number
-  concurrency?: number
-  rpm_limit?: number
-  allowed_groups?: number[] | null
+  email: string;
+  password: string;
+  username?: string;
+  notes?: string;
+  role?: "admin" | "user";
+  balance?: number;
+  concurrency?: number;
+  rpm_limit?: number;
+  allowed_groups?: number[] | null;
 }): Promise<AdminUser> {
-  const { data } = await apiClient.post<AdminUser>('/admin/users', userData)
-  return data
+  const { data } = await apiClient.post<AdminUser>("/admin/users", userData);
+  return data;
 }
 
 /**
@@ -148,9 +161,15 @@ export async function create(userData: {
  * @param updates - Fields to update
  * @returns Updated user
  */
-export async function update(id: number, updates: UpdateUserRequest): Promise<AdminUser> {
-  const { data } = await apiClient.put<AdminUser>(`/admin/users/${id}`, updates)
-  return data
+export async function update(
+  id: number,
+  updates: UpdateUserRequest,
+): Promise<AdminUser> {
+  const { data } = await apiClient.put<AdminUser>(
+    `/admin/users/${id}`,
+    updates,
+  );
+  return data;
 }
 
 /**
@@ -159,8 +178,10 @@ export async function update(id: number, updates: UpdateUserRequest): Promise<Ad
  * @returns Success confirmation
  */
 export async function deleteUser(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/users/${id}`)
-  return data
+  const { data } = await apiClient.delete<{ message: string }>(
+    `/admin/users/${id}`,
+  );
+  return data;
 }
 
 /**
@@ -174,15 +195,18 @@ export async function deleteUser(id: number): Promise<{ message: string }> {
 export async function updateBalance(
   id: number,
   balance: number,
-  operation: 'set' | 'add' | 'subtract' = 'set',
-  notes?: string
+  operation: "set" | "add" | "subtract" = "set",
+  notes?: string,
 ): Promise<AdminUser> {
-  const { data } = await apiClient.post<AdminUser>(`/admin/users/${id}/balance`, {
-    balance,
-    operation,
-    notes: notes || ''
-  })
-  return data
+  const { data } = await apiClient.post<AdminUser>(
+    `/admin/users/${id}/balance`,
+    {
+      balance,
+      operation,
+      notes: notes || "",
+    },
+  );
+  return data;
 }
 
 /**
@@ -191,19 +215,22 @@ export async function updateBalance(
  * @param concurrency - New concurrency limit
  * @returns Updated user
  */
-export async function updateConcurrency(id: number, concurrency: number): Promise<AdminUser> {
-  return update(id, { concurrency })
+export async function updateConcurrency(
+  id: number,
+  concurrency: number,
+): Promise<AdminUser> {
+  return update(id, { concurrency });
 }
 
 /** Overwrite concurrency and/or RPM limits for multiple users in one request. */
 export async function batchUpdateLimits(
-  request: BatchUpdateUserLimitsRequest
+  request: BatchUpdateUserLimitsRequest,
 ): Promise<BatchUpdateUserLimitsResponse> {
   const { data } = await apiClient.post<BatchUpdateUserLimitsResponse>(
-    '/admin/users/batch-limits',
-    request
-  )
-  return data
+    "/admin/users/batch-limits",
+    request,
+  );
+  return data;
 }
 
 /**
@@ -212,8 +239,11 @@ export async function batchUpdateLimits(
  * @param status - New status
  * @returns Updated user
  */
-export async function toggleStatus(id: number, status: 'active' | 'disabled'): Promise<AdminUser> {
-  return update(id, { status })
+export async function toggleStatus(
+  id: number,
+  status: "active" | "disabled",
+): Promise<AdminUser> {
+  return update(id, { status });
 }
 
 /**
@@ -221,9 +251,13 @@ export async function toggleStatus(id: number, status: 'active' | 'disabled'): P
  * @param id - User ID
  * @returns List of user's API keys
  */
-export async function getUserApiKeys(id: number): Promise<PaginatedResponse<ApiKey>> {
-  const { data } = await apiClient.get<PaginatedResponse<ApiKey>>(`/admin/users/${id}/api-keys`)
-  return data
+export async function getUserApiKeys(
+  id: number,
+): Promise<PaginatedResponse<ApiKey>> {
+  const { data } = await apiClient.get<PaginatedResponse<ApiKey>>(
+    `/admin/users/${id}/api-keys`,
+  );
+  return data;
 }
 
 /**
@@ -234,44 +268,44 @@ export async function getUserApiKeys(id: number): Promise<PaginatedResponse<ApiK
  */
 export async function getUserUsageStats(
   id: number,
-  period: string = 'month'
+  period: string = "month",
 ): Promise<{
-  total_requests: number
-  total_cost: number
-  total_tokens: number
+  total_requests: number;
+  total_cost: number;
+  total_tokens: number;
 }> {
   const { data } = await apiClient.get<{
-    total_requests: number
-    total_cost: number
-    total_tokens: number
+    total_requests: number;
+    total_cost: number;
+    total_tokens: number;
   }>(`/admin/users/${id}/usage`, {
-    params: { period }
-  })
-  return data
+    params: { period },
+  });
+  return data;
 }
 
 /**
  * Balance history item returned from the API
  */
 export interface BalanceHistoryItem {
-  id: number
-  code: string
-  type: string
-  value: number
-  status: string
-  used_by: number | null
-  used_at: string | null
-  created_at: string
-  group_id: number | null
-  validity_days: number
-  notes: string
-  user?: { id: number; email: string } | null
-  group?: { id: number; name: string } | null
+  id: number;
+  code: string;
+  type: string;
+  value: number;
+  status: string;
+  used_by: number | null;
+  used_at: string | null;
+  created_at: string;
+  group_id: number | null;
+  validity_days: number;
+  notes: string;
+  user?: { id: number; email: string } | null;
+  group?: { id: number; name: string } | null;
 }
 
 // Balance history response extends pagination with total_recharged summary
 export interface BalanceHistoryResponse extends PaginatedResponse<BalanceHistoryItem> {
-  total_recharged: number
+  total_recharged: number;
 }
 
 /**
@@ -286,15 +320,15 @@ export async function getUserBalanceHistory(
   id: number,
   page: number = 1,
   pageSize: number = 20,
-  type?: string
+  type?: string,
 ): Promise<BalanceHistoryResponse> {
-  const params: Record<string, any> = { page, page_size: pageSize }
-  if (type) params.type = type
+  const params: Record<string, any> = { page, page_size: pageSize };
+  if (type) params.type = type;
   const { data } = await apiClient.get<BalanceHistoryResponse>(
     `/admin/users/${id}/balance-history`,
-    { params }
-  )
-  return data
+    { params },
+  );
+  return data;
 }
 
 /**
@@ -307,24 +341,24 @@ export async function getUserBalanceHistory(
 export async function replaceGroup(
   userId: number,
   oldGroupId: number,
-  newGroupId: number
+  newGroupId: number,
 ): Promise<{ migrated_keys: number }> {
   const { data } = await apiClient.post<{ migrated_keys: number }>(
     `/admin/users/${userId}/replace-group`,
-    { old_group_id: oldGroupId, new_group_id: newGroupId }
-  )
-  return data
+    { old_group_id: oldGroupId, new_group_id: newGroupId },
+  );
+  return data;
 }
 
 export async function bindUserAuthIdentity(
   userId: number,
-  input: AdminBindAuthIdentityRequest
+  input: AdminBindAuthIdentityRequest,
 ): Promise<AdminBoundAuthIdentity> {
   const { data } = await apiClient.post<AdminBoundAuthIdentity>(
     `/admin/users/${userId}/auth-identities`,
-    input
-  )
-  return data
+    input,
+  );
+  return data;
 }
 
 /**
@@ -332,11 +366,11 @@ export async function bindUserAuthIdentity(
  * Admins see the real account name here; customers never do.
  */
 export interface AccountViewGrantAccount {
-  id: number
-  name: string
-  platform: string
-  account_type: string
-  status: string
+  id: number;
+  name: string;
+  platform: string;
+  account_type: string;
+  status: string;
 }
 
 /**
@@ -345,18 +379,20 @@ export interface AccountViewGrantAccount {
  * set. Both default to off/empty for every user.
  */
 export interface AccountViewGrant {
-  user_id: number
-  enabled: boolean
-  account_ids: number[]
-  accounts: AccountViewGrantAccount[]
+  user_id: number;
+  enabled: boolean;
+  account_ids: number[];
+  accounts: AccountViewGrantAccount[];
 }
 
 /**
  * Read the read-only account view grant of a user
  */
 export async function getAccountView(id: number): Promise<AccountViewGrant> {
-  const { data } = await apiClient.get<AccountViewGrant>(`/admin/users/${id}/account-view`)
-  return data
+  const { data } = await apiClient.get<AccountViewGrant>(
+    `/admin/users/${id}/account-view`,
+  );
+  return data;
 }
 
 /**
@@ -365,10 +401,13 @@ export async function getAccountView(id: number): Promise<AccountViewGrant> {
  */
 export async function updateAccountView(
   id: number,
-  grant: { enabled: boolean; account_ids: number[] }
+  grant: { enabled: boolean; account_ids: number[] },
 ): Promise<AccountViewGrant> {
-  const { data } = await apiClient.put<AccountViewGrant>(`/admin/users/${id}/account-view`, grant)
-  return data
+  const { data } = await apiClient.put<AccountViewGrant>(
+    `/admin/users/${id}/account-view`,
+    grant,
+  );
+  return data;
 }
 
 /**
@@ -376,47 +415,57 @@ export async function updateAccountView(
  */
 // Keep aligned with backend/internal/service/domain_constants.go AllowedQuotaPlatforms.
 export const PLATFORM_QUOTA_PLATFORMS = [
-  'anthropic', 'openai', 'gemini', 'antigravity', 'grok',
-  'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go',
-] as const
-export type PlatformQuotaPlatform = typeof PLATFORM_QUOTA_PLATFORMS[number]
-export type PlatformQuotaWindow = 'daily' | 'weekly' | 'monthly'
+  "anthropic",
+  "openai",
+  "gemini",
+  "antigravity",
+  "grok",
+  "kimi",
+  "zhipu",
+  "deepseek",
+  "minimax",
+  "opencode_go",
+] as const;
+export type PlatformQuotaPlatform = (typeof PLATFORM_QUOTA_PLATFORMS)[number];
+export type PlatformQuotaWindow = "daily" | "weekly" | "monthly";
 
 export interface PlatformQuotaItem {
-  platform: PlatformQuotaPlatform
-  daily_limit_usd: number | null
-  weekly_limit_usd: number | null
-  monthly_limit_usd: number | null
-  daily_usage_usd: number
-  weekly_usage_usd: number
-  monthly_usage_usd: number
-  daily_window_start?: string | null
-  weekly_window_start?: string | null
-  monthly_window_start?: string | null
-  daily_window_resets_at?: string | null
-  weekly_window_resets_at?: string | null
-  monthly_window_resets_at?: string | null
+  platform: PlatformQuotaPlatform;
+  daily_limit_usd: number | null;
+  weekly_limit_usd: number | null;
+  monthly_limit_usd: number | null;
+  daily_usage_usd: number;
+  weekly_usage_usd: number;
+  monthly_usage_usd: number;
+  daily_window_start?: string | null;
+  weekly_window_start?: string | null;
+  monthly_window_start?: string | null;
+  daily_window_resets_at?: string | null;
+  weekly_window_resets_at?: string | null;
+  monthly_window_resets_at?: string | null;
 }
 
 export interface PlatformQuotaUpdateItem {
-  platform: PlatformQuotaPlatform
-  daily_limit_usd: number | null
-  weekly_limit_usd: number | null
-  monthly_limit_usd: number | null
+  platform: PlatformQuotaPlatform;
+  daily_limit_usd: number | null;
+  weekly_limit_usd: number | null;
+  monthly_limit_usd: number | null;
 }
 
 export interface PlatformQuotasResponse {
-  platform_quotas: PlatformQuotaItem[]
+  platform_quotas: PlatformQuotaItem[];
 }
 
 /**
  * Get user's platform quotas
  */
-export async function getPlatformQuotas(id: number): Promise<PlatformQuotasResponse> {
+export async function getPlatformQuotas(
+  id: number,
+): Promise<PlatformQuotasResponse> {
   const { data } = await apiClient.get<PlatformQuotasResponse>(
-    `/admin/users/${id}/platform-quotas`
-  )
-  return data
+    `/admin/users/${id}/platform-quotas`,
+  );
+  return data;
 }
 
 /**
@@ -424,13 +473,13 @@ export async function getPlatformQuotas(id: number): Promise<PlatformQuotasRespo
  */
 export async function updatePlatformQuotas(
   id: number,
-  quotas: PlatformQuotaUpdateItem[]
+  quotas: PlatformQuotaUpdateItem[],
 ): Promise<PlatformQuotasResponse> {
   const { data } = await apiClient.put<PlatformQuotasResponse>(
     `/admin/users/${id}/platform-quotas`,
-    { quotas }
-  )
-  return data
+    { quotas },
+  );
+  return data;
 }
 
 /**
@@ -439,13 +488,13 @@ export async function updatePlatformQuotas(
 export async function resetPlatformQuotaWindow(
   id: number,
   platform: PlatformQuotaPlatform,
-  window: PlatformQuotaWindow
+  window: PlatformQuotaWindow,
 ): Promise<PlatformQuotasResponse> {
   const { data } = await apiClient.post<PlatformQuotasResponse>(
     `/admin/users/${id}/platform-quotas/reset`,
-    { platform, window }
-  )
-  return data
+    { platform, window },
+  );
+  return data;
 }
 
 export const usersAPI = {
@@ -468,6 +517,6 @@ export const usersAPI = {
   getPlatformQuotas,
   updatePlatformQuotas,
   resetPlatformQuotaWindow,
-}
+};
 
-export default usersAPI
+export default usersAPI;

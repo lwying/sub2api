@@ -2,8 +2,14 @@
   <div class="space-y-5">
     <!-- 页头(独立形态下展示标题;后台形态 AppHeader 已有页面标题) -->
     <div v-if="!embedded">
-      <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl">{{ t('modelPlaza.title') }}</h1>
-      <p class="mt-1.5 text-sm text-gray-500 dark:text-dark-400">{{ t('modelPlaza.description') }}</p>
+      <h1
+        class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl"
+      >
+        {{ t("modelPlaza.title") }}
+      </h1>
+      <p class="mt-1.5 text-sm text-gray-500 dark:text-dark-400">
+        {{ t("modelPlaza.description") }}
+      </p>
     </div>
 
     <!-- 全局价格说明(管理员配置,Markdown) -->
@@ -19,18 +25,20 @@
       class="flex items-center gap-1.5 text-xs text-gray-400 dark:text-dark-500"
     >
       <Icon name="infoCircle" size="xs" class="h-3.5 w-3.5" />
-      {{ t('modelPlaza.anonymousHint') }}
+      {{ t("modelPlaza.anonymousHint") }}
     </p>
 
     <!-- 加载/错误/空 -->
     <div v-if="loading" class="flex min-h-[240px] items-center justify-center">
-      <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-600/25 border-t-primary-600 dark:border-primary-400/25 dark:border-t-primary-400"></div>
+      <div
+        class="h-8 w-8 animate-spin rounded-full border-2 border-primary-600/25 border-t-primary-600 dark:border-primary-400/25 dark:border-t-primary-400"
+      ></div>
     </div>
     <div
       v-else-if="error"
       class="rounded-2xl border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
     >
-      {{ t('modelPlaza.loadFailed') }}
+      {{ t("modelPlaza.loadFailed") }}
     </div>
     <template v-else>
       <!-- 筛选区:平台 → 分组 → 倍率 -->
@@ -56,101 +64,113 @@
         v-else
         class="rounded-2xl border border-dashed border-gray-300 px-5 py-12 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-dark-400"
       >
-        {{ searchActive ? t('modelPlaza.noSearchResult') : t('modelPlaza.empty') }}
+        {{
+          searchActive ? t("modelPlaza.noSearchResult") : t("modelPlaza.empty")
+        }}
       </div>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
-import Icon from '@/components/icons/Icon.vue'
-import PlazaFilterBar from './PlazaFilterBar.vue'
-import PlazaGroupSection from './PlazaGroupSection.vue'
-import type { ModelPlazaGroup, ModelPlazaResponse } from '@/api/modelPlaza'
-import { useAuthStore } from '@/stores/auth'
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+import Icon from "@/components/icons/Icon.vue";
+import PlazaFilterBar from "./PlazaFilterBar.vue";
+import PlazaGroupSection from "./PlazaGroupSection.vue";
+import type { ModelPlazaGroup, ModelPlazaResponse } from "@/api/modelPlaza";
+import { useAuthStore } from "@/stores/auth";
 
 const props = defineProps<{
-  response: ModelPlazaResponse | null
-  loading: boolean
-  error?: boolean
+  response: ModelPlazaResponse | null;
+  loading: boolean;
+  error?: boolean;
   /** 后台内嵌形态(AppLayout 内):隐藏页头。 */
-  embedded?: boolean
-}>()
+  embedded?: boolean;
+}>();
 
-const { t } = useI18n()
-const authStore = useAuthStore()
-const isAuthenticated = computed(() => authStore.isAuthenticated)
+const { t } = useI18n();
+const authStore = useAuthStore();
+const isAuthenticated = computed(() => authStore.isAuthenticated);
 
-const selectedPlatform = ref<string>('all')
-const selectedGroupId = ref<number | 'all'>('all')
-const selectedRate = ref<number | 'all'>('all')
-const searchQuery = ref('')
+const selectedPlatform = ref<string>("all");
+const selectedGroupId = ref<number | "all">("all");
+const selectedRate = ref<number | "all">("all");
+const searchQuery = ref("");
 
-const searchActive = computed(() => searchQuery.value.trim() !== '')
+const searchActive = computed(() => searchQuery.value.trim() !== "");
 
 const descriptionHtml = computed(() => {
-  const md = props.response?.description?.trim()
-  if (!md) return ''
-  return DOMPurify.sanitize(marked.parse(md) as string)
-})
+  const md = props.response?.description?.trim();
+  if (!md) return "";
+  return DOMPurify.sanitize(marked.parse(md) as string);
+});
 
 /** 生效倍率 = 用户专属倍率 ?? 分组默认倍率。 */
 function effectiveRate(g: ModelPlazaGroup): number {
-  return g.user_rate_multiplier ?? g.rate_multiplier
+  return g.user_rate_multiplier ?? g.rate_multiplier;
 }
 
 const platforms = computed(() =>
-  [...new Set((props.response?.groups ?? []).map((g) => g.platform).filter(Boolean))].sort()
-)
+  [
+    ...new Set(
+      (props.response?.groups ?? []).map((g) => g.platform).filter(Boolean),
+    ),
+  ].sort(),
+);
 
 const groupOptions = computed(() =>
   (props.response?.groups ?? []).map((g) => ({
     id: g.id,
     name: g.name,
     platform: g.platform,
-    rate: effectiveRate(g)
-  }))
-)
+    rate: effectiveRate(g),
+  })),
+);
 
 /** 全量生效倍率;当前组合下不可用的项由 FilterBar 置灰而非隐藏。 */
 const rates = computed(() =>
-  [...new Set((props.response?.groups ?? []).map(effectiveRate))].sort((a, b) => a - b)
-)
+  [...new Set((props.response?.groups ?? []).map(effectiveRate))].sort(
+    (a, b) => a - b,
+  ),
+);
 
 /** 数据刷新后选中的倍率可能不复存在,重置为全部。 */
 watch(rates, (list) => {
-  if (selectedRate.value !== 'all' && !list.includes(selectedRate.value)) {
-    selectedRate.value = 'all'
+  if (selectedRate.value !== "all" && !list.includes(selectedRate.value)) {
+    selectedRate.value = "all";
   }
-})
+});
 
 const filteredGroups = computed(() => {
-  let groups = props.response?.groups ?? []
-  if (selectedPlatform.value !== 'all') {
-    groups = groups.filter((g) => g.platform === selectedPlatform.value)
+  let groups = props.response?.groups ?? [];
+  if (selectedPlatform.value !== "all") {
+    groups = groups.filter((g) => g.platform === selectedPlatform.value);
   }
-  if (selectedGroupId.value !== 'all') {
-    groups = groups.filter((g) => g.id === selectedGroupId.value)
+  if (selectedGroupId.value !== "all") {
+    groups = groups.filter((g) => g.id === selectedGroupId.value);
   }
-  if (selectedRate.value !== 'all') {
-    groups = groups.filter((g) => effectiveRate(g) === selectedRate.value)
+  if (selectedRate.value !== "all") {
+    groups = groups.filter((g) => effectiveRate(g) === selectedRate.value);
   }
   // 模型名搜索:分组内只留命中的模型,整组无命中则隐藏该分组。
-  const q = searchQuery.value.trim().toLowerCase()
+  const q = searchQuery.value.trim().toLowerCase();
   if (q) {
     groups = groups
-      .map((g) => ({ ...g, models: g.models.filter((m) => m.name.toLowerCase().includes(q)) }))
-      .filter((g) => g.models.length > 0)
+      .map((g) => ({
+        ...g,
+        models: g.models.filter((m) => m.name.toLowerCase().includes(q)),
+      }))
+      .filter((g) => g.models.length > 0);
   }
   // 专属倍率会改变生效值,不能只依赖后端按默认倍率的排序。
   return [...groups].sort(
-    (a, b) => effectiveRate(a) - effectiveRate(b) || a.name.localeCompare(b.name)
-  )
-})
+    (a, b) =>
+      effectiveRate(a) - effectiveRate(b) || a.name.localeCompare(b.name),
+  );
+});
 </script>
 
 <style scoped>

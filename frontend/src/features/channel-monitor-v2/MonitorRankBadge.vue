@@ -50,73 +50,74 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 /** Rank medal palettes: light / mid / dark fills for the multi-path trophy SVG. */
 const RANK_PALETTES = {
   1: {
     // gold
-    light: '#FFD524',
-    mid: '#F5B200',
-    dark: '#B45309',
+    light: "#FFD524",
+    mid: "#F5B200",
+    dark: "#B45309",
   },
   2: {
     // silver
-    light: '#E5E7EB',
-    mid: '#9CA3AF',
-    dark: '#4B5563',
+    light: "#E5E7EB",
+    mid: "#9CA3AF",
+    dark: "#4B5563",
   },
   3: {
     // bronze
-    light: '#E8A86A',
-    mid: '#CD7F32',
-    dark: '#8B5A2B',
+    light: "#E8A86A",
+    mid: "#CD7F32",
+    dark: "#8B5A2B",
   },
-} as const
+} as const;
 
 const props = defineProps<{
-  rank: number | null | undefined
-}>()
+  rank: number | null | undefined;
+}>();
 
 const rankNum = computed(() => {
-  const n = Number(props.rank)
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
-})
+  const n = Number(props.rank);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+});
 
 const showTrophy = computed(
   () => rankNum.value != null && rankNum.value >= 1 && rankNum.value <= 3,
-)
+);
 
 const palette = computed(() => {
   if (rankNum.value === 1 || rankNum.value === 2 || rankNum.value === 3) {
-    return RANK_PALETTES[rankNum.value]
+    return RANK_PALETTES[rankNum.value];
   }
-  return null
-})
+  return null;
+});
 
 const label = computed(() => {
   // Rank 0 = present but unranked (no traffic in window / outside top list).
-  if (rankNum.value == null || rankNum.value <= 0) return '—'
-  return `#${rankNum.value}`
-})
+  if (rankNum.value == null || rankNum.value <= 0) return "—";
+  return `#${rankNum.value}`;
+});
 
 const ariaLabel = computed(() => {
-  if (rankNum.value == null || rankNum.value <= 0) return t('channelMonitorV2.rank.unranked')
-  if (rankNum.value === 1) return t('channelMonitorV2.rank.gold')
-  if (rankNum.value === 2) return t('channelMonitorV2.rank.silver')
-  if (rankNum.value === 3) return t('channelMonitorV2.rank.bronze')
-  return t('channelMonitorV2.rank.place', { n: rankNum.value })
-})
+  if (rankNum.value == null || rankNum.value <= 0)
+    return t("channelMonitorV2.rank.unranked");
+  if (rankNum.value === 1) return t("channelMonitorV2.rank.gold");
+  if (rankNum.value === 2) return t("channelMonitorV2.rank.silver");
+  if (rankNum.value === 3) return t("channelMonitorV2.rank.bronze");
+  return t("channelMonitorV2.rank.place", { n: rankNum.value });
+});
 
-const titleText = computed(() => ariaLabel.value)
+const titleText = computed(() => ariaLabel.value);
 
 const rankClass = computed(() => {
-  if (rankNum.value === 1) return 'text-amber-600 dark:text-amber-400'
-  if (rankNum.value === 2) return 'text-slate-500 dark:text-slate-300'
-  if (rankNum.value === 3) return 'text-amber-800 dark:text-amber-600'
-  return ''
-})
+  if (rankNum.value === 1) return "text-amber-600 dark:text-amber-400";
+  if (rankNum.value === 2) return "text-slate-500 dark:text-slate-300";
+  if (rankNum.value === 3) return "text-amber-800 dark:text-amber-600";
+  return "";
+});
 </script>

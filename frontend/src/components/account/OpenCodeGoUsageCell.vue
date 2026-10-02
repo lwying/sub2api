@@ -31,9 +31,11 @@
     <span
       v-if="snapshot && snapshot.status !== 'ok'"
       class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium"
-      :class="snapshot.status === 'unauthorized'
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-        : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'"
+      :class="
+        snapshot.status === 'unauthorized'
+          ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+          : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+      "
       data-testid="opencode-go-status-badge"
     >
       {{ statusLabel }}
@@ -60,7 +62,7 @@
             d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
           />
         </svg>
-        {{ t('admin.accounts.usageWindow.activeQuery') }}
+        {{ t("admin.accounts.usageWindow.activeQuery") }}
       </button>
     </div>
   </div>
@@ -68,39 +70,46 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { adminAPI } from '@/api/admin'
-import type { Account, OpenCodeGoUsageState } from '@/types'
-import UsageProgressBar from './UsageProgressBar.vue'
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { adminAPI } from "@/api/admin";
+import type { Account, OpenCodeGoUsageState } from "@/types";
+import UsageProgressBar from "./UsageProgressBar.vue";
 
-const props = defineProps<{ account: Account }>()
-const emit = defineEmits<{ updated: [state: OpenCodeGoUsageState] }>()
-const { t } = useI18n()
-const state = ref(props.account.opencode_go_usage)
-const refreshing = ref(false)
-const snapshot = computed(() => state.value?.snapshot)
+const props = defineProps<{ account: Account }>();
+const emit = defineEmits<{ updated: [state: OpenCodeGoUsageState] }>();
+const { t } = useI18n();
+const state = ref(props.account.opencode_go_usage);
+const refreshing = ref(false);
+const snapshot = computed(() => state.value?.snapshot);
 const statusLabel = computed(() => {
-  if (snapshot.value?.status === 'unauthorized') return t('admin.accounts.opencodeGo.unauthorized')
-  if (snapshot.value?.status === 'failed') return t('admin.accounts.opencodeGo.failed')
-  return t('admin.accounts.opencodeGo.ok')
-})
+  if (snapshot.value?.status === "unauthorized")
+    return t("admin.accounts.opencodeGo.unauthorized");
+  if (snapshot.value?.status === "failed")
+    return t("admin.accounts.opencodeGo.failed");
+  return t("admin.accounts.opencodeGo.ok");
+});
 
-watch(() => props.account.opencode_go_usage, (next) => {
-  state.value = next
-})
+watch(
+  () => props.account.opencode_go_usage,
+  (next) => {
+    state.value = next;
+  },
+);
 
 const refreshUsage = async () => {
-  if (refreshing.value) return
-  refreshing.value = true
+  if (refreshing.value) return;
+  refreshing.value = true;
   try {
-    const next = await adminAPI.accounts.refreshOpenCodeGoUsage(props.account.id)
-    state.value = next
-    emit('updated', next)
+    const next = await adminAPI.accounts.refreshOpenCodeGoUsage(
+      props.account.id,
+    );
+    state.value = next;
+    emit("updated", next);
   } catch (error) {
-    console.error('Failed to refresh OpenCode Go usage:', error)
+    console.error("Failed to refresh OpenCode Go usage:", error);
   } finally {
-    refreshing.value = false
+    refreshing.value = false;
   }
-}
+};
 </script>

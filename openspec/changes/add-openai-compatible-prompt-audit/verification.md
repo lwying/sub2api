@@ -27,53 +27,53 @@
 
 ### 2.1 prompt-input-audit
 
-| ID | Requirement | 必备自动化证据 | 补充证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| A01 | 独立且默认关闭 | Coordinator off 单测；默认 config 单测；现有 Moderation 回归 | 升级后 config/runtime 截图 | 通过（自动化） |
-| A02 | OpenAI 兼容节点 | request builder golden；mock server 断言 `/v1/chat/completions`、model/messages/temperature/max_tokens/seed | probe 脱敏结果 | 通过（自动化） |
-| A03 | 凭据和出站地址安全 | 加密往返；Public DTO canary；SSRF/DNS rebinding/redirect/256 KiB 测试 | 配置 JSON 与日志扫描 | 通过（自动化） |
-| A04 | 按协议提取输入快照 | Chat/Responses/Claude/Gemini/images/media/WS 表驱动测试；用户名/邮箱/API Key 名称分列 | 路由覆盖清单 | 通过（自动化） |
-| A05 | 数据库快照脱敏不可恢复 | canary Prompt 入库后全列扫描；预览/hash 单测 | schema 禁止列 SQL | 通过（自动化+SQL） |
-| A06 | 持久任务 + Redis TTL | staging→SET EX→queued；多实例队列 admission lock；Redis/发布失败补偿测试 | TTL 1800 秒窗口证据 | 通过（集成） |
-| A07 | Worker 可靠消费 | SKIP LOCKED、claim_version fencing、retry、lease refresh/reclaim、panic、shutdown 测试 | 多 Worker 运行指标 | 通过（集成+race） |
-| A08 | Qwen3Guard 严格归一 | Safe/Controversial/Unsafe、九类、未知类、重复/额外/缺失字段测试 | golden response 语料 | 通过（自动化） |
-| A09 | Unicode 完整分片 | 中文/emoji/组合字符/超长文本覆盖与顺序测试；部分失败不 Allow；逐片日志无正文 | chunk_total 事件样本 | 通过（自动化） |
-| A10 | 独立可关联事件 | event transaction、store_pass_events、身份快照、FK/筛选、IssueSummary 派生测试 | 管理事件详情截图 | 通过（集成） |
-| A11 | 真实运行态 | healthy/degraded/error、Redis/DB/Worker/节点/config version 测试 | runtime JSON 样本 | 通过（自动化） |
-| A12 | 安全查询和删除 | 复合筛选、分页、单条/批量、snapshot max ID、认证 token/actor/expiry/hash、分批删除测试 | 管理审计日志 | 通过（集成） |
+| ID  | Requirement            | 必备自动化证据                                                                                              | 补充证据                   | 状态               |
+| --- | ---------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------ |
+| A01 | 独立且默认关闭         | Coordinator off 单测；默认 config 单测；现有 Moderation 回归                                                | 升级后 config/runtime 截图 | 通过（自动化）     |
+| A02 | OpenAI 兼容节点        | request builder golden；mock server 断言 `/v1/chat/completions`、model/messages/temperature/max_tokens/seed | probe 脱敏结果             | 通过（自动化）     |
+| A03 | 凭据和出站地址安全     | 加密往返；Public DTO canary；SSRF/DNS rebinding/redirect/256 KiB 测试                                       | 配置 JSON 与日志扫描       | 通过（自动化）     |
+| A04 | 按协议提取输入快照     | Chat/Responses/Claude/Gemini/images/media/WS 表驱动测试；用户名/邮箱/API Key 名称分列                       | 路由覆盖清单               | 通过（自动化）     |
+| A05 | 数据库快照脱敏不可恢复 | canary Prompt 入库后全列扫描；预览/hash 单测                                                                | schema 禁止列 SQL          | 通过（自动化+SQL） |
+| A06 | 持久任务 + Redis TTL   | staging→SET EX→queued；多实例队列 admission lock；Redis/发布失败补偿测试                                    | TTL 1800 秒窗口证据        | 通过（集成）       |
+| A07 | Worker 可靠消费        | SKIP LOCKED、claim_version fencing、retry、lease refresh/reclaim、panic、shutdown 测试                      | 多 Worker 运行指标         | 通过（集成+race）  |
+| A08 | Qwen3Guard 严格归一    | Safe/Controversial/Unsafe、九类、未知类、重复/额外/缺失字段测试                                             | golden response 语料       | 通过（自动化）     |
+| A09 | Unicode 完整分片       | 中文/emoji/组合字符/超长文本覆盖与顺序测试；部分失败不 Allow；逐片日志无正文                                | chunk_total 事件样本       | 通过（自动化）     |
+| A10 | 独立可关联事件         | event transaction、store_pass_events、身份快照、FK/筛选、IssueSummary 派生测试                              | 管理事件详情截图           | 通过（集成）       |
+| A11 | 真实运行态             | healthy/degraded/error、Redis/DB/Worker/节点/config version 测试                                            | runtime JSON 样本          | 通过（自动化）     |
+| A12 | 安全查询和删除         | 复合筛选、分页、单条/批量、snapshot max ID、认证 token/actor/expiry/hash、分批删除测试                      | 管理审计日志               | 通过（集成）       |
 
 ### 2.2 prompt-input-guard
 
-| ID | Requirement | 必备自动化证据 | 补充证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| G01 | 显式启用三态 | 配置真值表和非法组合测试 | 页面联动截图 | 通过（自动化） |
-| G02 | 两引擎独立语义 | fake engines 全组合；Legacy Block 优先；两类事件独立 | 现有邮件/封号/Hash 回归 | 通过（自动化） |
-| G03 | 门禁在副作用之前 | Block/Unavailable/Invalid 的 account/billing/upstream counter 均为 0 | Ops 请求链日志 | 通过（矩阵） |
-| G04 | 覆盖所有协议入口 | routes 自动枚举/结构测试；HTTP/SSE/WS E2E 矩阵 | 已签字路由清单 | 通过（矩阵） |
-| G05 | 同步分片共享预算且完整 | fake clock 总 deadline；Block 早停；Allow 全片；最后片失败测试 | p95/p99 指标 | 通过（自动化） |
-| G06 | 有序 fail-closed 故障切换 | 连接/429/5xx/timeout failover；401/403/invalid 终止；bulkhead 测试 | 节点运行态 | 通过（自动化） |
-| G07 | HTTP 协议兼容错误 | OpenAI/Claude 可选 code、Gemini 数值 code/status + ErrorInfo reason golden；400/503 | curl 样本（脱敏） | 通过（golden） |
-| G08 | WS 每个 response.create 门禁 | 首轮/后续轮次 Allow/Block/Unavailable/Invalid 测试；4403/1013 | WS trace（无正文） | 通过（结构+golden） |
-| G09 | 同步结果复用且不重复扫描 | Guard fake 调用次数=chunk 数；record failure 不改 decision；无二次调用 | event/job 关联 SQL | 通过（自动化） |
-| G10 | 版本化热路径快照 | PostgreSQL CAS 并发保存、双实例 invalidation、last-known-good、cold-start fail-closed、无热路径 DB 测试 | expected/active version 指标 | 通过（集成） |
-| G11 | 可观测且不泄密 | 稳定日志/指标词典测试；canary 全介质扫描 | Dashboard/runtime 截图 | 通过（自动化+扫描） |
-| G12 | 禁用/回滚即时生效 | blocking→async→off 多实例测试；进行中请求边界测试 | 回滚演练记录 | 通过（自动化；生产演练待签字） |
+| ID  | Requirement                  | 必备自动化证据                                                                                          | 补充证据                     | 状态                           |
+| --- | ---------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------ |
+| G01 | 显式启用三态                 | 配置真值表和非法组合测试                                                                                | 页面联动截图                 | 通过（自动化）                 |
+| G02 | 两引擎独立语义               | fake engines 全组合；Legacy Block 优先；两类事件独立                                                    | 现有邮件/封号/Hash 回归      | 通过（自动化）                 |
+| G03 | 门禁在副作用之前             | Block/Unavailable/Invalid 的 account/billing/upstream counter 均为 0                                    | Ops 请求链日志               | 通过（矩阵）                   |
+| G04 | 覆盖所有协议入口             | routes 自动枚举/结构测试；HTTP/SSE/WS E2E 矩阵                                                          | 已签字路由清单               | 通过（矩阵）                   |
+| G05 | 同步分片共享预算且完整       | fake clock 总 deadline；Block 早停；Allow 全片；最后片失败测试                                          | p95/p99 指标                 | 通过（自动化）                 |
+| G06 | 有序 fail-closed 故障切换    | 连接/429/5xx/timeout failover；401/403/invalid 终止；bulkhead 测试                                      | 节点运行态                   | 通过（自动化）                 |
+| G07 | HTTP 协议兼容错误            | OpenAI/Claude 可选 code、Gemini 数值 code/status + ErrorInfo reason golden；400/503                     | curl 样本（脱敏）            | 通过（golden）                 |
+| G08 | WS 每个 response.create 门禁 | 首轮/后续轮次 Allow/Block/Unavailable/Invalid 测试；4403/1013                                           | WS trace（无正文）           | 通过（结构+golden）            |
+| G09 | 同步结果复用且不重复扫描     | Guard fake 调用次数=chunk 数；record failure 不改 decision；无二次调用                                  | event/job 关联 SQL           | 通过（自动化）                 |
+| G10 | 版本化热路径快照             | PostgreSQL CAS 并发保存、双实例 invalidation、last-known-good、cold-start fail-closed、无热路径 DB 测试 | expected/active version 指标 | 通过（集成）                   |
+| G11 | 可观测且不泄密               | 稳定日志/指标词典测试；canary 全介质扫描                                                                | Dashboard/runtime 截图       | 通过（自动化+扫描）            |
+| G12 | 禁用/回滚即时生效            | blocking→async→off 多实例测试；进行中请求边界测试                                                       | 回滚演练记录                 | 通过（自动化；生产演练待签字） |
 
 ### 2.3 security-audit-console
 
-| ID | Requirement | 必备自动化证据 | 补充证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| C01 | 安全审计分组和独立页面 | router/Sidebar/feature guard 测试；旧路由回归 | 侧栏和双页面截图 | 通过（自动化） |
-| C02 | 清晰独立工作区 | 页面分区、独立加载/错误、dirty/reload 测试 | 桌面页面截图 | 通过（Vitest） |
-| C03 | 审计池和真实探测 | endpoint CRUD draft、probe 进度/结果、token preserve/replace/clear 测试 | probe 对话框截图 | 通过（Vitest+API） |
-| C04 | 范围和九类风险 | all/selected、搜索、失效 group、九类对称展示测试 | 选择器截图 | 通过（Vitest） |
-| C05 | blocking 风险确认 | 开启二次确认；关闭 enabled 联动；取消确认测试 | 确认文案截图 | 通过（Vitest） |
-| C06 | 保存可验证且不泄凭据 | 成功快照刷新、409 冲突保留草稿、secret state 清理、无 storage/console 测试 | Public DTO 捕获 | 通过（Vitest+扫描） |
-| C07 | 真实运行态和 Guard 指标 | expected/active mismatch、Worker stale、Redis degraded、指标渲染测试 | 概览截图 | 通过（Vitest） |
-| C08 | 可复核列表和详情 | filter/page/table/detail tabs、用户名/邮箱/API Key 分列复制、IssueSummary、脱敏预览测试 | 详情截图 | 通过（Vitest+API） |
-| C09 | 防误删除 | 单条/批量/preview/max ID/认证 token/筛选变化失效/时间范围测试 | 删除确认截图 | 通过（集成+Vitest） |
-| C10 | 管理操作审计 | config/probe/delete 成功失败审计测试；detail allowlist | audit_logs SQL/API 样本 | 通过（自动化） |
-| C11 | 响应式/可访问/i18n | zh/en key 对称；键盘/focus/accessible name；窄屏测试 | 桌面与窄屏截图 | 通过（Vitest+lint） |
+| ID  | Requirement             | 必备自动化证据                                                                          | 补充证据                | 状态                |
+| --- | ----------------------- | --------------------------------------------------------------------------------------- | ----------------------- | ------------------- |
+| C01 | 安全审计分组和独立页面  | router/Sidebar/feature guard 测试；旧路由回归                                           | 侧栏和双页面截图        | 通过（自动化）      |
+| C02 | 清晰独立工作区          | 页面分区、独立加载/错误、dirty/reload 测试                                              | 桌面页面截图            | 通过（Vitest）      |
+| C03 | 审计池和真实探测        | endpoint CRUD draft、probe 进度/结果、token preserve/replace/clear 测试                 | probe 对话框截图        | 通过（Vitest+API）  |
+| C04 | 范围和九类风险          | all/selected、搜索、失效 group、九类对称展示测试                                        | 选择器截图              | 通过（Vitest）      |
+| C05 | blocking 风险确认       | 开启二次确认；关闭 enabled 联动；取消确认测试                                           | 确认文案截图            | 通过（Vitest）      |
+| C06 | 保存可验证且不泄凭据    | 成功快照刷新、409 冲突保留草稿、secret state 清理、无 storage/console 测试              | Public DTO 捕获         | 通过（Vitest+扫描） |
+| C07 | 真实运行态和 Guard 指标 | expected/active mismatch、Worker stale、Redis degraded、指标渲染测试                    | 概览截图                | 通过（Vitest）      |
+| C08 | 可复核列表和详情        | filter/page/table/detail tabs、用户名/邮箱/API Key 分列复制、IssueSummary、脱敏预览测试 | 详情截图                | 通过（Vitest+API）  |
+| C09 | 防误删除                | 单条/批量/preview/max ID/认证 token/筛选变化失效/时间范围测试                           | 删除确认截图            | 通过（集成+Vitest） |
+| C10 | 管理操作审计            | config/probe/delete 成功失败审计测试；detail allowlist                                  | audit_logs SQL/API 样本 | 通过（自动化）      |
+| C11 | 响应式/可访问/i18n      | zh/en key 对称；键盘/focus/accessible name；窄屏测试                                    | 桌面与窄屏截图          | 通过（Vitest+lint） |
 
 ## 3. 标准验证命令
 
@@ -139,27 +139,27 @@ make build
 
 ### 4.1 运行模式
 
-| risk_control | prompt enabled | blocking | 期望 Prompt 行为 | 主请求 |
-| --- | --- | --- | --- | --- |
-| false | 任意 | 任意 | off | 完全保持升级前行为 |
-| true | false | false | off | 完全保持升级前行为 |
-| true | false | true | 配置保存失败 | 无运行态变化 |
-| true | true | false | async enqueue | 无论审计依赖成败都按原流程 |
-| true | true | true | blocking evaluate | Block/Unavailable/Invalid fail-closed |
+| risk_control | prompt enabled | blocking | 期望 Prompt 行为  | 主请求                                |
+| ------------ | -------------- | -------- | ----------------- | ------------------------------------- |
+| false        | 任意           | 任意     | off               | 完全保持升级前行为                    |
+| true         | false          | false    | off               | 完全保持升级前行为                    |
+| true         | false          | true     | 配置保存失败      | 无运行态变化                          |
+| true         | true           | false    | async enqueue     | 无论审计依赖成败都按原流程            |
+| true         | true           | true     | blocking evaluate | Block/Unavailable/Invalid fail-closed |
 
 ### 4.2 HTTP/SSE/WS
 
 每行都要分别验证 benign、flag、block、Guard unavailable、invalid response；Legacy moderation 还需追加“Legacy 单独 Block”和“两者同时 Block”。
 
-| 入口 | 非流式 Allow | SSE/流式 Allow | Prompt Block | Unavailable | Invalid | 必查副作用 |
-| --- | --- | --- | --- | --- | --- | --- |
-| OpenAI Chat Completions | 原 envelope | Guard 前 0 bytes，之后原流 | 400 `prompt_guard_blocked` | 503 `prompt_guard_unavailable` | 503 `prompt_guard_invalid_response` | account/billing/upstream |
-| OpenAI Responses + aliases | 原 envelope | 同上 | 400 OpenAI-compatible | 503 | 503 | account/billing/upstream |
-| Claude Messages | 原 envelope | 同上 | 400 Anthropic envelope | 503 Anthropic envelope | 503 Anthropic envelope | account/billing/upstream |
-| Gemini generateContent | 原 envelope | 原流式行为 | 400 Google envelope + ErrorInfo reason | 503 + ErrorInfo reason | 503 + ErrorInfo reason | account/billing/upstream |
-| Images/Grok media 文本入口 | 原 envelope | 保持原 keepalive 时序 | 400 | 503 | 503 | image slot/billing/upstream/task |
-| Responses WS first turn | 正常继续 | N/A | close 4403 blocked | close 1013 unavailable | close 1013 invalid | user/account slot、billing、dial |
-| Responses WS subsequent | 本轮继续 | N/A | close 4403，stage=subsequent_turn | close 1013 | close 1013 | 本轮 slot、billing、upstream write |
+| 入口                       | 非流式 Allow | SSE/流式 Allow             | Prompt Block                           | Unavailable                    | Invalid                             | 必查副作用                         |
+| -------------------------- | ------------ | -------------------------- | -------------------------------------- | ------------------------------ | ----------------------------------- | ---------------------------------- |
+| OpenAI Chat Completions    | 原 envelope  | Guard 前 0 bytes，之后原流 | 400 `prompt_guard_blocked`             | 503 `prompt_guard_unavailable` | 503 `prompt_guard_invalid_response` | account/billing/upstream           |
+| OpenAI Responses + aliases | 原 envelope  | 同上                       | 400 OpenAI-compatible                  | 503                            | 503                                 | account/billing/upstream           |
+| Claude Messages            | 原 envelope  | 同上                       | 400 Anthropic envelope                 | 503 Anthropic envelope         | 503 Anthropic envelope              | account/billing/upstream           |
+| Gemini generateContent     | 原 envelope  | 原流式行为                 | 400 Google envelope + ErrorInfo reason | 503 + ErrorInfo reason         | 503 + ErrorInfo reason              | account/billing/upstream           |
+| Images/Grok media 文本入口 | 原 envelope  | 保持原 keepalive 时序      | 400                                    | 503                            | 503                                 | image slot/billing/upstream/task   |
+| Responses WS first turn    | 正常继续     | N/A                        | close 4403 blocked                     | close 1013 unavailable         | close 1013 invalid                  | user/account slot、billing、dial   |
+| Responses WS subsequent    | 本轮继续     | N/A                        | close 4403，stage=subsequent_turn      | close 1013                     | close 1013                          | 本轮 slot、billing、upstream write |
 
 SSE 测试不能只断言最终状态；必须在 Guard fake 阻塞时读取连接并证明还没有 header/首字节/keepalive。
 
@@ -290,16 +290,16 @@ URL_QUERY_CANARY_<random>
 
 ### 9.2 检查介质
 
-| 介质 | 允许 | 禁止 | 证据 |
-| --- | --- | --- | --- |
-| PostgreSQL | SHA-256、脱敏预览、长度、分类 | 完整 Prompt、token、Authorization、Guard raw body | 扫描所有 text/json 列 |
-| Redis key/metadata | job ID、TTL | Prompt/hash/email/token 出现在 key/channel | SCAN/channel payload 断言 |
-| Redis value | 完整 Prompt，TTL≤1800 | token/Authorization；终态长期残留 | 程序内检查，不打印 value |
-| 应用日志 | ID、长度、状态、稳定错误码 | 四类 canary、完整 URL/query、raw response | 捕获 sink 后字节扫描 |
-| 管理 API | 脱敏 preview、has_token/status、分列身份、派生风险摘要 | token/ciphertext/canary Prompt 原文 | 序列化响应扫描 |
-| 客户错误 | 通用消息、code、request ID | 分类证据、Prompt、endpoint、内部错误 | HTTP/WS body/reason 扫描 |
-| 前端状态 | 公共 DTO、空 secret state | 保存后的 token、session/local storage、console | Vitest spies/state snapshot |
-| 页面截图 | 脱敏预览、状态 | token、完整 Prompt | OCR/文本与人工复核 |
+| 介质               | 允许                                                   | 禁止                                              | 证据                        |
+| ------------------ | ------------------------------------------------------ | ------------------------------------------------- | --------------------------- |
+| PostgreSQL         | SHA-256、脱敏预览、长度、分类                          | 完整 Prompt、token、Authorization、Guard raw body | 扫描所有 text/json 列       |
+| Redis key/metadata | job ID、TTL                                            | Prompt/hash/email/token 出现在 key/channel        | SCAN/channel payload 断言   |
+| Redis value        | 完整 Prompt，TTL≤1800                                  | token/Authorization；终态长期残留                 | 程序内检查，不打印 value    |
+| 应用日志           | ID、长度、状态、稳定错误码                             | 四类 canary、完整 URL/query、raw response         | 捕获 sink 后字节扫描        |
+| 管理 API           | 脱敏 preview、has_token/status、分列身份、派生风险摘要 | token/ciphertext/canary Prompt 原文               | 序列化响应扫描              |
+| 客户错误           | 通用消息、code、request ID                             | 分类证据、Prompt、endpoint、内部错误              | HTTP/WS body/reason 扫描    |
+| 前端状态           | 公共 DTO、空 secret state                              | 保存后的 token、session/local storage、console    | Vitest spies/state snapshot |
+| 页面截图           | 脱敏预览、状态                                         | token、完整 Prompt                                | OCR/文本与人工复核          |
 
 数据库扫描必须覆盖 `TEXT/VARCHAR/JSON/JSONB`，不能只查两张新表；至少还要查 settings、audit_logs、ops/error logs 和可能的 request log 表。日志捕获应覆盖成功、探测失败、超时、invalid response、DB/Redis 错误和删除操作。
 
@@ -359,18 +359,18 @@ go test ./internal/securityaudit -run TestPromptAuditSyntheticAsyncBaseline -cou
 
 以下是建议初始门槛，最终值必须由安全、运营和业务责任人在上线记录中签字；未签字只能保持 async：
 
-| 指标 | 建议准入阈值 | 建议紧急退出阈值 |
-| --- | --- | --- |
-| 健康 endpoint | ≥2，连续 72h | <1 个可用立即退出 |
-| Guard Unavailable | 24h <0.1% | 5 分钟 ≥1% |
-| Invalid response | 24h <0.01% | 5 分钟 ≥0.1% 或连续出现 |
-| Guard 延迟 | P95 ≤500ms，P99 ≤1000ms | P99 >2000ms 持续 10 分钟 |
-| bulkhead reject | 24h <0.05% | 5 分钟 ≥0.5% |
-| async dropped/payload missing | <0.01%，payload missing=0 | 任一持续增长 |
-| 人工确认误报率 | <0.5%，高价值流程为 0 | 任一严重合法流量阻断事件 |
-| 已知恶意语料 | critical 用例 100% Block | 任一 critical 漏报 |
-| config version 收敛 | 99.9% 实例 <10s | 任一实例 stale >60s |
-| canary 泄露 | 0 | 任意命中立即停用并轮换 |
+| 指标                          | 建议准入阈值              | 建议紧急退出阈值         |
+| ----------------------------- | ------------------------- | ------------------------ |
+| 健康 endpoint                 | ≥2，连续 72h              | <1 个可用立即退出        |
+| Guard Unavailable             | 24h <0.1%                 | 5 分钟 ≥1%               |
+| Invalid response              | 24h <0.01%                | 5 分钟 ≥0.1% 或连续出现  |
+| Guard 延迟                    | P95 ≤500ms，P99 ≤1000ms   | P99 >2000ms 持续 10 分钟 |
+| bulkhead reject               | 24h <0.05%                | 5 分钟 ≥0.5%             |
+| async dropped/payload missing | <0.01%，payload missing=0 | 任一持续增长             |
+| 人工确认误报率                | <0.5%，高价值流程为 0     | 任一严重合法流量阻断事件 |
+| 已知恶意语料                  | critical 用例 100% Block  | 任一 critical 漏报       |
+| config version 收敛           | 99.9% 实例 <10s           | 任一实例 stale >60s      |
+| canary 泄露                   | 0                         | 任意命中立即停用并轮换   |
 
 延迟阈值还必须低于目标接口现有首字节 SLO 允许的新增预算；若业务 SLO 更严格，以更严格值为准。
 
@@ -430,18 +430,18 @@ go test ./internal/securityaudit -run TestPromptAuditSyntheticAsyncBaseline -cou
 
 ## 14. 最终发布签字模板
 
-| 项目 | 结果/链接 | 责任人 | 时间 |
-| --- | --- | --- | --- |
-| 源基线冻结 | TODO | TODO | TODO |
-| OpenSpec strict validate | TODO | TODO | TODO |
-| 后端 unit/race/integration | TODO | TODO | TODO |
-| 前端 lint/typecheck/Vitest/build | TODO | TODO | TODO |
-| 协议与无副作用矩阵 | TODO | TODO | TODO |
-| canary 泄露门禁 | TODO | TODO | TODO |
-| async 72h/10k 报告 | TODO | TODO | TODO |
-| blocking 阈值批准 | TODO | TODO | TODO |
-| 告警和值班人 | TODO | TODO | TODO |
-| 回滚演练 | TODO | TODO | TODO |
+| 项目                             | 结果/链接 | 责任人 | 时间 |
+| -------------------------------- | --------- | ------ | ---- |
+| 源基线冻结                       | TODO      | TODO   | TODO |
+| OpenSpec strict validate         | TODO      | TODO   | TODO |
+| 后端 unit/race/integration       | TODO      | TODO   | TODO |
+| 前端 lint/typecheck/Vitest/build | TODO      | TODO   | TODO |
+| 协议与无副作用矩阵               | TODO      | TODO   | TODO |
+| canary 泄露门禁                  | TODO      | TODO   | TODO |
+| async 72h/10k 报告               | TODO      | TODO   | TODO |
+| blocking 阈值批准                | TODO      | TODO   | TODO |
+| 告警和值班人                     | TODO      | TODO   | TODO |
+| 回滚演练                         | TODO      | TODO   | TODO |
 
 任何必填项为 TODO、失败或无证据时，不得开启生产 blocking。
 
@@ -449,23 +449,23 @@ go test ./internal/securityaudit -run TestPromptAuditSyntheticAsyncBaseline -cou
 
 验证基线：branch=`dev`，HEAD=`a2779cd5f30d6d3904a9d59088aed09507678dfe`，工作区包含本 change 的未提交实现；时间为 2026-07-16 CST。以下命令退出码均为 0，除首次发现并修复的 lint 问题外不隐藏失败。
 
-| 门禁 | 实际证据 |
-| --- | --- |
-| OpenSpec | `openspec validate add-openai-compatible-prompt-audit --type change --strict --no-interactive` → valid |
-| SecurityAudit 单元/集成 | PostgreSQL `127.0.0.1:32768`、Redis `127.0.0.1:32769` 下 `go test ./internal/securityaudit/... -count=1` → pass |
-| Race | 同一真实依赖下 `go test -race ./internal/securityaudit/... -count=1` → pass |
-| Migration/Repository/Config | `TestPromptAuditConfigCASSecretRoundTripInvalidationAndTTL`、migration/schema、admission/fencing/FK/high-water/concurrent delete、Redis TTL、Worker lifecycle 全部 pass |
-| Handler/Routes | `go test ./internal/handler/... ./internal/server/... -count=1` → pass；路由矩阵由 `TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage` 固定 |
-| 全量后端 | 临时安装 CI 同版 golangci-lint v2.9 后 `make test-backend` → 全量 Go tests pass，`0 issues` |
-| 前端 | ESLint pass；vue-tsc pass；Prompt Audit、RiskControl、Sidebar、router 共 8 个文件 34 tests pass |
-| 生产构建 | `make build` → Go binary 与 Vite production build pass，独立 `PromptAuditView` chunk 生成 |
-| 协议/副作用矩阵 | 13 个实际入口的 Guard-before-side-effect 结构测试；Block/Unavailable/Invalid counter=0；OpenAI/Responses/Claude/Gemini golden；WS 4403/1013；first/subsequent gate；媒体 task/billing gate 全部 pass |
-| 泄露门禁 | 统一 canary 覆盖日志、DB row、管理 JSON、前端保存后 DOM；测试 PostgreSQL 39 个 text/json 列全库扫描 0 命中；Redis key/channel scan 0 命中；feature 源码无 local/session storage 或 console |
-| Async 指标基线 | 100 条合成 async Worker 样本：P50/P95/P99=5/5/5ms，failure=2%，known-benign false-positive=0%，event growth=8/100；只用于验证观测链路 |
-| Deploy 容器 | Docker Hub 超时后使用已缓存的正式运行层 + 当前 `linux/arm64` embed release binary 构建离线增量镜像 `sha256:c86353b0...`；Compose 重建后 app/PostgreSQL/Redis healthy，migration 181 已登记，两张表存在，`/health`=200 |
-| Deploy 管理 API | 本地测试管理员登录成功；`GET config/runtime/events` 均为 200；默认 config=`enabled=false, blocking=false, mode=off, version=1, group_ids=[], endpoints=[]`；runtime active/expected=1/1 |
-| Deploy 页面 | 首次容器检查发现并修复默认 `group_ids:null` 导致的运行时错误；重建后桌面/390px 窄屏 DOM 与截图均通过，截图不含 token/Prompt canary |
-| Deploy 全介质扫描 | 完整生产测试库所有 public text/varchar/json/jsonb 列动态扫描：hit_columns=0/hit_rows=0；两表禁用列=0；Redis canary key=`0`、channel=`[]`、payload key=`0`；容器日志 canary=0 |
+| 门禁                        | 实际证据                                                                                                                                                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenSpec                    | `openspec validate add-openai-compatible-prompt-audit --type change --strict --no-interactive` → valid                                                                                                                |
+| SecurityAudit 单元/集成     | PostgreSQL `127.0.0.1:32768`、Redis `127.0.0.1:32769` 下 `go test ./internal/securityaudit/... -count=1` → pass                                                                                                       |
+| Race                        | 同一真实依赖下 `go test -race ./internal/securityaudit/... -count=1` → pass                                                                                                                                           |
+| Migration/Repository/Config | `TestPromptAuditConfigCASSecretRoundTripInvalidationAndTTL`、migration/schema、admission/fencing/FK/high-water/concurrent delete、Redis TTL、Worker lifecycle 全部 pass                                               |
+| Handler/Routes              | `go test ./internal/handler/... ./internal/server/... -count=1` → pass；路由矩阵由 `TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage` 固定                                                                 |
+| 全量后端                    | 临时安装 CI 同版 golangci-lint v2.9 后 `make test-backend` → 全量 Go tests pass，`0 issues`                                                                                                                           |
+| 前端                        | ESLint pass；vue-tsc pass；Prompt Audit、RiskControl、Sidebar、router 共 8 个文件 34 tests pass                                                                                                                       |
+| 生产构建                    | `make build` → Go binary 与 Vite production build pass，独立 `PromptAuditView` chunk 生成                                                                                                                             |
+| 协议/副作用矩阵             | 13 个实际入口的 Guard-before-side-effect 结构测试；Block/Unavailable/Invalid counter=0；OpenAI/Responses/Claude/Gemini golden；WS 4403/1013；first/subsequent gate；媒体 task/billing gate 全部 pass                  |
+| 泄露门禁                    | 统一 canary 覆盖日志、DB row、管理 JSON、前端保存后 DOM；测试 PostgreSQL 39 个 text/json 列全库扫描 0 命中；Redis key/channel scan 0 命中；feature 源码无 local/session storage 或 console                            |
+| Async 指标基线              | 100 条合成 async Worker 样本：P50/P95/P99=5/5/5ms，failure=2%，known-benign false-positive=0%，event growth=8/100；只用于验证观测链路                                                                                 |
+| Deploy 容器                 | Docker Hub 超时后使用已缓存的正式运行层 + 当前 `linux/arm64` embed release binary 构建离线增量镜像 `sha256:c86353b0...`；Compose 重建后 app/PostgreSQL/Redis healthy，migration 181 已登记，两张表存在，`/health`=200 |
+| Deploy 管理 API             | 本地测试管理员登录成功；`GET config/runtime/events` 均为 200；默认 config=`enabled=false, blocking=false, mode=off, version=1, group_ids=[], endpoints=[]`；runtime active/expected=1/1                               |
+| Deploy 页面                 | 首次容器检查发现并修复默认 `group_ids:null` 导致的运行时错误；重建后桌面/390px 窄屏 DOM 与截图均通过，截图不含 token/Prompt canary                                                                                    |
+| Deploy 全介质扫描           | 完整生产测试库所有 public text/varchar/json/jsonb 列动态扫描：hit_columns=0/hit_rows=0；两表禁用列=0；Redis canary key=`0`、channel=`[]`、payload key=`0`；容器日志 canary=0                                          |
 
 ### 15.1 Requirement 自动化证据索引
 

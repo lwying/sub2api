@@ -3,54 +3,54 @@
  * Manages onboarding tour state and control methods
  */
 
-import { defineStore } from 'pinia'
-import { markRaw, ref, shallowRef } from 'vue'
-import type { Driver } from 'driver.js'
+import { defineStore } from "pinia";
+import { markRaw, ref, shallowRef } from "vue";
+import type { Driver } from "driver.js";
 
-type VoidCallback = () => void
-type NextStepCallback = (delay?: number) => Promise<void>
-type IsCurrentStepCallback = (selector: string) => boolean
+type VoidCallback = () => void;
+type NextStepCallback = (delay?: number) => Promise<void>;
+type IsCurrentStepCallback = (selector: string) => boolean;
 
-export const useOnboardingStore = defineStore('onboarding', () => {
-  const replayCallback = ref<VoidCallback | null>(null)
-  const nextStepCallback = ref<NextStepCallback | null>(null)
-  const isCurrentStepCallback = ref<IsCurrentStepCallback | null>(null)
+export const useOnboardingStore = defineStore("onboarding", () => {
+  const replayCallback = ref<VoidCallback | null>(null);
+  const nextStepCallback = ref<NextStepCallback | null>(null);
+  const isCurrentStepCallback = ref<IsCurrentStepCallback | null>(null);
 
   // 全局 driver 实例，跨组件保持
-  const driverInstance = shallowRef<Driver | null>(null)
+  const driverInstance = shallowRef<Driver | null>(null);
 
   function setReplayCallback(callback: VoidCallback | null): void {
-    replayCallback.value = callback
+    replayCallback.value = callback;
   }
 
   function setControlMethods(methods: {
-    nextStep: NextStepCallback,
-    isCurrentStep: IsCurrentStepCallback
+    nextStep: NextStepCallback;
+    isCurrentStep: IsCurrentStepCallback;
   }): void {
-    nextStepCallback.value = methods.nextStep
-    isCurrentStepCallback.value = methods.isCurrentStep
+    nextStepCallback.value = methods.nextStep;
+    isCurrentStepCallback.value = methods.isCurrentStep;
   }
 
   function clearControlMethods(): void {
-    nextStepCallback.value = null
-    isCurrentStepCallback.value = null
+    nextStepCallback.value = null;
+    isCurrentStepCallback.value = null;
   }
 
   function setDriverInstance(driver: Driver | null): void {
-    driverInstance.value = driver ? markRaw(driver) : null
+    driverInstance.value = driver ? markRaw(driver) : null;
   }
 
   function getDriverInstance(): Driver | null {
-    return driverInstance.value
+    return driverInstance.value;
   }
 
   function isDriverActive(): boolean {
-    return driverInstance.value?.isActive?.() ?? false
+    return driverInstance.value?.isActive?.() ?? false;
   }
 
   function replay(): void {
     if (replayCallback.value) {
-      replayCallback.value()
+      replayCallback.value();
     }
   }
 
@@ -60,7 +60,7 @@ export const useOnboardingStore = defineStore('onboarding', () => {
    */
   async function nextStep(delay = 0): Promise<void> {
     if (nextStepCallback.value) {
-      await nextStepCallback.value(delay)
+      await nextStepCallback.value(delay);
     }
   }
 
@@ -69,9 +69,9 @@ export const useOnboardingStore = defineStore('onboarding', () => {
    */
   function isCurrentStep(selector: string): boolean {
     if (isCurrentStepCallback.value) {
-      return isCurrentStepCallback.value(selector)
+      return isCurrentStepCallback.value(selector);
     }
-    return false
+    return false;
   }
 
   return {
@@ -83,6 +83,6 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     isDriverActive,
     replay,
     nextStep,
-    isCurrentStep
-  }
-})
+    isCurrentStep,
+  };
+});

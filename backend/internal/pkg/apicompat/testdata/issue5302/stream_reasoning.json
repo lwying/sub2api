@@ -8,7 +8,7 @@
       "delta": {
         "reasoning": "streamed fallback",
         "reasoning_details": [
-          {"type": "reasoning.text", "text": "streamed fallback"}
+          { "type": "reasoning.text", "text": "streamed fallback" }
         ]
       },
       "finish_reason": null

@@ -18,17 +18,25 @@
     data-testid="compact-home"
     class="flex min-h-screen flex-col bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-white"
   >
-    <header class="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-dark-800">
-      <nav class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 sm:gap-4">
+    <header
+      class="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-dark-800"
+    >
+      <nav
+        class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 sm:gap-4"
+      >
         <div class="flex min-w-0 flex-1 items-center gap-3">
           <img
             :src="siteLogo || '/logo.svg'"
             alt="Logo"
             class="h-9 w-9 shrink-0 rounded-lg object-contain"
           />
-          <span class="min-w-0 truncate text-base font-semibold">{{ siteName }}</span>
+          <span class="min-w-0 truncate text-base font-semibold">{{
+            siteName
+          }}</span>
         </div>
-        <div class="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
+        <div
+          class="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2"
+        >
           <LocaleSwitcher />
           <a
             v-if="docUrl"
@@ -47,7 +55,7 @@
             :title="t('nav.modelPlaza')"
           >
             <Icon name="grid" size="md" />
-            <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
+            <span class="hidden sm:inline">{{ t("nav.modelPlaza") }}</span>
           </router-link>
           <button
             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
@@ -61,31 +69,41 @@
             :to="isAuthenticated ? dashboardPath : '/login'"
             class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
           >
-            {{ isAuthenticated ? t('home.dashboard') : t('home.login') }}
+            {{ isAuthenticated ? t("home.dashboard") : t("home.login") }}
           </router-link>
         </div>
       </nav>
     </header>
 
-    <main class="flex min-w-0 flex-1 items-center justify-center px-4 py-16 sm:px-6">
+    <main
+      class="flex min-w-0 flex-1 items-center justify-center px-4 py-16 sm:px-6"
+    >
       <div class="min-w-0 max-w-2xl text-center">
         <img
           :src="siteLogo || '/logo.svg'"
           alt="Logo"
           class="mx-auto mb-6 h-20 w-20 rounded-2xl object-contain"
         />
-        <h1 class="[overflow-wrap:anywhere] text-3xl font-bold md:text-4xl">{{ siteName }}</h1>
-        <p class="mt-4 whitespace-pre-wrap [overflow-wrap:anywhere] text-base text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
+        <h1 class="[overflow-wrap:anywhere] text-3xl font-bold md:text-4xl">
+          {{ siteName }}
+        </h1>
+        <p
+          class="mt-4 whitespace-pre-wrap [overflow-wrap:anywhere] text-base text-gray-600 dark:text-dark-300"
+        >
+          {{ siteSubtitle }}
+        </p>
         <router-link
           :to="isAuthenticated ? dashboardPath : '/login'"
           class="mt-8 inline-flex min-h-10 items-center justify-center rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
         >
-          {{ isAuthenticated ? t('home.goToDashboard') : t('home.login') }}
+          {{ isAuthenticated ? t("home.goToDashboard") : t("home.login") }}
         </router-link>
       </div>
     </main>
 
-    <footer class="min-w-0 border-t border-gray-200 px-4 py-5 text-center text-sm text-gray-500 [overflow-wrap:anywhere] sm:px-6 dark:border-dark-800 dark:text-dark-400">
+    <footer
+      class="min-w-0 border-t border-gray-200 px-4 py-5 text-center text-sm text-gray-500 [overflow-wrap:anywhere] sm:px-6 dark:border-dark-800 dark:text-dark-400"
+    >
       &copy; {{ currentYear }} {{ siteName }}
     </footer>
   </div>
@@ -120,7 +138,11 @@
         <!-- Logo -->
         <div class="flex items-center">
           <div class="h-10 w-10 overflow-hidden rounded-xl shadow-md">
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+            <img
+              :src="siteLogo || '/logo.svg'"
+              alt="Logo"
+              class="h-full w-full object-contain"
+            />
           </div>
         </div>
 
@@ -149,7 +171,7 @@
             :title="t('nav.modelPlaza')"
           >
             <Icon name="grid" size="md" />
-            <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
+            <span class="hidden sm:inline">{{ t("nav.modelPlaza") }}</span>
           </router-link>
 
           <!-- Theme Toggle -->
@@ -173,7 +195,9 @@
             >
               {{ userInitial }}
             </span>
-            <span class="text-xs font-medium text-white">{{ t('home.dashboard') }}</span>
+            <span class="text-xs font-medium text-white">{{
+              t("home.dashboard")
+            }}</span>
             <svg
               class="h-3 w-3 text-gray-400"
               fill="none"
@@ -193,7 +217,7 @@
             to="/login"
             class="inline-flex items-center rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-800 dark:hover:bg-gray-700"
           >
-            {{ t('home.login') }}
+            {{ t("home.login") }}
           </router-link>
         </div>
       </nav>
@@ -203,7 +227,9 @@
     <main class="relative z-10 flex-1 px-6 py-16">
       <div class="mx-auto max-w-6xl">
         <!-- Hero Section - Left/Right Layout -->
-        <div class="mb-12 flex flex-col items-center justify-between gap-12 lg:flex-row lg:gap-16">
+        <div
+          class="mb-12 flex flex-col items-center justify-between gap-12 lg:flex-row lg:gap-16"
+        >
           <!-- Left: Text Content -->
           <div class="flex-1 text-center lg:text-left">
             <h1
@@ -221,8 +247,17 @@
                 :to="isAuthenticated ? dashboardPath : '/login'"
                 class="btn btn-primary px-8 py-3 text-base shadow-lg shadow-primary-500/30"
               >
-                {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
-                <Icon name="arrowRight" size="md" class="ml-2" :stroke-width="2" />
+                {{
+                  isAuthenticated
+                    ? t("home.goToDashboard")
+                    : t("home.getStarted")
+                }}
+                <Icon
+                  name="arrowRight"
+                  size="md"
+                  class="ml-2"
+                  :stroke-width="2"
+                />
               </router-link>
             </div>
           </div>
@@ -266,30 +301,35 @@
         </div>
 
         <!-- Feature Tags - Centered -->
-        <div class="mb-12 flex flex-wrap items-center justify-center gap-4 md:gap-6">
+        <div
+          class="mb-12 flex flex-wrap items-center justify-center gap-4 md:gap-6"
+        >
           <div
             class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
           >
             <Icon name="swap" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.subscriptionToApi')
-            }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.tags.subscriptionToApi") }}</span
+            >
           </div>
           <div
             class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
           >
             <Icon name="shield" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.stickySession')
-            }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.tags.stickySession") }}</span
+            >
           </div>
           <div
             class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
           >
             <Icon name="chart" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.realtimeBilling')
-            }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.tags.realtimeBilling") }}</span
+            >
           </div>
         </div>
 
@@ -304,11 +344,13 @@
             >
               <Icon name="server" size="lg" class="text-white" />
             </div>
-            <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('home.features.unifiedGateway') }}
+            <h3
+              class="mb-2 text-lg font-semibold text-gray-900 dark:text-white"
+            >
+              {{ t("home.features.unifiedGateway") }}
             </h3>
             <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
-              {{ t('home.features.unifiedGatewayDesc') }}
+              {{ t("home.features.unifiedGatewayDesc") }}
             </p>
           </div>
 
@@ -333,11 +375,13 @@
                 />
               </svg>
             </div>
-            <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('home.features.multiAccount') }}
+            <h3
+              class="mb-2 text-lg font-semibold text-gray-900 dark:text-white"
+            >
+              {{ t("home.features.multiAccount") }}
             </h3>
             <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
-              {{ t('home.features.multiAccountDesc') }}
+              {{ t("home.features.multiAccountDesc") }}
             </p>
           </div>
 
@@ -362,11 +406,13 @@
                 />
               </svg>
             </div>
-            <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('home.features.balanceQuota') }}
+            <h3
+              class="mb-2 text-lg font-semibold text-gray-900 dark:text-white"
+            >
+              {{ t("home.features.balanceQuota") }}
             </h3>
             <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
-              {{ t('home.features.balanceQuotaDesc') }}
+              {{ t("home.features.balanceQuotaDesc") }}
             </p>
           </div>
         </div>
@@ -374,10 +420,10 @@
         <!-- Supported Providers -->
         <div class="mb-8 text-center">
           <h2 class="mb-3 text-2xl font-bold text-gray-900 dark:text-white">
-            {{ t('home.providers.title') }}
+            {{ t("home.providers.title") }}
           </h2>
           <p class="text-sm text-gray-600 dark:text-dark-400">
-            {{ t('home.providers.description') }}
+            {{ t("home.providers.description") }}
           </p>
         </div>
 
@@ -391,10 +437,13 @@
             >
               <span class="text-xs font-bold text-white">C</span>
             </div>
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{ t('home.providers.claude') }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.providers.claude") }}</span
+            >
             <span
               class="rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
-              >{{ t('home.providers.supported') }}</span
+              >{{ t("home.providers.supported") }}</span
             >
           </div>
           <!-- GPT - Supported -->
@@ -406,10 +455,12 @@
             >
               <span class="text-xs font-bold text-white">G</span>
             </div>
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">GPT</span>
+            <span class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >GPT</span
+            >
             <span
               class="rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
-              >{{ t('home.providers.supported') }}</span
+              >{{ t("home.providers.supported") }}</span
             >
           </div>
           <!-- Gemini - Supported -->
@@ -421,10 +472,13 @@
             >
               <span class="text-xs font-bold text-white">G</span>
             </div>
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{ t('home.providers.gemini') }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.providers.gemini") }}</span
+            >
             <span
               class="rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
-              >{{ t('home.providers.supported') }}</span
+              >{{ t("home.providers.supported") }}</span
             >
           </div>
           <!-- Antigravity - Supported -->
@@ -436,10 +490,13 @@
             >
               <span class="text-xs font-bold text-white">A</span>
             </div>
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{ t('home.providers.antigravity') }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.providers.antigravity") }}</span
+            >
             <span
               class="rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
-              >{{ t('home.providers.supported') }}</span
+              >{{ t("home.providers.supported") }}</span
             >
           </div>
           <!-- More - Coming Soon -->
@@ -451,10 +508,13 @@
             >
               <span class="text-xs font-bold text-white">+</span>
             </div>
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{ t('home.providers.more') }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-200"
+              >{{ t("home.providers.more") }}</span
+            >
             <span
               class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-dark-700 dark:text-dark-400"
-              >{{ t('home.providers.soon') }}</span
+              >{{ t("home.providers.soon") }}</span
             >
           </div>
         </div>
@@ -462,12 +522,15 @@
     </main>
 
     <!-- Footer -->
-    <footer class="relative z-10 border-t border-gray-200/50 px-6 py-8 dark:border-dark-800/50">
+    <footer
+      class="relative z-10 border-t border-gray-200/50 px-6 py-8 dark:border-dark-800/50"
+    >
       <div
         class="mx-auto flex max-w-6xl flex-col items-center justify-center gap-4 text-center sm:flex-row sm:text-left"
       >
         <p class="text-sm text-gray-500 dark:text-dark-400">
-          &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
+          &copy; {{ currentYear }} {{ siteName }}.
+          {{ t("home.footer.allRightsReserved") }}
         </p>
         <div class="flex items-center gap-4">
           <a
@@ -477,7 +540,7 @@
             rel="noopener noreferrer"
             class="text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-white"
           >
-            {{ t('home.docs') }}
+            {{ t("home.docs") }}
           </a>
           <a
             :href="githubUrl"
@@ -494,90 +557,113 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useAuthStore, useAppStore } from '@/stores'
-import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
-import Icon from '@/components/icons/Icon.vue'
-import { sanitizeUrl } from '@/utils/url'
-import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { ref, computed, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
+import { useAuthStore, useAppStore } from "@/stores";
+import LocaleSwitcher from "@/components/common/LocaleSwitcher.vue";
+import Icon from "@/components/icons/Icon.vue";
+import { sanitizeUrl } from "@/utils/url";
+import { FeatureFlags, isFeatureFlagEnabled } from "@/utils/featureFlags";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-const authStore = useAuthStore()
-const appStore = useAppStore()
+const authStore = useAuthStore();
+const appStore = useAppStore();
 
 // Site settings - directly from appStore (already initialized from injected config)
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
-const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'AI API Gateway Platform')
-const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
-const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
-const hasHomeContent = computed(() => homeContent.value.trim().length > 0)
-const compactHomeEnabled = computed(() => appStore.cachedPublicSettings?.compact_home_enabled === true)
-const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
+const siteName = computed(
+  () =>
+    appStore.cachedPublicSettings?.site_name || appStore.siteName || "Sub2API",
+);
+const siteLogo = computed(() =>
+  sanitizeUrl(
+    appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || "",
+    { allowRelative: true, allowDataUrl: true },
+  ),
+);
+const siteSubtitle = computed(
+  () =>
+    appStore.cachedPublicSettings?.site_subtitle || "AI API Gateway Platform",
+);
+const docUrl = computed(() =>
+  sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ""),
+);
+const homeContent = computed(
+  () => appStore.cachedPublicSettings?.home_content || "",
+);
+const hasHomeContent = computed(() => homeContent.value.trim().length > 0);
+const compactHomeEnabled = computed(
+  () => appStore.cachedPublicSettings?.compact_home_enabled === true,
+);
+const modelPlazaEnabled = computed(() =>
+  isFeatureFlagEnabled(FeatureFlags.modelPlaza),
+);
 
 // Check if homeContent is a URL (for iframe display)
 const isHomeContentUrl = computed(() => {
-  const content = homeContent.value.trim()
-  return content.startsWith('http://') || content.startsWith('https://')
-})
+  const content = homeContent.value.trim();
+  return content.startsWith("http://") || content.startsWith("https://");
+});
 
 // Theme
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const isDark = ref(document.documentElement.classList.contains("dark"));
 
 // GitHub URL
-const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
+const githubUrl = "https://github.com/Wei-Shaw/sub2api";
 
 // Auth state
-const isAuthenticated = computed(() => authStore.isAuthenticated)
+const isAuthenticated = computed(() => authStore.isAuthenticated);
 const modelPlazaRequiresAuth = computed(
   () => appStore.cachedPublicSettings?.model_plaza_require_auth === true,
-)
+);
 const showModelPlazaEntry = computed(
-  () => modelPlazaEnabled.value && (isAuthenticated.value || !modelPlazaRequiresAuth.value),
-)
-const isAdmin = computed(() => authStore.isAdmin)
-const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
+  () =>
+    modelPlazaEnabled.value &&
+    (isAuthenticated.value || !modelPlazaRequiresAuth.value),
+);
+const isAdmin = computed(() => authStore.isAdmin);
+const dashboardPath = computed(() =>
+  isAdmin.value ? "/admin/dashboard" : "/dashboard",
+);
 const userInitial = computed(() => {
-  const user = authStore.user
-  if (!user || !user.email) return ''
-  return user.email.charAt(0).toUpperCase()
-})
+  const user = authStore.user;
+  if (!user || !user.email) return "";
+  return user.email.charAt(0).toUpperCase();
+});
 
 // Current year for footer
-const currentYear = computed(() => new Date().getFullYear())
+const currentYear = computed(() => new Date().getFullYear());
 
 // Toggle theme
 function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  isDark.value = !isDark.value;
+  document.documentElement.classList.toggle("dark", isDark.value);
+  localStorage.setItem("theme", isDark.value ? "dark" : "light");
 }
 
 // Initialize theme
 function initTheme() {
-  const savedTheme = localStorage.getItem('theme')
+  const savedTheme = localStorage.getItem("theme");
   if (
-    savedTheme === 'dark' ||
-    (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    savedTheme === "dark" ||
+    (!savedTheme && window.matchMedia("(prefers-color-scheme: dark)").matches)
   ) {
-    isDark.value = true
-    document.documentElement.classList.add('dark')
+    isDark.value = true;
+    document.documentElement.classList.add("dark");
   }
 }
 
 onMounted(() => {
-  initTheme()
+  initTheme();
 
   // Check auth state
-  authStore.checkAuth()
+  authStore.checkAuth();
 
   // Ensure public settings are loaded (will use cache if already loaded from injected config)
   if (!appStore.publicSettingsLoaded) {
-    appStore.fetchPublicSettings()
+    appStore.fetchPublicSettings();
   }
-})
+});
 </script>
 
 <style scoped>
@@ -647,7 +733,7 @@ onMounted(() => {
 /* Terminal Body */
 .terminal-body {
   padding: 20px 24px;
-  font-family: ui-monospace, 'Fira Code', monospace;
+  font-family: ui-monospace, "Fira Code", monospace;
   font-size: 14px;
   line-height: 2;
 }

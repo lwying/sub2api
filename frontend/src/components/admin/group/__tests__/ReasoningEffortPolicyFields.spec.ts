@@ -91,11 +91,15 @@ describe("ReasoningEffortPolicyFields", () => {
       },
     });
 
-    expect(wrapper.text()).toContain("admin.groups.form.reasoningEffortMatchType");
+    expect(wrapper.text()).toContain(
+      "admin.groups.form.reasoningEffortMatchType",
+    );
     expect(wrapper.text()).toContain("admin.groups.form.reasoningEffortModel");
     expect(wrapper.text()).toContain("admin.groups.form.reasoningEffortFrom");
     expect(wrapper.text()).toContain("admin.groups.form.reasoningEffortTo");
-    expect(wrapper.text()).toContain("admin.groups.form.addReasoningEffortPair");
+    expect(wrapper.text()).toContain(
+      "admin.groups.form.addReasoningEffortPair",
+    );
 
     const modelInput = wrapper.get(
       `#create-group-reasoning-${mapping.id}-model`,

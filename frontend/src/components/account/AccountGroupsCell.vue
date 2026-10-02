@@ -41,14 +41,26 @@
         >
           <div class="mb-2 flex items-center justify-between">
             <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.groupCountTotal', { count: groups.length }) }}
+              {{
+                t("admin.accounts.groupCountTotal", { count: groups.length })
+              }}
             </span>
             <button
               @click="showPopover = false"
               class="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
             >
-              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              <svg
+                class="h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -78,81 +90,81 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useI18n } from 'vue-i18n'
-import GroupBadge from '@/components/common/GroupBadge.vue'
-import type { Group } from '@/types'
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { useI18n } from "vue-i18n";
+import GroupBadge from "@/components/common/GroupBadge.vue";
+import type { Group } from "@/types";
 
 interface Props {
-  groups: Group[] | null | undefined
-  maxDisplay?: number
+  groups: Group[] | null | undefined;
+  maxDisplay?: number;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  maxDisplay: 4
-})
+  maxDisplay: 4,
+});
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-const moreButtonRef = ref<HTMLElement | null>(null)
-const popoverRef = ref<HTMLElement | null>(null)
-const showPopover = ref(false)
+const moreButtonRef = ref<HTMLElement | null>(null);
+const popoverRef = ref<HTMLElement | null>(null);
+const showPopover = ref(false);
 
 // 显示的分组（最多显示 maxDisplay 个）
 const displayGroups = computed(() => {
-  if (!props.groups) return []
+  if (!props.groups) return [];
   if (props.groups.length <= props.maxDisplay) {
-    return props.groups
+    return props.groups;
   }
   // 留一个位置给 +N 按钮
-  return props.groups.slice(0, props.maxDisplay - 1)
-})
+  return props.groups.slice(0, props.maxDisplay - 1);
+});
 
 // 隐藏的数量
 const hiddenCount = computed(() => {
-  if (!props.groups) return 0
-  if (props.groups.length <= props.maxDisplay) return 0
-  return props.groups.length - (props.maxDisplay - 1)
-})
+  if (!props.groups) return 0;
+  if (props.groups.length <= props.maxDisplay) return 0;
+  return props.groups.length - (props.maxDisplay - 1);
+});
 
 // Popover 位置样式
 const popoverStyle = computed(() => {
-  if (!moreButtonRef.value) return {}
-  const rect = moreButtonRef.value.getBoundingClientRect()
-  const viewportHeight = window.innerHeight
-  const viewportWidth = window.innerWidth
+  if (!moreButtonRef.value) return {};
+  const rect = moreButtonRef.value.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const viewportWidth = window.innerWidth;
 
-  let top = rect.bottom + 8
-  let left = rect.left
+  let top = rect.bottom + 8;
+  let left = rect.left;
 
   // 如果下方空间不足，显示在上方
   if (top + 280 > viewportHeight) {
-    top = Math.max(8, rect.top - 280)
+    top = Math.max(8, rect.top - 280);
   }
 
   // 如果右侧空间不足，向左偏移
   if (left + 384 > viewportWidth) {
-    left = Math.max(8, viewportWidth - 392)
+    left = Math.max(8, viewportWidth - 392);
   }
 
   return {
     top: `${top}px`,
-    left: `${left}px`
-  }
-})
+    left: `${left}px`,
+  };
+});
 
 // 关闭 popover 的键盘事件
 const handleKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') {
-    showPopover.value = false
+  if (e.key === "Escape") {
+    showPopover.value = false;
   }
-}
+};
 
 onMounted(() => {
-  window.addEventListener('keydown', handleKeydown)
-})
+  window.addEventListener("keydown", handleKeydown);
+});
 
 onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-})
+  window.removeEventListener("keydown", handleKeydown);
+});
 </script>

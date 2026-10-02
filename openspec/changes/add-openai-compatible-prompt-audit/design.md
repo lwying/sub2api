@@ -194,12 +194,12 @@ type Request struct {
 
 Prompt Audit 有效模式：
 
-| risk_control | enabled | blocking_enabled | 有效行为 |
-| --- | --- | --- | --- |
-| false | 任意 | 任意 | off |
-| true | false | false | off |
-| true | true | false | async_audit |
-| true | true | true | blocking |
+| risk_control | enabled | blocking_enabled | 有效行为    |
+| ------------ | ------- | ---------------- | ----------- |
+| false        | 任意    | 任意             | off         |
+| true         | false   | false            | off         |
+| true         | true    | false            | async_audit |
+| true         | true    | true             | blocking    |
 
 后端必须拒绝 `enabled=false && blocking_enabled=true`。前端联动只提升体验，不能替代后端校验。
 
@@ -447,7 +447,7 @@ Runner 生命周期由应用启动/停止管理：
 ```json
 {
   "model": "sileader/qwen3guard:0.6b",
-  "messages": [{"role": "user", "content": "<chunk>"}],
+  "messages": [{ "role": "user", "content": "<chunk>" }],
   "temperature": 0,
   "max_tokens": 64,
   "seed": 42
@@ -464,14 +464,14 @@ Runner 生命周期由应用启动/停止管理：
 
 策略映射：
 
-| Safety | 已启用类别 | 结果 |
-| --- | --- | --- |
-| Safe | 任意 | Pass / Allow |
-| Controversial | 普通类别 | Flag / Warn |
-| Controversial | Jailbreak/PII/Suicide & Self-Harm | Critical / Block |
-| Unsafe | 至少一个启用类别 | Critical / Block |
-| Unsafe | 未知类别 | Critical / Block + unknown_unsafe |
-| Unsafe | 仅命中明确禁用类别 | Flag / Warn，保留事实 |
+| Safety        | 已启用类别                        | 结果                              |
+| ------------- | --------------------------------- | --------------------------------- |
+| Safe          | 任意                              | Pass / Allow                      |
+| Controversial | 普通类别                          | Flag / Warn                       |
+| Controversial | Jailbreak/PII/Suicide & Self-Harm | Critical / Block                  |
+| Unsafe        | 至少一个启用类别                  | Critical / Block                  |
+| Unsafe        | 未知类别                          | Critical / Block + unknown_unsafe |
+| Unsafe        | 仅命中明确禁用类别                | Flag / Warn，保留事实             |
 
 scanner score 只用于展示排序，不得被解释为真实置信度阈值。
 
@@ -508,11 +508,11 @@ scanner score 只用于展示排序，不得被解释为真实置信度阈值。
 
 HTTP 错误：
 
-| 情况 | HTTP | error_code |
-| --- | ---: | --- |
-| Block | 400 | prompt_guard_blocked |
-| Unavailable | 503 | prompt_guard_unavailable |
-| Invalid response | 503 | prompt_guard_invalid_response |
+| 情况             | HTTP | error_code                    |
+| ---------------- | ---: | ----------------------------- |
+| Block            |  400 | prompt_guard_blocked          |
+| Unavailable      |  503 | prompt_guard_unavailable      |
+| Invalid response |  503 | prompt_guard_invalid_response |
 
 Handler 使用自己已有的 OpenAI、Claude 或 Gemini error helper。正文只包含通用中文消息、code 和 request ID。
 
@@ -658,14 +658,14 @@ prompt_audit.events_filter_deleted
 
 核心矩阵：
 
-| 维度 | 值 |
-| --- | --- |
-| 引擎 | 现有 moderation / prompt audit / 两者 |
-| Prompt 模式 | off / async / blocking |
-| 协议 | chat / responses / messages / gemini / images-media / responses-ws |
-| 返回 | allow / flag / block / unavailable / invalid |
-| 流式 | non-stream / SSE / WS first / WS subsequent |
-| 副作用 | account selection / billing / upstream |
+| 维度        | 值                                                                 |
+| ----------- | ------------------------------------------------------------------ |
+| 引擎        | 现有 moderation / prompt audit / 两者                              |
+| Prompt 模式 | off / async / blocking                                             |
+| 协议        | chat / responses / messages / gemini / images-media / responses-ws |
+| 返回        | allow / flag / block / unavailable / invalid                       |
+| 流式        | non-stream / SSE / WS first / WS subsequent                        |
+| 副作用      | account selection / billing / upstream                             |
 
 必须有结构测试验证所有现有调用点经过 Coordinator；必须有 stub 统计 Block/Unavailable 时账号选择、计费和上游调用均为 0。
 

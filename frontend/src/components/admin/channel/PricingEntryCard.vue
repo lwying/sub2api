@@ -1,5 +1,7 @@
 <template>
-  <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800">
+  <div
+    class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800"
+  >
     <!-- Collapsed summary header (clickable) -->
     <div
       class="flex cursor-pointer select-none items-center gap-2"
@@ -13,7 +15,10 @@
       />
 
       <!-- Summary: model tags + billing badge -->
-      <div v-if="collapsed" class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+      <div
+        v-if="collapsed"
+        class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden"
+      >
         <!-- Compact model tags (show first 3) -->
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           <span
@@ -34,7 +39,7 @@
             v-if="entry.models.length === 0"
             class="text-xs italic text-gray-400"
           >
-            {{ t('admin.channels.form.noModels') }}
+            {{ t("admin.channels.form.noModels") }}
           </span>
         </div>
 
@@ -47,8 +52,11 @@
       </div>
 
       <!-- Expanded: show the label "Pricing Entry" or similar -->
-      <div v-else class="flex-1 text-xs font-medium text-gray-500 dark:text-gray-400">
-        {{ t('admin.channels.form.pricingEntry') }}
+      <div
+        v-else
+        class="flex-1 text-xs font-medium text-gray-500 dark:text-gray-400"
+      >
+        {{ t("admin.channels.form.pricingEntry") }}
       </div>
 
       <!-- Remove button (always visible, stop propagation) -->
@@ -71,7 +79,8 @@
         <div class="mt-3 flex items-start gap-2">
           <div class="flex-1">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('admin.channels.form.models') }} <span class="text-red-500">*</span>
+              {{ t("admin.channels.form.models") }}
+              <span class="text-red-500">*</span>
             </label>
             <ModelTagInput
               :models="entry.models"
@@ -83,16 +92,18 @@
           </div>
           <div class="w-40">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('admin.channels.form.billingMode') }}
+              {{ t("admin.channels.form.billingMode") }}
             </label>
             <Select
               :modelValue="entry.billing_mode"
-              @update:modelValue="emit('update', {
-                ...entry,
-                billing_mode: $event as BillingMode,
-                intervals: [],
-                time_pricing: { ...entry.time_pricing, periods: [] },
-              })"
+              @update:modelValue="
+                emit('update', {
+                  ...entry,
+                  billing_mode: $event as BillingMode,
+                  intervals: [],
+                  time_pricing: { ...entry.time_pricing, periods: [] },
+                })
+              "
               :options="billingModeOptions"
               class="mt-1"
             />
@@ -102,73 +113,213 @@
         <!-- Token mode -->
         <div v-if="entry.billing_mode === 'token'">
           <!-- Default prices (fallback when no interval matches) -->
-          <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
-            {{ t('admin.channels.form.defaultPrices') }}
+          <label
+            class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400"
+          >
+            {{ t("admin.channels.form.defaultPrices") }}
             <span class="ml-1 font-normal text-gray-400">$/MTok</span>
           </label>
           <div class="pricing-default-grid mt-1 grid gap-2">
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.inputPrice') }}</label>
-              <input :value="entry.input_price" @input="emitField('input_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.inputPrice")
+              }}</label>
+              <input
+                :value="entry.input_price"
+                @input="
+                  emitField(
+                    'input_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.outputPrice') }}</label>
-              <input :value="entry.output_price" @input="emitField('output_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.outputPrice")
+              }}</label>
+              <input
+                :value="entry.output_price"
+                @input="
+                  emitField(
+                    'output_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite5mPrice') }}</label>
-              <input :value="entry.cache_write_price" @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.cacheWrite5mPrice")
+              }}</label>
+              <input
+                :value="entry.cache_write_price"
+                @input="
+                  emitField(
+                    'cache_write_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite1hPrice') }}</label>
-              <input :value="entry.cache_write_1h_price" @input="emitField('cache_write_1h_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.cacheWrite1hPrice")
+              }}</label>
+              <input
+                :value="entry.cache_write_1h_price"
+                @input="
+                  emitField(
+                    'cache_write_1h_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheReadPrice') }}</label>
-              <input :value="entry.cache_read_price" @input="emitField('cache_read_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.cacheReadPrice")
+              }}</label>
+              <input
+                :value="entry.cache_read_price"
+                @input="
+                  emitField(
+                    'cache_read_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.imageInputPrice') }}</label>
-              <input :value="entry.image_input_price" @input="emitField('image_input_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.imageInputPrice")
+              }}</label>
+              <input
+                :value="entry.image_input_price"
+                @input="
+                  emitField(
+                    'image_input_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.imageTokenPrice') }}</label>
-              <input :value="entry.image_output_price" @input="emitField('image_output_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.imageTokenPrice")
+              }}</label>
+              <input
+                :value="entry.image_output_price"
+                @input="
+                  emitField(
+                    'image_output_price',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.pricePlaceholder')"
+              />
             </div>
           </div>
 
-          <div v-if="enableTierMultipliers" class="mt-3 grid max-w-md grid-cols-1 gap-2 sm:grid-cols-2">
+          <div
+            v-if="enableTierMultipliers"
+            class="mt-3 grid max-w-md grid-cols-1 gap-2 sm:grid-cols-2"
+          >
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.fastMultiplier') }}</label>
-              <input :value="entry.fast_multiplier" @input="emitField('fast_multiplier', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0.000001" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.multiplierPlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.fastMultiplier")
+              }}</label>
+              <input
+                :value="entry.fast_multiplier"
+                @input="
+                  emitField(
+                    'fast_multiplier',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0.000001"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.multiplierPlaceholder')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.flexMultiplier') }}</label>
-              <input :value="entry.flex_multiplier" @input="emitField('flex_multiplier', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0.000001" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.multiplierPlaceholder')" />
+              <label class="text-xs text-gray-400">{{
+                t("admin.channels.form.flexMultiplier")
+              }}</label>
+              <input
+                :value="entry.flex_multiplier"
+                @input="
+                  emitField(
+                    'flex_multiplier',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+                type="number"
+                step="any"
+                min="0.000001"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.channels.form.multiplierPlaceholder')"
+              />
             </div>
           </div>
 
           <!-- Channel token intervals; the group long-context toggle controls whether tiers apply. -->
           <div v-if="!hideTokenIntervals" class="mt-3">
             <div class="flex items-center justify-between">
-              <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                {{ t('admin.channels.form.intervals') }}
+              <label
+                class="text-xs font-medium text-gray-500 dark:text-gray-400"
+              >
+                {{ t("admin.channels.form.intervals") }}
                 <span class="ml-1 font-normal text-gray-400">(min, max]</span>
               </label>
-              <button type="button" @click="addInterval" class="text-xs text-primary-600 hover:text-primary-700">
-                + {{ t('admin.channels.form.addInterval') }}
+              <button
+                type="button"
+                @click="addInterval"
+                class="text-xs text-primary-600 hover:text-primary-700"
+              >
+                + {{ t("admin.channels.form.addInterval") }}
               </button>
             </div>
-            <div v-if="entry.intervals && entry.intervals.length > 0" class="mt-2 space-y-2">
+            <div
+              v-if="entry.intervals && entry.intervals.length > 0"
+              class="mt-2 space-y-2"
+            >
               <IntervalRow
                 v-for="(iv, idx) in entry.intervals"
                 :key="idx"
@@ -184,32 +335,55 @@
           <TimePricingSection
             v-if="enableTimePricing"
             :model-value="entry.time_pricing"
-            @update:model-value="emit('update', { ...entry, time_pricing: $event })"
+            @update:model-value="
+              emit('update', { ...entry, time_pricing: $event })
+            "
           />
         </div>
 
         <!-- Per-request mode -->
         <div v-else-if="entry.billing_mode === 'per_request'">
           <!-- Default per-request price -->
-          <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
-            {{ t('admin.channels.form.defaultPerRequestPrice') }}
+          <label
+            class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400"
+          >
+            {{ t("admin.channels.form.defaultPerRequestPrice") }}
             <span class="ml-1 font-normal text-gray-400">$</span>
           </label>
           <div class="mt-1 w-48">
-            <input :value="entry.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0" class="input text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+            <input
+              :value="entry.per_request_price"
+              @input="
+                emitField(
+                  'per_request_price',
+                  ($event.target as HTMLInputElement).value,
+                )
+              "
+              type="number"
+              step="any"
+              min="0"
+              class="input text-sm"
+              :placeholder="t('admin.channels.form.pricePlaceholder')"
+            />
           </div>
 
           <!-- Tiers -->
           <div class="mt-3 flex items-center justify-between">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('admin.channels.form.requestTiers') }}
+              {{ t("admin.channels.form.requestTiers") }}
             </label>
-            <button type="button" @click="addInterval" class="text-xs text-primary-600 hover:text-primary-700">
-              + {{ t('admin.channels.form.addTier') }}
+            <button
+              type="button"
+              @click="addInterval"
+              class="text-xs text-primary-600 hover:text-primary-700"
+            >
+              + {{ t("admin.channels.form.addTier") }}
             </button>
           </div>
-          <div v-if="entry.intervals && entry.intervals.length > 0" class="mt-2 space-y-2">
+          <div
+            v-if="entry.intervals && entry.intervals.length > 0"
+            class="mt-2 space-y-2"
+          >
             <IntervalRow
               v-for="(iv, idx) in entry.intervals"
               :key="idx"
@@ -219,33 +393,69 @@
               @remove="removeInterval(idx)"
             />
           </div>
-          <div v-else class="mt-2 rounded border border-dashed border-gray-300 p-3 text-center text-xs text-gray-400 dark:border-dark-500">
-            {{ t('admin.channels.form.noTiersYet') }}
+          <div
+            v-else
+            class="mt-2 rounded border border-dashed border-gray-300 p-3 text-center text-xs text-gray-400 dark:border-dark-500"
+          >
+            {{ t("admin.channels.form.noTiersYet") }}
           </div>
         </div>
 
         <!-- Image/video mode -->
-        <div v-else-if="entry.billing_mode === 'image' || entry.billing_mode === 'video'">
+        <div
+          v-else-if="
+            entry.billing_mode === 'image' || entry.billing_mode === 'video'
+          "
+        >
           <!-- Default image price (per-request, same as per_request mode) -->
-          <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
-            {{ entry.billing_mode === 'video' ? t('admin.channels.form.defaultVideoPrice') : t('admin.channels.form.defaultImagePrice') }}
+          <label
+            class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400"
+          >
+            {{
+              entry.billing_mode === "video"
+                ? t("admin.channels.form.defaultVideoPrice")
+                : t("admin.channels.form.defaultImagePrice")
+            }}
             <span class="ml-1 font-normal text-gray-400">$</span>
           </label>
           <div class="mt-1 w-48">
-            <input :value="entry.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0" class="input text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+            <input
+              :value="entry.per_request_price"
+              @input="
+                emitField(
+                  'per_request_price',
+                  ($event.target as HTMLInputElement).value,
+                )
+              "
+              type="number"
+              step="any"
+              min="0"
+              class="input text-sm"
+              :placeholder="t('admin.channels.form.pricePlaceholder')"
+            />
           </div>
 
           <!-- Image tiers -->
           <div class="mt-3 flex items-center justify-between">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ entry.billing_mode === 'video' ? t('admin.channels.form.videoTiers') : t('admin.channels.form.imageTiers') }}
+              {{
+                entry.billing_mode === "video"
+                  ? t("admin.channels.form.videoTiers")
+                  : t("admin.channels.form.imageTiers")
+              }}
             </label>
-            <button type="button" @click="addMediaTier" class="text-xs text-primary-600 hover:text-primary-700">
-              + {{ t('admin.channels.form.addTier') }}
+            <button
+              type="button"
+              @click="addMediaTier"
+              class="text-xs text-primary-600 hover:text-primary-700"
+            >
+              + {{ t("admin.channels.form.addTier") }}
             </button>
           </div>
-          <div v-if="entry.intervals && entry.intervals.length > 0" class="mt-2 space-y-2">
+          <div
+            v-if="entry.intervals && entry.intervals.length > 0"
+            class="mt-2 space-y-2"
+          >
             <IntervalRow
               v-for="(iv, idx) in entry.intervals"
               :key="idx"
@@ -257,39 +467,73 @@
           </div>
         </div>
 
-        <div class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-600" data-testid="reasoning-effort-multipliers">
+        <div
+          class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-600"
+          data-testid="reasoning-effort-multipliers"
+        >
           <div class="flex items-center justify-between gap-2">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('admin.channels.form.reasoningEffortMultipliers') }}
+              {{ t("admin.channels.form.reasoningEffortMultipliers") }}
             </label>
             <button
-              v-if="Object.keys(entry.reasoning_effort_multipliers || {}).length"
+              v-if="
+                Object.keys(entry.reasoning_effort_multipliers || {}).length
+              "
               type="button"
               class="text-xs text-gray-500 hover:text-red-500"
-              @click="emit('update', { ...entry, reasoning_effort_multipliers: null })"
+              @click="
+                emit('update', { ...entry, reasoning_effort_multipliers: null })
+              "
             >
-              {{ t('admin.channels.form.clearReasoningEffortMultipliers') }}
+              {{ t("admin.channels.form.clearReasoningEffortMultipliers") }}
             </button>
           </div>
-          <p class="mt-1 text-xs text-gray-400">{{ t('admin.channels.form.reasoningEffortMultipliersHint') }}</p>
-          <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-            <label v-for="effort in REASONING_EFFORT_LEVELS" :key="effort" class="text-xs text-gray-500 dark:text-gray-400">
+          <p class="mt-1 text-xs text-gray-400">
+            {{ t("admin.channels.form.reasoningEffortMultipliersHint") }}
+          </p>
+          <div
+            class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7"
+          >
+            <label
+              v-for="effort in REASONING_EFFORT_LEVELS"
+              :key="effort"
+              class="text-xs text-gray-500 dark:text-gray-400"
+            >
               {{ effort }}
               <input
                 :value="entry.reasoning_effort_multipliers?.[effort]"
-                :aria-label="t('admin.channels.form.reasoningEffortMultiplierLabel', { effort })"
-                :aria-invalid="!isValidPositiveMultiplier(entry.reasoning_effort_multipliers?.[effort])"
+                :aria-label="
+                  t('admin.channels.form.reasoningEffortMultiplierLabel', {
+                    effort,
+                  })
+                "
+                :aria-invalid="
+                  !isValidPositiveMultiplier(
+                    entry.reasoning_effort_multipliers?.[effort],
+                  )
+                "
                 :data-reasoning-effort="effort"
-                @input="updateReasoningEffortMultiplier(effort, ($event.target as HTMLInputElement).value)"
+                @input="
+                  updateReasoningEffortMultiplier(
+                    effort,
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
                 type="number"
                 step="any"
                 min="0"
                 class="input mt-0.5 text-sm"
-                :placeholder="t('admin.channels.form.reasoningEffortMultiplierDefault')"
+                :placeholder="
+                  t('admin.channels.form.reasoningEffortMultiplierDefault')
+                "
               />
             </label>
           </div>
-          <p v-if="reasoningEffortMultiplierError" role="alert" class="mt-1 text-xs text-red-500">
+          <p
+            v-if="reasoningEffortMultiplierError"
+            role="alert"
+            class="mt-1 text-xs text-red-500"
+          >
             {{ reasoningEffortMultiplierError }}
           </p>
         </div>
@@ -299,144 +543,189 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import Select from '@/components/common/Select.vue'
-import Icon from '@/components/icons/Icon.vue'
-import IntervalRow from './IntervalRow.vue'
-import ModelTagInput from './ModelTagInput.vue'
-import TimePricingSection from './TimePricingSection.vue'
-import type { PricingFormEntry, IntervalFormEntry } from './types'
-import { perTokenToMTok, getPlatformTagClass, isValidPositiveMultiplier, validateReasoningEffortMultipliers } from './types'
-import { REASONING_EFFORT_LEVELS, type ReasoningEffortLevel } from '@/constants/channel'
-import type { BillingMode } from '@/api/admin/channels'
-import channelsAPI from '@/api/admin/channels'
+import { ref, computed } from "vue";
+import { useI18n } from "vue-i18n";
+import Select from "@/components/common/Select.vue";
+import Icon from "@/components/icons/Icon.vue";
+import IntervalRow from "./IntervalRow.vue";
+import ModelTagInput from "./ModelTagInput.vue";
+import TimePricingSection from "./TimePricingSection.vue";
+import type { PricingFormEntry, IntervalFormEntry } from "./types";
+import {
+  perTokenToMTok,
+  getPlatformTagClass,
+  isValidPositiveMultiplier,
+  validateReasoningEffortMultipliers,
+} from "./types";
+import {
+  REASONING_EFFORT_LEVELS,
+  type ReasoningEffortLevel,
+} from "@/constants/channel";
+import type { BillingMode } from "@/api/admin/channels";
+import channelsAPI from "@/api/admin/channels";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-const props = withDefaults(defineProps<{
-  entry: PricingFormEntry
-  platform?: string
-  hideTokenIntervals?: boolean
-  enableTimePricing?: boolean
-  enableTierMultipliers?: boolean
-}>(), {
-  hideTokenIntervals: false,
-  enableTimePricing: false,
-  enableTierMultipliers: false,
-})
+const props = withDefaults(
+  defineProps<{
+    entry: PricingFormEntry;
+    platform?: string;
+    hideTokenIntervals?: boolean;
+    enableTimePricing?: boolean;
+    enableTierMultipliers?: boolean;
+  }>(),
+  {
+    hideTokenIntervals: false,
+    enableTimePricing: false,
+    enableTierMultipliers: false,
+  },
+);
 
 const emit = defineEmits<{
-  update: [entry: PricingFormEntry]
-  remove: []
-}>()
+  update: [entry: PricingFormEntry];
+  remove: [];
+}>();
 
 // Collapse state: entries with existing models default to collapsed
-const collapsed = ref(props.entry.models.length > 0)
+const collapsed = ref(props.entry.models.length > 0);
 
 const billingModeOptions = computed(() => [
-  { value: 'token', label: t('admin.channels.billingMode.token') },
-  { value: 'per_request', label: t('admin.channels.billingMode.perRequest') },
-  { value: 'image', label: t('admin.channels.billingMode.image') },
-  { value: 'video', label: t('admin.channels.billingMode.video') }
-])
+  { value: "token", label: t("admin.channels.billingMode.token") },
+  { value: "per_request", label: t("admin.channels.billingMode.perRequest") },
+  { value: "image", label: t("admin.channels.billingMode.image") },
+  { value: "video", label: t("admin.channels.billingMode.video") },
+]);
 
 const billingModeLabel = computed(() => {
-  const opt = billingModeOptions.value.find(o => o.value === props.entry.billing_mode)
-  return opt ? opt.label : props.entry.billing_mode
-})
+  const opt = billingModeOptions.value.find(
+    (o) => o.value === props.entry.billing_mode,
+  );
+  return opt ? opt.label : props.entry.billing_mode;
+});
 
 const reasoningEffortMultiplierError = computed(() =>
-  validateReasoningEffortMultipliers(props.entry.reasoning_effort_multipliers, t)
-)
+  validateReasoningEffortMultipliers(
+    props.entry.reasoning_effort_multipliers,
+    t,
+  ),
+);
 
-function updateReasoningEffortMultiplier(effort: ReasoningEffortLevel, value: string) {
-  const multipliers = { ...props.entry.reasoning_effort_multipliers }
-  if (value === '') delete multipliers[effort]
-  else multipliers[effort] = value
-  emit('update', {
+function updateReasoningEffortMultiplier(
+  effort: ReasoningEffortLevel,
+  value: string,
+) {
+  const multipliers = { ...props.entry.reasoning_effort_multipliers };
+  if (value === "") delete multipliers[effort];
+  else multipliers[effort] = value;
+  emit("update", {
     ...props.entry,
-    reasoning_effort_multipliers: Object.keys(multipliers).length ? multipliers : null,
-  })
+    reasoning_effort_multipliers: Object.keys(multipliers).length
+      ? multipliers
+      : null,
+  });
 }
 
 function emitField(field: keyof PricingFormEntry, value: string) {
-  emit('update', { ...props.entry, [field]: value === '' ? null : value })
+  emit("update", { ...props.entry, [field]: value === "" ? null : value });
 }
 
 function addInterval() {
-  const intervals = [...(props.entry.intervals || [])]
+  const intervals = [...(props.entry.intervals || [])];
   intervals.push({
-    min_tokens: 0, max_tokens: null, tier_label: '',
-    input_price: null, output_price: null, cache_write_price: null,
+    min_tokens: 0,
+    max_tokens: null,
+    tier_label: "",
+    input_price: null,
+    output_price: null,
+    cache_write_price: null,
     cache_write_1h_price: null,
-    cache_read_price: null, per_request_price: null,
-    input_multiplier: null, output_multiplier: null,
-    cache_write_multiplier: null, cache_read_multiplier: null,
-    sort_order: intervals.length
-  })
-  emit('update', { ...props.entry, intervals })
+    cache_read_price: null,
+    per_request_price: null,
+    input_multiplier: null,
+    output_multiplier: null,
+    cache_write_multiplier: null,
+    cache_read_multiplier: null,
+    sort_order: intervals.length,
+  });
+  emit("update", { ...props.entry, intervals });
 }
 
 function addMediaTier() {
-  const intervals = [...(props.entry.intervals || [])]
-  const labels = props.entry.billing_mode === 'video'
-    ? ['480p', '720p', '1080p']
-    : ['1K', '2K', '4K', 'HD']
+  const intervals = [...(props.entry.intervals || [])];
+  const labels =
+    props.entry.billing_mode === "video"
+      ? ["480p", "720p", "1080p"]
+      : ["1K", "2K", "4K", "HD"];
   intervals.push({
-    min_tokens: 0, max_tokens: null, tier_label: labels[intervals.length] || '',
-    input_price: null, output_price: null, cache_write_price: null,
+    min_tokens: 0,
+    max_tokens: null,
+    tier_label: labels[intervals.length] || "",
+    input_price: null,
+    output_price: null,
+    cache_write_price: null,
     cache_write_1h_price: null,
-    cache_read_price: null, per_request_price: null,
-    input_multiplier: null, output_multiplier: null,
-    cache_write_multiplier: null, cache_read_multiplier: null,
-    sort_order: intervals.length
-  })
-  emit('update', { ...props.entry, intervals })
+    cache_read_price: null,
+    per_request_price: null,
+    input_multiplier: null,
+    output_multiplier: null,
+    cache_write_multiplier: null,
+    cache_read_multiplier: null,
+    sort_order: intervals.length,
+  });
+  emit("update", { ...props.entry, intervals });
 }
 
 function updateInterval(idx: number, updated: IntervalFormEntry) {
-  const intervals = [...(props.entry.intervals || [])]
-  intervals[idx] = updated
-  emit('update', { ...props.entry, intervals })
+  const intervals = [...(props.entry.intervals || [])];
+  intervals[idx] = updated;
+  emit("update", { ...props.entry, intervals });
 }
 
 function removeInterval(idx: number) {
-  const intervals = [...(props.entry.intervals || [])]
-  intervals.splice(idx, 1)
-  emit('update', { ...props.entry, intervals })
+  const intervals = [...(props.entry.intervals || [])];
+  intervals.splice(idx, 1);
+  emit("update", { ...props.entry, intervals });
 }
 
 async function onModelsUpdate(newModels: string[]) {
-  const oldModels = props.entry.models
-  emit('update', { ...props.entry, models: newModels })
+  const oldModels = props.entry.models;
+  emit("update", { ...props.entry, models: newModels });
 
   // 只在新增模型且当前无价格时自动填充
-  const addedModels = newModels.filter(m => !oldModels.includes(m))
-  if (addedModels.length === 0) return
+  const addedModels = newModels.filter((m) => !oldModels.includes(m));
+  if (addedModels.length === 0) return;
 
   // 检查是否所有价格字段都为空
-  const e = props.entry
-  const hasPrice = e.input_price != null || e.output_price != null ||
-                   e.cache_write_price != null || e.cache_write_1h_price != null || e.cache_read_price != null
-  if (hasPrice) return
+  const e = props.entry;
+  const hasPrice =
+    e.input_price != null ||
+    e.output_price != null ||
+    e.cache_write_price != null ||
+    e.cache_write_1h_price != null ||
+    e.cache_read_price != null;
+  if (hasPrice) return;
 
   // 查询第一个新增模型的默认价格
   try {
-    const result = await channelsAPI.getModelDefaultPricing(addedModels[0])
+    const result = await channelsAPI.getModelDefaultPricing(addedModels[0]);
     if (result.found) {
-      emit('update', {
+      emit("update", {
         ...props.entry,
         models: newModels,
         input_price: perTokenToMTok(result.input_price ?? null),
         output_price: perTokenToMTok(result.output_price ?? null),
         cache_write_price: perTokenToMTok(result.cache_write_price ?? null),
-        cache_write_1h_price: perTokenToMTok(result.cache_write_1h_price ?? null),
+        cache_write_1h_price: perTokenToMTok(
+          result.cache_write_1h_price ?? null,
+        ),
         cache_read_price: perTokenToMTok(result.cache_read_price ?? null),
         image_input_price: perTokenToMTok(result.image_input_price ?? null),
         image_output_price: perTokenToMTok(result.image_output_price ?? null),
-        reasoning_effort_multipliers: props.entry.reasoning_effort_multipliers ?? result.reasoning_effort_multipliers ?? null,
-      })
+        reasoning_effort_multipliers:
+          props.entry.reasoning_effort_multipliers ??
+          result.reasoning_effort_multipliers ??
+          null,
+      });
     }
   } catch {
     // 查询失败不影响用户操作

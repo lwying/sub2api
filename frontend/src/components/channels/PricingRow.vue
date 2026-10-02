@@ -6,20 +6,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { formatScaled } from '@/utils/pricing'
+import { computed } from "vue";
+import { formatScaled } from "@/utils/pricing";
 
 const props = withDefaults(
   defineProps<{
-    label: string
-    value: number | null
-    unit: string
-    scale: number
+    label: string;
+    value: number | null;
+    unit: string;
+    scale: number;
   }>(),
-  { value: null }
-)
+  { value: null },
+);
 
 const display = computed(() =>
-  props.value == null ? '-' : `${formatScaled(props.value, props.scale)} ${props.unit}`
-)
+  props.value == null
+    ? "-"
+    : `${formatScaled(props.value, props.scale)} ${props.unit}`,
+);
 </script>

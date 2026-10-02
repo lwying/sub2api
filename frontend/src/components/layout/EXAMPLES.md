@@ -40,12 +40,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { AppLayout } from '@/components/layout'
-import { useAuthStore } from '@/stores'
+import { computed } from "vue";
+import { AppLayout } from "@/components/layout";
+import { useAuthStore } from "@/stores";
 
-const authStore = useAuthStore()
-const balance = computed(() => authStore.user?.balance.toFixed(2) || '0.00')
+const authStore = useAuthStore();
+const balance = computed(() => authStore.user?.balance.toFixed(2) || "0.00");
 </script>
 ```
 
@@ -60,7 +60,10 @@ const balance = computed(() => authStore.user?.balance.toFixed(2) || '0.00')
 
     <form @submit.prevent="handleSubmit" class="space-y-4">
       <div>
-        <label for="username" class="mb-1 block text-sm font-medium text-gray-700">
+        <label
+          for="username"
+          class="mb-1 block text-sm font-medium text-gray-700"
+        >
           Username
         </label>
         <input
@@ -74,7 +77,10 @@ const balance = computed(() => authStore.user?.balance.toFixed(2) || '0.00')
       </div>
 
       <div>
-        <label for="password" class="mb-1 block text-sm font-medium text-gray-700">
+        <label
+          for="password"
+          class="mb-1 block text-sm font-medium text-gray-700"
+        >
           Password
         </label>
         <input
@@ -92,14 +98,17 @@ const balance = computed(() => authStore.user?.balance.toFixed(2) || '0.00')
         :disabled="loading"
         class="w-full rounded-lg bg-indigo-600 px-4 py-2 text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {{ loading ? 'Logging in...' : 'Login' }}
+        {{ loading ? "Logging in..." : "Login" }}
       </button>
     </form>
 
     <template #footer>
       <p class="text-gray-600">
         Don't have an account?
-        <router-link to="/register" class="font-medium text-indigo-600 hover:underline">
+        <router-link
+          to="/register"
+          class="font-medium text-indigo-600 hover:underline"
+        >
           Sign up
         </router-link>
       </p>
@@ -108,32 +117,32 @@ const balance = computed(() => authStore.user?.balance.toFixed(2) || '0.00')
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { AuthLayout } from '@/components/layout'
-import { useAuthStore, useAppStore } from '@/stores'
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import { AuthLayout } from "@/components/layout";
+import { useAuthStore, useAppStore } from "@/stores";
 
-const router = useRouter()
-const authStore = useAuthStore()
-const appStore = useAppStore()
+const router = useRouter();
+const authStore = useAuthStore();
+const appStore = useAppStore();
 
 const form = ref({
-  username: '',
-  password: ''
-})
+  username: "",
+  password: "",
+});
 
-const loading = ref(false)
+const loading = ref(false);
 
 async function handleSubmit() {
-  loading.value = true
+  loading.value = true;
   try {
-    await authStore.login(form.value)
-    appStore.showSuccess('Login successful!')
-    await router.push('/dashboard')
+    await authStore.login(form.value);
+    appStore.showSuccess("Login successful!");
+    await router.push("/dashboard");
   } catch (error) {
-    appStore.showError('Invalid username or password')
+    appStore.showError("Invalid username or password");
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 </script>
@@ -163,15 +172,29 @@ async function handleSubmit() {
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Name</th>
-              <th class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">Key</th>
-              <th class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">
+              <th
+                class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500"
+              >
+                Name
+              </th>
+              <th
+                class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500"
+              >
+                Key
+              </th>
+              <th
+                class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500"
+              >
                 Status
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">
+              <th
+                class="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500"
+              >
                 Created
               </th>
-              <th class="px-6 py-3 text-right text-xs font-medium uppercase text-gray-500">
+              <th
+                class="px-6 py-3 text-right text-xs font-medium uppercase text-gray-500"
+              >
                 Actions
               </th>
             </tr>
@@ -196,7 +219,9 @@ async function handleSubmit() {
                 {{ new Date(key.created_at).toLocaleDateString() }}
               </td>
               <td class="px-6 py-4 text-right">
-                <button class="text-sm text-red-600 hover:text-red-800">Delete</button>
+                <button class="text-sm text-red-600 hover:text-red-800">
+                  Delete
+                </button>
               </td>
             </tr>
           </tbody>
@@ -207,12 +232,12 @@ async function handleSubmit() {
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { AppLayout } from '@/components/layout'
-import type { ApiKey } from '@/types'
+import { ref } from "vue";
+import { AppLayout } from "@/components/layout";
+import type { ApiKey } from "@/types";
 
-const showCreateModal = ref(false)
-const apiKeys = ref<ApiKey[]>([])
+const showCreateModal = ref(false);
+const apiKeys = ref<ApiKey[]>([]);
 
 // Fetch API keys on mount
 // fetchApiKeys();
@@ -264,7 +289,9 @@ const apiKeys = ref<ApiKey[]>([])
                 <span class="text-sm font-medium text-gray-700">
                   ${{ user.balance.toFixed(2) }}
                 </span>
-                <button class="text-sm text-indigo-600 hover:text-indigo-800">Edit</button>
+                <button class="text-sm text-indigo-600 hover:text-indigo-800">
+                  Edit
+                </button>
               </div>
             </div>
           </div>
@@ -275,12 +302,12 @@ const apiKeys = ref<ApiKey[]>([])
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { AppLayout } from '@/components/layout'
-import type { User } from '@/types'
+import { ref } from "vue";
+import { AppLayout } from "@/components/layout";
+import type { User } from "@/types";
 
-const showCreateUser = ref(false)
-const users = ref<User[]>([])
+const showCreateUser = ref(false);
+const users = ref<User[]>([]);
 
 // Fetch users on mount
 // fetchUsers();
@@ -303,21 +330,27 @@ const users = ref<User[]>([])
 
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700"> Username </label>
+            <label class="mb-1 block text-sm font-medium text-gray-700">
+              Username
+            </label>
             <div class="rounded-lg bg-gray-50 px-3 py-2 text-gray-900">
               {{ user?.username }}
             </div>
           </div>
 
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700"> Email </label>
+            <label class="mb-1 block text-sm font-medium text-gray-700">
+              Email
+            </label>
             <div class="rounded-lg bg-gray-50 px-3 py-2 text-gray-900">
               {{ user?.email }}
             </div>
           </div>
 
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700"> Role </label>
+            <label class="mb-1 block text-sm font-medium text-gray-700">
+              Role
+            </label>
             <div class="rounded-lg bg-gray-50 px-3 py-2">
               <span
                 class="rounded-full px-2 py-1 text-xs"
@@ -333,8 +366,12 @@ const users = ref<User[]>([])
           </div>
 
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700"> Balance </label>
-            <div class="rounded-lg bg-gray-50 px-3 py-2 font-semibold text-indigo-600">
+            <label class="mb-1 block text-sm font-medium text-gray-700">
+              Balance
+            </label>
+            <div
+              class="rounded-lg bg-gray-50 px-3 py-2 font-semibold text-indigo-600"
+            >
               ${{ user?.balance.toFixed(2) }}
             </div>
           </div>
@@ -347,7 +384,10 @@ const users = ref<User[]>([])
 
         <form @submit.prevent="handleChangePassword" class="space-y-4">
           <div>
-            <label for="old-password" class="mb-1 block text-sm font-medium text-gray-700">
+            <label
+              for="old-password"
+              class="mb-1 block text-sm font-medium text-gray-700"
+            >
               Current Password
             </label>
             <input
@@ -360,7 +400,10 @@ const users = ref<User[]>([])
           </div>
 
           <div>
-            <label for="new-password" class="mb-1 block text-sm font-medium text-gray-700">
+            <label
+              for="new-password"
+              class="mb-1 block text-sm font-medium text-gray-700"
+            >
               New Password
             </label>
             <input
@@ -385,27 +428,27 @@ const users = ref<User[]>([])
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { AppLayout } from '@/components/layout'
-import { useAuthStore, useAppStore } from '@/stores'
+import { ref, computed } from "vue";
+import { AppLayout } from "@/components/layout";
+import { useAuthStore, useAppStore } from "@/stores";
 
-const authStore = useAuthStore()
-const appStore = useAppStore()
+const authStore = useAuthStore();
+const appStore = useAppStore();
 
-const user = computed(() => authStore.user)
+const user = computed(() => authStore.user);
 
 const passwordForm = ref({
-  old_password: '',
-  new_password: ''
-})
+  old_password: "",
+  new_password: "",
+});
 
 async function handleChangePassword() {
   try {
     // await changePasswordAPI(passwordForm.value);
-    appStore.showSuccess('Password updated successfully!')
-    passwordForm.value = { old_password: '', new_password: '' }
+    appStore.showSuccess("Password updated successfully!");
+    passwordForm.value = { old_password: "", new_password: "" };
   } catch (error) {
-    appStore.showError('Failed to update password')
+    appStore.showError("Failed to update password");
   }
 }
 </script>

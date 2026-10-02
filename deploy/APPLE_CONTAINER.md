@@ -127,24 +127,24 @@ The normal `up` command recreates the application container, so application envi
 
 Apple-specific handling of shared settings:
 
-| Setting | Apple workflow behavior |
-|---|---|
-| Application and gateway variables | Passed to Sub2API from `.env` |
-| `BIND_HOST`, `SERVER_PORT` | Used for the macOS published port |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | PostgreSQL first initialization only |
-| `REDIS_PASSWORD` | Applied to Redis and Sub2API |
-| `DATABASE_PORT`, `REDIS_PORT` | Internal ports are fixed to 5432 and 6379 |
-| `POSTGRES_MAX_*`, `REDIS_MAXCLIENTS` | Not currently applied to the database/cache server |
+| Setting                                             | Apple workflow behavior                            |
+| --------------------------------------------------- | -------------------------------------------------- |
+| Application and gateway variables                   | Passed to Sub2API from `.env`                      |
+| `BIND_HOST`, `SERVER_PORT`                          | Used for the macOS published port                  |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | PostgreSQL first initialization only               |
+| `REDIS_PASSWORD`                                    | Applied to Redis and Sub2API                       |
+| `DATABASE_PORT`, `REDIS_PORT`                       | Internal ports are fixed to 5432 and 6379          |
+| `POSTGRES_MAX_*`, `REDIS_MAXCLIENTS`                | Not currently applied to the database/cache server |
 
 ## Managed Resources
 
 The script creates only resources carrying the `org.sub2api.stack=apple-container` label:
 
-| Type | Names |
-|---|---|
-| Containers | `sub2api-apple`, `sub2api-apple-postgres`, `sub2api-apple-redis` |
-| Network | `sub2api-apple` |
-| Volumes | `sub2api-apple-data`, `sub2api-apple-postgres-data`, `sub2api-apple-redis-data` |
+| Type       | Names                                                                           |
+| ---------- | ------------------------------------------------------------------------------- |
+| Containers | `sub2api-apple`, `sub2api-apple-postgres`, `sub2api-apple-redis`                |
+| Network    | `sub2api-apple`                                                                 |
+| Volumes    | `sub2api-apple-data`, `sub2api-apple-postgres-data`, `sub2api-apple-redis-data` |
 
 The PostgreSQL volume is mounted at `/var/lib/postgresql`, retaining PostgreSQL 18's default child data directory. Sub2API data and its updatable runtime binary use separate child directories in `sub2api-apple-data`; Redis also stores data below its Apple volume mount point. This is required because Apple named volumes do not have Docker's copy-up and mount-point ownership behavior.
 

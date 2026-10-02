@@ -18,15 +18,25 @@
           :disabled="loadingTemplate || previewing || !canPreview"
           @click="refreshPreview"
         >
-          {{ previewing ? t("admin.settings.emailTemplates.previewing") : t("admin.settings.emailTemplates.preview") }}
+          {{
+            previewing
+              ? t("admin.settings.emailTemplates.previewing")
+              : t("admin.settings.emailTemplates.preview")
+          }}
         </button>
         <button
           type="button"
           class="btn btn-secondary btn-sm"
-          :disabled="loadingTemplate || restoring || !selectedEvent || !selectedLocale"
+          :disabled="
+            loadingTemplate || restoring || !selectedEvent || !selectedLocale
+          "
           @click="restoreOfficial"
         >
-          {{ restoring ? t("admin.settings.emailTemplates.restoring") : t("admin.settings.emailTemplates.restoreOfficial") }}
+          {{
+            restoring
+              ? t("admin.settings.emailTemplates.restoring")
+              : t("admin.settings.emailTemplates.restoreOfficial")
+          }}
         </button>
         <button
           type="button"
@@ -34,7 +44,11 @@
           :disabled="loadingTemplate || saving || !canSave"
           @click="saveTemplate"
         >
-          {{ saving ? t("admin.settings.emailTemplates.saving") : t("admin.settings.emailTemplates.save") }}
+          {{
+            saving
+              ? t("admin.settings.emailTemplates.saving")
+              : t("admin.settings.emailTemplates.save")
+          }}
         </button>
       </div>
     </div>
@@ -113,7 +127,11 @@
                   : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
               "
             >
-              {{ selectedEventMeta.optional ? localText("可退订通知", "Optional") : localText("事务邮件", "Transactional") }}
+              {{
+                selectedEventMeta.optional
+                  ? localText("可退订通知", "Optional")
+                  : localText("事务邮件", "Transactional")
+              }}
             </span>
           </div>
           <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
@@ -146,7 +164,9 @@
                 type="text"
                 class="input"
                 :disabled="loadingTemplate"
-                :placeholder="t('admin.settings.emailTemplates.subjectPlaceholder')"
+                :placeholder="
+                  t('admin.settings.emailTemplates.subjectPlaceholder')
+                "
               />
             </div>
 
@@ -160,7 +180,9 @@
                 rows="18"
                 class="input min-h-[28rem] resize-y font-mono text-sm leading-6"
                 :disabled="loadingTemplate"
-                :placeholder="t('admin.settings.emailTemplates.htmlPlaceholder')"
+                :placeholder="
+                  t('admin.settings.emailTemplates.htmlPlaceholder')
+                "
               ></textarea>
             </div>
 
@@ -195,11 +217,16 @@
                 class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-dark-700"
               >
                 <div>
-                  <div class="text-sm font-medium text-gray-900 dark:text-white">
+                  <div
+                    class="text-sm font-medium text-gray-900 dark:text-white"
+                  >
                     {{ t("admin.settings.emailTemplates.livePreview") }}
                   </div>
                   <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ previewSubject || t("admin.settings.emailTemplates.noPreview") }}
+                    {{
+                      previewSubject ||
+                      t("admin.settings.emailTemplates.noPreview")
+                    }}
                   </div>
                 </div>
                 <span
@@ -362,7 +389,8 @@ const eventDisplayMeta: Record<string, EventDisplayMeta> = {
   },
   "subscription.expiry_reminder": {
     label: "订阅到期提醒",
-    timing: "后台任务在订阅仍有效且距离到期剩余 7 天、3 天、1 天时各发送一次，可通过邮件设置中的开关关闭。",
+    timing:
+      "后台任务在订阅仍有效且距离到期剩余 7 天、3 天、1 天时各发送一次，可通过邮件设置中的开关关闭。",
     categoryLabel: "订阅",
   },
   "balance.low": {
@@ -397,7 +425,8 @@ const eventDisplayMeta: Record<string, EventDisplayMeta> = {
   },
   "ops.scheduled_report": {
     label: "运维定时报表",
-    timing: "运维日报、周报、错误摘要或账号健康报表到达配置的发送时间时发送；日报和周报的完整指标均可在模板中编辑。",
+    timing:
+      "运维日报、周报、错误摘要或账号健康报表到达配置的发送时间时发送；日报和周报的完整指标均可在模板中编辑。",
     categoryLabel: "运维",
   },
 };
@@ -405,7 +434,8 @@ const eventDisplayMeta: Record<string, EventDisplayMeta> = {
 const eventDisplayMetaEn: Record<string, EventDisplayMeta> = {
   "auth.verify_code": {
     label: "Email Verification Code",
-    timing: "Sent for registration, email binding, OAuth pending email completion, or TOTP email verification.",
+    timing:
+      "Sent for registration, email binding, OAuth pending email completion, or TOTP email verification.",
     categoryLabel: "Auth",
   },
   "auth.password_reset": {
@@ -415,22 +445,26 @@ const eventDisplayMetaEn: Record<string, EventDisplayMeta> = {
   },
   "notification_email.verify_code": {
     label: "Notification Email Verification",
-    timing: "Sent when a user adds and verifies an extra notification email address.",
+    timing:
+      "Sent when a user adds and verifies an extra notification email address.",
     categoryLabel: "Auth",
   },
   "subscription.purchase_success": {
     label: "Subscription Activated",
-    timing: "Sent after a subscription order is paid and the subscription is activated or extended.",
+    timing:
+      "Sent after a subscription order is paid and the subscription is activated or extended.",
     categoryLabel: "Subscription",
   },
   "subscription.expiry_reminder": {
     label: "Subscription Expiry Reminder",
-    timing: "Sent by the background job when an active subscription has 7, 3, or 1 day remaining. It can be disabled in Email settings.",
+    timing:
+      "Sent by the background job when an active subscription has 7, 3, or 1 day remaining. It can be disabled in Email settings.",
     categoryLabel: "Subscription",
   },
   "balance.low": {
     label: "Low Balance Alert",
-    timing: "Sent when a user's balance drops below the global or personal reminder threshold.",
+    timing:
+      "Sent when a user's balance drops below the global or personal reminder threshold.",
     categoryLabel: "Billing",
   },
   "balance.recharge_success": {
@@ -440,32 +474,39 @@ const eventDisplayMetaEn: Record<string, EventDisplayMeta> = {
   },
   "account.quota_alert": {
     label: "Account Quota Alert",
-    timing: "Sent to admin notification emails when an upstream account reaches the configured quota alert threshold.",
+    timing:
+      "Sent to admin notification emails when an upstream account reaches the configured quota alert threshold.",
     categoryLabel: "Admin",
   },
   "content_moderation.violation_notice": {
     label: "Risk Control Violation Notice",
-    timing: "Sent when a user request triggers content moderation or risk-control rules but the account is not disabled yet.",
+    timing:
+      "Sent when a user request triggers content moderation or risk-control rules but the account is not disabled yet.",
     categoryLabel: "Risk Control",
   },
   "content_moderation.account_disabled": {
     label: "Risk Control Account Disabled",
-    timing: "Sent when content moderation reaches the ban threshold and automatically disables the user account.",
+    timing:
+      "Sent when content moderation reaches the ban threshold and automatically disables the user account.",
     categoryLabel: "Risk Control",
   },
   "ops.alert": {
     label: "Ops Alert",
-    timing: "Sent to ops recipients when an ops monitoring rule fires and email notification settings allow it.",
+    timing:
+      "Sent to ops recipients when an ops monitoring rule fires and email notification settings allow it.",
     categoryLabel: "Ops",
   },
   "ops.scheduled_report": {
     label: "Ops Scheduled Report",
-    timing: "Sent when a configured daily, weekly, error digest, or account health report reaches its scheduled send time. Every daily and weekly summary metric is editable in this template.",
+    timing:
+      "Sent when a configured daily, weekly, error digest, or account health report reaches its scheduled send time. Every daily and weekly summary metric is editable in this template.",
     categoryLabel: "Ops",
   },
 };
 
-function normalizeEventOption(option: EmailTemplateEventOption): EmailTemplateOption {
+function normalizeEventOption(
+  option: EmailTemplateEventOption,
+): EmailTemplateOption {
   if (typeof option === "string") {
     return { value: option };
   }
@@ -519,12 +560,12 @@ const selectedEventOption = computed(() => {
   );
 });
 
-const selectedEventMeta = computed(() => eventMetaFor(selectedEventOption.value));
+const selectedEventMeta = computed(() =>
+  eventMetaFor(selectedEventOption.value),
+);
 
 const selectedEventDescription = computed(() => {
-  return (
-    selectedEventOption.value?.description || ""
-  );
+  return selectedEventOption.value?.description || "";
 });
 
 const placeholderList = computed(() => {
@@ -555,7 +596,9 @@ const canSave = computed(
 );
 
 const canPreview = computed(
-  () => Boolean(selectedEvent.value && selectedLocale.value) && html.value.trim().length > 0,
+  () =>
+    Boolean(selectedEvent.value && selectedLocale.value) &&
+    html.value.trim().length > 0,
 );
 
 function formatLocale(locale: string): string {
@@ -578,7 +621,8 @@ function selectInitialLocale(locales: string[]): string {
 
   const currentLanguage = currentLocale.split("-")[0];
   const languageMatch = locales.find(
-    (availableLocale) => availableLocale.toLowerCase().split("-")[0] === currentLanguage,
+    (availableLocale) =>
+      availableLocale.toLowerCase().split("-")[0] === currentLanguage,
   );
   if (languageMatch) return languageMatch;
 
@@ -684,7 +728,8 @@ async function refreshPreview() {
 
 async function restoreOfficial() {
   if (!selectedEvent.value || !selectedLocale.value) return;
-  if (!window.confirm(t("admin.settings.emailTemplates.restoreConfirm"))) return;
+  if (!window.confirm(t("admin.settings.emailTemplates.restoreConfirm")))
+    return;
 
   restoring.value = true;
   try {
@@ -711,12 +756,15 @@ async function copyPlaceholder(placeholder: string) {
   }
 }
 
-watch([selectedEvent, selectedLocale], ([eventValue, localeValue], [oldEvent, oldLocale]) => {
-  if (initializingSelection.value) return;
-  if (!eventValue || !localeValue) return;
-  if (eventValue === oldEvent && localeValue === oldLocale) return;
-  void loadTemplate();
-});
+watch(
+  [selectedEvent, selectedLocale],
+  ([eventValue, localeValue], [oldEvent, oldLocale]) => {
+    if (initializingSelection.value) return;
+    if (!eventValue || !localeValue) return;
+    if (eventValue === oldEvent && localeValue === oldLocale) return;
+    void loadTemplate();
+  },
+);
 
 onMounted(() => {
   void loadTemplateList();

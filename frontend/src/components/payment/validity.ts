@@ -1,6 +1,6 @@
-import type { SubscriptionPlan } from '@/types/payment'
+import type { SubscriptionPlan } from "@/types/payment";
 
-type TranslateFn = (key: string) => string
+type TranslateFn = (key: string) => string;
 
 /**
  * 用户侧套餐有效期后缀（"$9.9 / 月"、"$9.9 / 30天"）。
@@ -15,18 +15,20 @@ type TranslateFn = (key: string) => string
  * 生效周期一致。
  */
 export function planValiditySuffix(
-  plan: Pick<SubscriptionPlan, 'validity_days' | 'validity_unit'>,
+  plan: Pick<SubscriptionPlan, "validity_days" | "validity_unit">,
   t: TranslateFn,
 ): string {
-  const unit = String(plan.validity_unit || 'day').trim().toLowerCase()
-  const base = unit.endsWith('s') ? unit.slice(0, -1) : unit
-  const days = plan.validity_days
-  if (base === 'month') {
-    return days === 1 ? t('payment.perMonth') : `${days}${t('payment.months')}`
+  const unit = String(plan.validity_unit || "day")
+    .trim()
+    .toLowerCase();
+  const base = unit.endsWith("s") ? unit.slice(0, -1) : unit;
+  const days = plan.validity_days;
+  if (base === "month") {
+    return days === 1 ? t("payment.perMonth") : `${days}${t("payment.months")}`;
   }
-  if (base === 'week') {
-    return `${days}${t('payment.weeks')}`
+  if (base === "week") {
+    return `${days}${t("payment.weeks")}`;
   }
   // 其余单位（含数据库默认的 day 与未知值）后端一律按天计费，展示保持一致。
-  return `${days}${t('payment.days')}`
+  return `${days}${t("payment.days")}`;
 }

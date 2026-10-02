@@ -13,7 +13,9 @@
         <ProviderIcon :provider="item.provider" :size="20" />
       </span>
       <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold truncate text-gray-900 dark:text-gray-100">
+        <div
+          class="text-base font-semibold truncate text-gray-900 dark:text-gray-100"
+        >
           {{ item.name }}
         </div>
         <div class="mt-0.5 flex items-center gap-1.5 min-w-0">
@@ -24,7 +26,9 @@
             {{ providerLabel(item.provider) }}
           </span>
           <!-- 纯配额模式主模型是占位符 "quota"，展示层替换为本地化「配额」标签 -->
-          <span class="font-mono text-xs truncate text-gray-500 dark:text-gray-400">
+          <span
+            class="font-mono text-xs truncate text-gray-500 dark:text-gray-400"
+          >
             {{ formatMonitorModel(item.primary_model) }}
           </span>
           <span
@@ -56,7 +60,11 @@
     />
 
     <!-- 配额模式：最新用量/余额快照（服务端已按系统开关剥离，此处 flag 为纵深防御） -->
-    <MonitorQuotaView v-if="quotaVisible" :snapshot="item.latest_quota" class="mt-2" />
+    <MonitorQuotaView
+      v-if="quotaVisible"
+      :snapshot="item.latest_quota"
+      class="mt-2"
+    />
 
     <!-- Divider -->
     <div class="mt-4 border-t border-gray-100 dark:border-dark-700/60"></div>
@@ -77,45 +85,45 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import type { UserMonitorView } from '@/api/channelMonitor'
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import type { UserMonitorView } from "@/api/channelMonitor";
 import {
   useChannelMonitorFormat,
   providerGradient,
-} from '@/composables/useChannelMonitorFormat'
-import { isChannelMonitorQuotaVisible } from '@/utils/featureFlags'
-import ProviderIcon from './ProviderIcon.vue'
-import MonitorMetricPair from './MonitorMetricPair.vue'
-import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
-import MonitorTimeline from './MonitorTimeline.vue'
-import MonitorQuotaView from '@/components/common/MonitorQuotaView.vue'
+} from "@/composables/useChannelMonitorFormat";
+import { isChannelMonitorQuotaVisible } from "@/utils/featureFlags";
+import ProviderIcon from "./ProviderIcon.vue";
+import MonitorMetricPair from "./MonitorMetricPair.vue";
+import MonitorAvailabilityRow from "./MonitorAvailabilityRow.vue";
+import MonitorTimeline from "./MonitorTimeline.vue";
+import MonitorQuotaView from "@/components/common/MonitorQuotaView.vue";
 
 // 图标配色与 utils/platformColors.ts 的平台色对齐（新 4 家）。
 const PROVIDER_TINT: Record<string, string> = {
-  openai: 'text-emerald-600 dark:text-emerald-300',
-  anthropic: 'text-orange-600 dark:text-orange-300',
-  gemini: 'text-sky-600 dark:text-sky-300',
-  grok: 'text-zinc-700 dark:text-zinc-200',
-  antigravity: 'text-purple-600 dark:text-purple-300',
-  kimi: 'text-pink-600 dark:text-pink-300',
-  zhipu: 'text-indigo-600 dark:text-indigo-300',
-  deepseek: 'text-teal-600 dark:text-teal-300',
-  opencode_go: 'text-amber-700 dark:text-amber-300',
-}
+  openai: "text-emerald-600 dark:text-emerald-300",
+  anthropic: "text-orange-600 dark:text-orange-300",
+  gemini: "text-sky-600 dark:text-sky-300",
+  grok: "text-zinc-700 dark:text-zinc-200",
+  antigravity: "text-purple-600 dark:text-purple-300",
+  kimi: "text-pink-600 dark:text-pink-300",
+  zhipu: "text-indigo-600 dark:text-indigo-300",
+  deepseek: "text-teal-600 dark:text-teal-300",
+  opencode_go: "text-amber-700 dark:text-amber-300",
+};
 
 const props = defineProps<{
-  item: UserMonitorView
-  window: '7d' | '15d' | '30d'
-  availabilityValue: number | null
-  countdownSeconds: number
-}>()
+  item: UserMonitorView;
+  window: "7d" | "15d" | "30d";
+  availabilityValue: number | null;
+  countdownSeconds: number;
+}>();
 
 const emit = defineEmits<{
-  (e: 'click'): void
-}>()
+  (e: "click"): void;
+}>();
 
-const { t } = useI18n()
+const { t } = useI18n();
 const {
   statusLabel,
   statusBadgeClass,
@@ -123,24 +131,25 @@ const {
   providerBadgeClass,
   formatLatency,
   formatMonitorModel,
-} = useChannelMonitorFormat()
+} = useChannelMonitorFormat();
 
-const providerTintClass = computed(() =>
-  PROVIDER_TINT[props.item.provider] ?? 'text-gray-500 dark:text-gray-300'
-)
+const providerTintClass = computed(
+  () =>
+    PROVIDER_TINT[props.item.provider] ?? "text-gray-500 dark:text-gray-300",
+);
 
 const quotaVisible = computed(
-  () => isChannelMonitorQuotaVisible() && !!props.item.latest_quota
-)
+  () => isChannelMonitorQuotaVisible() && !!props.item.latest_quota,
+);
 
 const availabilityLabel = computed(() => {
-  const win = t(`channelStatus.windowTab.${props.window}`)
-  return `${t('monitorCommon.availabilityPrefix')} · ${win}`
-})
+  const win = t(`channelStatus.windowTab.${props.window}`);
+  return `${t("monitorCommon.availabilityPrefix")} · ${win}`;
+});
 
 const extraModelsCountLabel = computed(() => {
-  const count = props.item.extra_models?.length ?? 0
-  if (count === 0) return undefined
-  return t('monitorCommon.extraModelsCount', { n: count })
-})
+  const count = props.item.extra_models?.length ?? 0;
+  if (count === 0) return undefined;
+  return t("monitorCommon.extraModelsCount", { n: count });
+});
 </script>

@@ -5,11 +5,20 @@
     width="wide"
     @close="handleClose"
   >
-    <form id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
+    <form
+      id="bulk-edit-account-form"
+      class="space-y-5"
+      @submit.prevent="() => handleSubmit()"
+    >
       <!-- Info -->
       <div class="rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
         <p class="text-sm text-blue-700 dark:text-blue-400">
-          <svg class="mr-1.5 inline h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg
+            class="mr-1.5 inline h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -17,17 +26,41 @@
               d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          {{ t('admin.accounts.bulkEdit.selectionInfo', { count: targetMode === 'filtered' ? targetPreviewCount : accountIds.length }) }}
+          {{
+            t("admin.accounts.bulkEdit.selectionInfo", {
+              count:
+                targetMode === "filtered"
+                  ? targetPreviewCount
+                  : accountIds.length,
+            })
+          }}
         </p>
       </div>
 
       <!-- Mixed platform warning -->
-      <div v-if="isMixedPlatform" class="rounded-lg bg-amber-50 p-4 dark:bg-amber-900/20">
+      <div
+        v-if="isMixedPlatform"
+        class="rounded-lg bg-amber-50 p-4 dark:bg-amber-900/20"
+      >
         <p class="text-sm text-amber-700 dark:text-amber-400">
-          <svg class="mr-1.5 inline h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          <svg
+            class="mr-1.5 inline h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
           </svg>
-          {{ t('admin.accounts.bulkEdit.mixedPlatformWarning', { platforms: targetSelectedPlatforms.join(', ') }) }}
+          {{
+            t("admin.accounts.bulkEdit.mixedPlatformWarning", {
+              platforms: targetSelectedPlatforms.join(", "),
+            })
+          }}
         </p>
       </div>
 
@@ -43,10 +76,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-passthrough-enabled"
             >
-              {{ t('admin.accounts.openai.oauthPassthrough') }}
+              {{ t("admin.accounts.openai.oauthPassthrough") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
+              {{ t("admin.accounts.openai.oauthPassthroughDesc") }}
             </p>
           </div>
           <input
@@ -68,14 +101,16 @@
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              openaiPassthroughEnabled
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
             @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+                openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0',
               ]"
             />
           </button>
@@ -94,10 +129,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-flatten-namespaces-enabled"
             >
-              {{ t('admin.accounts.openai.flattenNamespaces') }}
+              {{ t("admin.accounts.openai.flattenNamespaces") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
+              {{ t("admin.accounts.openai.flattenNamespacesDesc") }}
             </p>
           </div>
           <input
@@ -110,7 +145,9 @@
         </div>
         <div
           id="bulk-edit-openai-flatten-namespaces-body"
-          :class="!enableOpenAIFlattenNamespaces && 'pointer-events-none opacity-50'"
+          :class="
+            !enableOpenAIFlattenNamespaces && 'pointer-events-none opacity-50'
+          "
           role="group"
           aria-labelledby="bulk-edit-openai-flatten-namespaces-label"
         >
@@ -119,14 +156,20 @@
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              openaiFlattenNamespacesEnabled
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
-            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
+            @click="
+              openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled
+            "
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
+                openaiFlattenNamespacesEnabled
+                  ? 'translate-x-5'
+                  : 'translate-x-0',
               ]"
             />
           </button>
@@ -145,10 +188,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-long-context-billing-enabled"
             >
-              {{ t('admin.accounts.openai.longContextBilling') }}
+              {{ t("admin.accounts.openai.longContextBilling") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.longContextBillingDesc') }}
+              {{ t("admin.accounts.openai.longContextBillingDesc") }}
             </p>
           </div>
           <input
@@ -161,7 +204,9 @@
         </div>
         <div
           id="bulk-edit-openai-long-context-billing-body"
-          :class="!enableOpenAILongContextBilling && 'pointer-events-none opacity-50'"
+          :class="
+            !enableOpenAILongContextBilling && 'pointer-events-none opacity-50'
+          "
           role="group"
           aria-labelledby="bulk-edit-openai-long-context-billing-label"
         >
@@ -173,14 +218,20 @@
             :aria-checked="openAILongContextBillingEnabled"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openAILongContextBillingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              openAILongContextBillingEnabled
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
-            @click="openAILongContextBillingEnabled = !openAILongContextBillingEnabled"
+            @click="
+              openAILongContextBillingEnabled = !openAILongContextBillingEnabled
+            "
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                openAILongContextBillingEnabled ? 'translate-x-5' : 'translate-x-0'
+                openAILongContextBillingEnabled
+                  ? 'translate-x-5'
+                  : 'translate-x-0',
               ]"
             />
           </button>
@@ -189,7 +240,7 @@
           class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
           data-testid="bulk-edit-openai-long-context-shadow-hint"
         >
-          {{ t('admin.accounts.bulkEdit.longContextShadowHint') }}
+          {{ t("admin.accounts.bulkEdit.longContextShadowHint") }}
         </p>
       </div>
 
@@ -201,7 +252,7 @@
             class="input-label mb-0"
             for="bulk-edit-base-url-enabled"
           >
-            {{ t('admin.accounts.baseUrl') }}
+            {{ t("admin.accounts.baseUrl") }}
           </label>
           <input
             v-model="enableBaseUrl"
@@ -224,10 +275,13 @@
         <GrokBaseUrlPresets
           v-if="allTargetsGrok"
           class="mt-2"
-          @select="baseUrl = $event; enableBaseUrl = true"
+          @select="
+            baseUrl = $event;
+            enableBaseUrl = true;
+          "
         />
         <p class="input-hint">
-          {{ t('admin.accounts.bulkEdit.baseUrlNotice') }}
+          {{ t("admin.accounts.bulkEdit.baseUrlNotice") }}
         </p>
       </div>
 
@@ -239,7 +293,7 @@
             class="input-label mb-0"
             for="bulk-edit-model-restriction-enabled"
           >
-            {{ t('admin.accounts.modelRestriction') }}
+            {{ t("admin.accounts.modelRestriction") }}
           </label>
           <input
             v-model="enableModelRestriction"
@@ -261,7 +315,9 @@
             class="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20"
           >
             <p class="text-xs text-amber-700 dark:text-amber-400">
-              {{ t('admin.accounts.openai.modelRestrictionDisabledByPassthrough') }}
+              {{
+                t("admin.accounts.openai.modelRestrictionDisabledByPassthrough")
+              }}
             </p>
           </div>
 
@@ -274,7 +330,7 @@
                   'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
                   modelRestrictionMode === 'whitelist'
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500',
                 ]"
                 @click="modelRestrictionMode = 'whitelist'"
               >
@@ -291,7 +347,7 @@
                     d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                {{ t('admin.accounts.modelWhitelist') }}
+                {{ t("admin.accounts.modelWhitelist") }}
               </button>
               <button
                 type="button"
@@ -299,7 +355,7 @@
                   'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
                   modelRestrictionMode === 'mapping'
                     ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500',
                 ]"
                 @click="modelRestrictionMode = 'mapping'"
               >
@@ -316,7 +372,7 @@
                     d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
                   />
                 </svg>
-                {{ t('admin.accounts.modelMapping') }}
+                {{ t("admin.accounts.modelMapping") }}
               </button>
             </div>
 
@@ -337,7 +393,7 @@
                       d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  {{ t('admin.accounts.selectAllowedModels') }}
+                  {{ t("admin.accounts.selectAllowedModels") }}
                 </p>
               </div>
 
@@ -348,16 +404,22 @@
               />
 
               <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+                {{
+                  t("admin.accounts.selectedModels", {
+                    count: allowedModels.length,
+                  })
+                }}
                 <span v-if="allowedModels.length === 0">{{
-                  t('admin.accounts.supportsAllModels')
+                  t("admin.accounts.supportsAllModels")
                 }}</span>
               </p>
             </div>
 
             <!-- Mapping Mode -->
             <div v-else>
-              <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+              <div
+                class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20"
+              >
                 <p class="text-xs text-purple-700 dark:text-purple-400">
                   <svg
                     class="mr-1 inline h-4 w-4"
@@ -372,7 +434,7 @@
                       d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  {{ t('admin.accounts.mapRequestModels') }}
+                  {{ t("admin.accounts.mapRequestModels") }}
                 </p>
               </div>
 
@@ -413,7 +475,12 @@
                     class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                     @click="removeModelMapping(index)"
                   >
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg
+                      class="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
                       <path
                         stroke-linecap="round"
                         stroke-linejoin="round"
@@ -443,7 +510,7 @@
                     d="M12 4v16m8-8H4"
                   />
                 </svg>
-                {{ t('admin.accounts.addMapping') }}
+                {{ t("admin.accounts.addMapping") }}
               </button>
 
               <!-- Quick Add Buttons -->
@@ -452,7 +519,10 @@
                   v-for="preset in filteredPresets"
                   :key="preset.label"
                   type="button"
-                  :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
+                  :class="[
+                    'rounded-lg px-3 py-1 text-xs transition-colors',
+                    preset.color,
+                  ]"
                   @click="addPresetMapping(preset.from, preset.to)"
                 >
                   + {{ preset.label }}
@@ -472,10 +542,10 @@
               class="input-label mb-0"
               for="bulk-edit-custom-error-codes-enabled"
             >
-              {{ t('admin.accounts.customErrorCodes') }}
+              {{ t("admin.accounts.customErrorCodes") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.customErrorCodesHint') }}
+              {{ t("admin.accounts.customErrorCodesHint") }}
             </p>
           </div>
           <input
@@ -487,11 +557,20 @@
           />
         </div>
 
-        <div v-if="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-body" class="space-y-3">
+        <div
+          v-if="enableCustomErrorCodes"
+          id="bulk-edit-custom-error-codes-body"
+          class="space-y-3"
+        >
           <div class="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20">
             <p class="text-xs text-amber-700 dark:text-amber-400">
-              <Icon name="exclamationTriangle" size="sm" class="mr-1 inline" :stroke-width="2" />
-              {{ t('admin.accounts.customErrorCodesWarning') }}
+              <Icon
+                name="exclamationTriangle"
+                size="sm"
+                class="mr-1 inline"
+                :stroke-width="2"
+              />
+              {{ t("admin.accounts.customErrorCodesWarning") }}
             </p>
           </div>
 
@@ -505,7 +584,7 @@
                 'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
                 selectedErrorCodes.includes(code.value)
                   ? 'bg-red-100 text-red-700 ring-1 ring-red-500 dark:bg-red-900/30 dark:text-red-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500',
               ]"
               @click="toggleErrorCode(code.value)"
             >
@@ -526,8 +605,17 @@
               aria-labelledby="bulk-edit-custom-error-codes-label"
               @keyup.enter="addCustomErrorCode"
             />
-            <button type="button" class="btn btn-secondary px-3" @click="addCustomErrorCode">
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button
+              type="button"
+              class="btn btn-secondary px-3"
+              @click="addCustomErrorCode"
+            >
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -551,11 +639,19 @@
                 class="hover:text-red-900 dark:hover:text-red-300"
                 @click="removeErrorCode(code)"
               >
-                <Icon name="x" size="xs" class="h-3.5 w-3.5" :stroke-width="2" />
+                <Icon
+                  name="x"
+                  size="xs"
+                  class="h-3.5 w-3.5"
+                  :stroke-width="2"
+                />
               </button>
             </span>
-            <span v-if="selectedErrorCodes.length === 0" class="text-xs text-gray-400">
-              {{ t('admin.accounts.noneSelectedUsesDefault') }}
+            <span
+              v-if="selectedErrorCodes.length === 0"
+              class="text-xs text-gray-400"
+            >
+              {{ t("admin.accounts.noneSelectedUsesDefault") }}
             </span>
           </div>
         </div>
@@ -570,10 +666,10 @@
               class="input-label mb-0"
               for="bulk-edit-intercept-warmup-enabled"
             >
-              {{ t('admin.accounts.interceptWarmupRequests') }}
+              {{ t("admin.accounts.interceptWarmupRequests") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.interceptWarmupRequestsDesc') }}
+              {{ t("admin.accounts.interceptWarmupRequestsDesc") }}
             </p>
           </div>
           <input
@@ -584,19 +680,25 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div v-if="enableInterceptWarmup" id="bulk-edit-intercept-warmup-body" class="mt-3">
+        <div
+          v-if="enableInterceptWarmup"
+          id="bulk-edit-intercept-warmup-body"
+          class="mt-3"
+        >
           <button
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              interceptWarmupRequests ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              interceptWarmupRequests
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
             @click="interceptWarmupRequests = !interceptWarmupRequests"
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                interceptWarmupRequests ? 'translate-x-5' : 'translate-x-0'
+                interceptWarmupRequests ? 'translate-x-5' : 'translate-x-0',
               ]"
             />
           </button>
@@ -604,7 +706,10 @@
       </div>
 
       <!-- Header Override (eligible API-key platforms + grok OAuth) -->
-      <div v-if="allHeaderOverrideCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allHeaderOverrideCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
@@ -612,10 +717,10 @@
               class="input-label mb-0"
               for="bulk-edit-header-override-enabled"
             >
-              {{ t('admin.accounts.headerOverride.title') }}
+              {{ t("admin.accounts.headerOverride.title") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.headerOverride.hint') }}
+              {{ t("admin.accounts.headerOverride.hint") }}
             </p>
           </div>
           <input
@@ -626,19 +731,25 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div v-if="enableHeaderOverride" id="bulk-edit-header-override-body" class="mt-3 space-y-3">
+        <div
+          v-if="enableHeaderOverride"
+          id="bulk-edit-header-override-body"
+          class="mt-3 space-y-3"
+        >
           <button
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              headerOverrideEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              headerOverrideEnabled
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
             @click="headerOverrideEnabled = !headerOverrideEnabled"
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                headerOverrideEnabled ? 'translate-x-5' : 'translate-x-0'
+                headerOverrideEnabled ? 'translate-x-5' : 'translate-x-0',
               ]"
             />
           </button>
@@ -646,13 +757,18 @@
           <div v-if="headerOverrideEnabled" class="space-y-3">
             <div class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
               <p class="text-xs text-blue-700 dark:text-blue-400">
-                <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
-                {{ t('admin.accounts.headerOverride.info') }}
+                <Icon
+                  name="exclamationCircle"
+                  size="sm"
+                  class="mr-1 inline"
+                  :stroke-width="2"
+                />
+                {{ t("admin.accounts.headerOverride.info") }}
               </p>
             </div>
 
             <p class="text-xs text-amber-600 dark:text-amber-400">
-              {{ t('admin.accounts.headerOverride.bulkReplaceHint') }}
+              {{ t("admin.accounts.headerOverride.bulkReplaceHint") }}
             </p>
 
             <HeaderOverrideEditor
@@ -661,7 +777,7 @@
             />
           </div>
           <p v-else class="text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.headerOverride.bulkDisableHint') }}
+            {{ t("admin.accounts.headerOverride.bulkDisableHint") }}
           </p>
         </div>
       </div>
@@ -674,7 +790,7 @@
             class="input-label mb-0"
             for="bulk-edit-proxy-enabled"
           >
-            {{ t('admin.accounts.proxy') }}
+            {{ t("admin.accounts.proxy") }}
           </label>
           <input
             v-model="enableProxy"
@@ -684,7 +800,10 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
+        <div
+          id="bulk-edit-proxy-body"
+          :class="!enableProxy && 'pointer-events-none opacity-50'"
+        >
           <ProxySelector
             v-model="proxyId"
             :proxies="proxies"
@@ -694,7 +813,9 @@
       </div>
 
       <!-- Concurrency & Priority -->
-      <div class="grid grid-cols-2 gap-4 border-t border-gray-200 pt-4 dark:border-dark-600 lg:grid-cols-4">
+      <div
+        class="grid grid-cols-2 gap-4 border-t border-gray-200 pt-4 dark:border-dark-600 lg:grid-cols-4"
+      >
         <div>
           <div class="mb-3 flex items-center justify-between">
             <label
@@ -702,7 +823,7 @@
               class="input-label mb-0"
               for="bulk-edit-concurrency-enabled"
             >
-              {{ t('admin.accounts.concurrency') }}
+              {{ t("admin.accounts.concurrency") }}
             </label>
             <input
               v-model="enableConcurrency"
@@ -731,7 +852,7 @@
               class="input-label mb-0"
               for="bulk-edit-load-factor-enabled"
             >
-              {{ t('admin.accounts.loadFactor') }}
+              {{ t("admin.accounts.loadFactor") }}
             </label>
             <input
               v-model="enableLoadFactor"
@@ -752,7 +873,7 @@
             aria-labelledby="bulk-edit-load-factor-label"
             @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null"
           />
-          <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
+          <p class="input-hint">{{ t("admin.accounts.loadFactorHint") }}</p>
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
@@ -761,7 +882,7 @@
               class="input-label mb-0"
               for="bulk-edit-priority-enabled"
             >
-              {{ t('admin.accounts.priority') }}
+              {{ t("admin.accounts.priority") }}
             </label>
             <input
               v-model="enablePriority"
@@ -789,7 +910,7 @@
               class="input-label mb-0"
               for="bulk-edit-rate-multiplier-enabled"
             >
-              {{ t('admin.accounts.billingRateMultiplier') }}
+              {{ t("admin.accounts.billingRateMultiplier") }}
             </label>
             <input
               v-model="enableRateMultiplier"
@@ -810,14 +931,20 @@
             :class="!enableRateMultiplier && 'cursor-not-allowed opacity-50'"
             aria-labelledby="bulk-edit-rate-multiplier-label"
           />
-          <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
+          <p class="input-hint">
+            {{ t("admin.accounts.billingRateMultiplierHint") }}
+          </p>
           <p
             v-if="enableRateMultiplier"
             class="mt-2 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
             data-testid="bulk-rate-sync-warning"
           >
-            <Icon name="exclamationTriangle" size="xs" class="mt-0.5 flex-shrink-0" />
-            <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
+            <Icon
+              name="exclamationTriangle"
+              size="xs"
+              class="mt-0.5 flex-shrink-0"
+            />
+            <span>{{ t("admin.accounts.bulkEdit.rateSyncWarning") }}</span>
           </p>
         </div>
       </div>
@@ -830,7 +957,7 @@
             class="input-label mb-0"
             for="bulk-edit-status-enabled"
           >
-            {{ t('common.status') }}
+            {{ t("common.status") }}
           </label>
           <input
             v-model="enableStatus"
@@ -840,7 +967,10 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div id="bulk-edit-status" :class="!enableStatus && 'pointer-events-none opacity-50'">
+        <div
+          id="bulk-edit-status"
+          :class="!enableStatus && 'pointer-events-none opacity-50'"
+        >
           <Select
             v-model="status"
             :options="statusOptions"
@@ -850,14 +980,17 @@
       </div>
 
       <!-- OpenAI OAuth WS mode -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIOAuth"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-ws-mode-label"
             class="input-label mb-0"
             for="bulk-edit-openai-ws-mode-enabled"
           >
-            {{ t('admin.accounts.openai.wsMode') }}
+            {{ t("admin.accounts.openai.wsMode") }}
           </label>
           <input
             v-model="enableOpenAIWSMode"
@@ -872,9 +1005,12 @@
           :class="!enableOpenAIWSMode && 'pointer-events-none opacity-50'"
         >
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.wsModeDesc') }}
+            {{ t("admin.accounts.openai.wsModeDesc") }}
           </p>
-          <p v-if="openAIWSModeHintKey" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p
+            v-if="openAIWSModeHintKey"
+            class="mb-3 text-xs text-gray-500 dark:text-gray-400"
+          >
             {{ t(openAIWSModeHintKey) }}
           </p>
           <Select
@@ -887,14 +1023,17 @@
       </div>
 
       <!-- OpenAI OAuth Codex CLI only -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIOAuth"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-codex-cli-only-label"
             class="input-label mb-0"
             for="bulk-edit-openai-codex-cli-only-enabled"
           >
-            {{ t('admin.accounts.openai.codexCLIOnly') }}
+            {{ t("admin.accounts.openai.codexCLIOnly") }}
           </label>
           <input
             v-model="enableCodexCLIOnly"
@@ -909,21 +1048,23 @@
           :class="!enableCodexCLIOnly && 'pointer-events-none opacity-50'"
         >
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.codexCLIOnlyDesc') }}
+            {{ t("admin.accounts.openai.codexCLIOnlyDesc") }}
           </p>
           <button
             id="bulk-edit-openai-codex-cli-only-toggle"
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codexCLIOnlyEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              codexCLIOnlyEnabled
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
             @click="codexCLIOnlyEnabled = !codexCLIOnlyEnabled"
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                codexCLIOnlyEnabled ? 'translate-x-5' : 'translate-x-0'
+                codexCLIOnlyEnabled ? 'translate-x-5' : 'translate-x-0',
               ]"
             />
           </button>
@@ -931,14 +1072,17 @@
       </div>
 
       <!-- OpenAI OAuth: Codex app-server -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIOAuth"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-codex-app-server-label"
             class="input-label mb-0"
             for="bulk-edit-openai-codex-app-server-enabled"
           >
-            {{ t('admin.accounts.openai.codexCLIOnlyAppServer') }}
+            {{ t("admin.accounts.openai.codexCLIOnlyAppServer") }}
           </label>
           <input
             v-model="enableCodexCLIOnlyAppServer"
@@ -950,24 +1094,32 @@
         </div>
         <div
           id="bulk-edit-openai-codex-app-server"
-          :class="!enableCodexCLIOnlyAppServer && 'pointer-events-none opacity-50'"
+          :class="
+            !enableCodexCLIOnlyAppServer && 'pointer-events-none opacity-50'
+          "
         >
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}
+            {{ t("admin.accounts.openai.codexCLIOnlyAppServerDesc") }}
           </p>
           <button
             id="bulk-edit-openai-codex-app-server-toggle"
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codexCLIOnlyAppServerEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              codexCLIOnlyAppServerEnabled
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-dark-600',
             ]"
-            @click="codexCLIOnlyAppServerEnabled = !codexCLIOnlyAppServerEnabled"
+            @click="
+              codexCLIOnlyAppServerEnabled = !codexCLIOnlyAppServerEnabled
+            "
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                codexCLIOnlyAppServerEnabled ? 'translate-x-5' : 'translate-x-0'
+                codexCLIOnlyAppServerEnabled
+                  ? 'translate-x-5'
+                  : 'translate-x-0',
               ]"
             />
           </button>
@@ -975,9 +1127,14 @@
       </div>
 
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIOAuth"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
-          <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
+          <label class="input-label mb-0">{{
+            t("admin.accounts.openai.codexFingerprintMode")
+          }}</label>
           <input
             id="bulk-edit-openai-codex-fingerprint-mode-enabled"
             v-model="enableCodexFingerprintMode"
@@ -985,18 +1142,31 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div :class="!enableCodexFingerprintMode && 'pointer-events-none opacity-50'">
+        <div
+          :class="
+            !enableCodexFingerprintMode && 'pointer-events-none opacity-50'
+          "
+        >
           <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
+            {{ t("admin.accounts.openai.codexFingerprintModeDesc") }}
           </p>
-          <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+          <Select
+            v-model="codexFingerprintMode"
+            data-testid="bulk-codex-fingerprint-mode-select"
+            :options="codexFingerprintModeOptions"
+          />
         </div>
       </div>
 
       <!-- Claude 指纹收敛模式（仅 Anthropic OAuth/SetupToken） -->
-      <div v-if="allAnthropicOAuthOrSetupToken" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allAnthropicOAuthOrSetupToken"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
-          <label class="input-label mb-0">{{ t('admin.accounts.anthropic.claudeFingerprintMode') }}</label>
+          <label class="input-label mb-0">{{
+            t("admin.accounts.anthropic.claudeFingerprintMode")
+          }}</label>
           <input
             id="bulk-edit-anthropic-claude-fingerprint-mode-enabled"
             v-model="enableClaudeFingerprintMode"
@@ -1004,16 +1174,27 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div :class="!enableClaudeFingerprintMode && 'pointer-events-none opacity-50'">
+        <div
+          :class="
+            !enableClaudeFingerprintMode && 'pointer-events-none opacity-50'
+          "
+        >
           <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.anthropic.claudeFingerprintModeDesc') }}
+            {{ t("admin.accounts.anthropic.claudeFingerprintModeDesc") }}
           </p>
-          <Select v-model="claudeFingerprintMode" data-testid="bulk-claude-fingerprint-mode-select" :options="claudeFingerprintModeOptions" />
+          <Select
+            v-model="claudeFingerprintMode"
+            data-testid="bulk-claude-fingerprint-mode-select"
+            :options="claudeFingerprintModeOptions"
+          />
         </div>
       </div>
 
       <!-- Upstream billing auto probe (any API-key platform) -->
-      <div v-if="allBillingProbeCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allBillingProbeCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
@@ -1021,10 +1202,10 @@
               class="input-label mb-0"
               for="bulk-edit-upstream-billing-auto-probe-enabled"
             >
-              {{ t('admin.accounts.upstreamBilling.autoProbe') }}
+              {{ t("admin.accounts.upstreamBilling.autoProbe") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
+              {{ t("admin.accounts.upstreamBilling.autoProbeHint") }}
             </p>
           </div>
           <input
@@ -1037,7 +1218,9 @@
         </div>
         <div
           id="bulk-edit-upstream-billing-auto-probe"
-          :class="!enableUpstreamBillingAutoProbe && 'pointer-events-none opacity-50'"
+          :class="
+            !enableUpstreamBillingAutoProbe && 'pointer-events-none opacity-50'
+          "
           role="group"
           aria-labelledby="bulk-edit-upstream-billing-auto-probe-label"
         >
@@ -1052,7 +1235,10 @@
       </div>
 
       <!-- OpenAI API Key endpoint capabilities -->
-      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIAPIKey"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between gap-4">
           <div class="flex-1">
             <label
@@ -1060,10 +1246,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-endpoint-capabilities-enabled"
             >
-              {{ t('admin.accounts.openai.endpointCapabilities') }}
+              {{ t("admin.accounts.openai.endpointCapabilities") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}
+              {{ t("admin.accounts.openai.endpointCapabilitiesDesc") }}
             </p>
           </div>
           <input
@@ -1076,7 +1262,10 @@
         </div>
         <div
           id="bulk-edit-openai-endpoint-capabilities-body"
-          :class="!enableOpenAIEndpointCapabilities && 'pointer-events-none opacity-50'"
+          :class="
+            !enableOpenAIEndpointCapabilities &&
+            'pointer-events-none opacity-50'
+          "
           role="group"
           aria-labelledby="bulk-edit-openai-endpoint-capabilities-label"
         >
@@ -1094,14 +1283,19 @@
                 :checked="openAIEndpointCapabilities.includes(option.value)"
                 @change="toggleOpenAIEndpointCapability(option.value, $event)"
               />
-              <span class="text-gray-700 dark:text-gray-200">{{ option.label }}</span>
+              <span class="text-gray-700 dark:text-gray-200">{{
+                option.label
+              }}</span>
             </label>
           </div>
         </div>
       </div>
 
       <!-- OpenAI API Key Responses route -->
-      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIAPIKey"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between gap-4">
           <div class="flex-1">
             <label
@@ -1109,10 +1303,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-responses-mode-enabled"
             >
-              {{ t('admin.accounts.openai.responsesMode') }}
+              {{ t("admin.accounts.openai.responsesMode") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.responsesModeDesc') }}
+              {{ t("admin.accounts.openai.responsesModeDesc") }}
             </p>
           </div>
           <input
@@ -1125,36 +1319,46 @@
         </div>
         <div
           id="bulk-edit-openai-responses-mode-body"
-          :class="!enableOpenAIResponsesMode && 'pointer-events-none opacity-50'"
+          :class="
+            !enableOpenAIResponsesMode && 'pointer-events-none opacity-50'
+          "
           role="group"
           aria-labelledby="bulk-edit-openai-responses-mode-label"
         >
           <Select
             v-model="openAIResponsesMode"
-            :disabled="!enableOpenAIResponsesMode || !openAIResponsesModeApplicable"
+            :disabled="
+              !enableOpenAIResponsesMode || !openAIResponsesModeApplicable
+            "
             data-testid="bulk-edit-openai-responses-mode-select"
             :options="openAIResponsesModeOptions"
             aria-labelledby="bulk-edit-openai-responses-mode-label"
           />
           <p
-            v-if="enableOpenAIEndpointCapabilities && !openAITextGenerationCapabilityEnabled"
+            v-if="
+              enableOpenAIEndpointCapabilities &&
+              !openAITextGenerationCapabilityEnabled
+            "
             class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
             data-testid="bulk-edit-openai-responses-mode-not-applicable"
           >
-            {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
+            {{ t("admin.accounts.openai.responsesModeTextDisabledHint") }}
           </p>
         </div>
       </div>
 
       <!-- OpenAI API Key WS mode -->
-      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIAPIKey"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-apikey-ws-mode-label"
             class="input-label mb-0"
             for="bulk-edit-openai-apikey-ws-mode-enabled"
           >
-            {{ t('admin.accounts.openai.wsMode') }}
+            {{ t("admin.accounts.openai.wsMode") }}
           </label>
           <input
             v-model="enableOpenAIAPIKeyWSMode"
@@ -1169,9 +1373,12 @@
           :class="!enableOpenAIAPIKeyWSMode && 'pointer-events-none opacity-50'"
         >
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.wsModeDesc') }}
+            {{ t("admin.accounts.openai.wsModeDesc") }}
           </p>
-          <p v-if="openAIAPIKeyWSModeHintKey" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p
+            v-if="openAIAPIKeyWSModeHintKey"
+            class="mb-3 text-xs text-gray-500 dark:text-gray-400"
+          >
             {{ t(openAIAPIKeyWSModeHintKey) }}
           </p>
           <Select
@@ -1184,7 +1391,10 @@
       </div>
 
       <!-- OpenAI Compact mode -->
-      <div v-if="allOpenAIPassthroughCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIPassthroughCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
@@ -1192,10 +1402,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-compact-mode-enabled"
             >
-              {{ t('admin.accounts.openai.compactMode') }}
+              {{ t("admin.accounts.openai.compactMode") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.compactModeDesc') }}
+              {{ t("admin.accounts.openai.compactModeDesc") }}
             </p>
           </div>
           <input
@@ -1220,7 +1430,10 @@
       </div>
 
       <!-- OpenAI Compact model mapping -->
-      <div v-if="allOpenAIPassthroughCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allOpenAIPassthroughCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
@@ -1228,10 +1441,10 @@
               class="input-label mb-0"
               for="bulk-edit-openai-compact-model-mapping-enabled"
             >
-              {{ t('admin.accounts.openai.compactModelMapping') }}
+              {{ t("admin.accounts.openai.compactModelMapping") }}
             </label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.compactModelMappingDesc') }}
+              {{ t("admin.accounts.openai.compactModelMappingDesc") }}
             </p>
           </div>
           <input
@@ -1244,9 +1457,14 @@
         </div>
         <div
           id="bulk-edit-openai-compact-model-mapping"
-          :class="!enableOpenAICompactModelMapping && 'pointer-events-none opacity-50'"
+          :class="
+            !enableOpenAICompactModelMapping && 'pointer-events-none opacity-50'
+          "
         >
-          <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
+          <div
+            v-if="openAICompactModelMappings.length > 0"
+            class="mb-3 space-y-2"
+          >
             <div
               v-for="(mapping, index) in openAICompactModelMappings"
               :key="index"
@@ -1282,20 +1500,23 @@
             data-testid="bulk-edit-openai-compact-model-mapping-add"
             @click="addOpenAICompactModelMapping"
           >
-            + {{ t('admin.accounts.addMapping') }}
+            + {{ t("admin.accounts.addMapping") }}
           </button>
         </div>
       </div>
 
       <!-- RPM Limit (仅全部为 Anthropic OAuth/SetupToken 时显示) -->
-      <div v-if="allAnthropicOAuthOrSetupToken" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div
+        v-if="allAnthropicOAuthOrSetupToken"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-rpm-limit-label"
             class="input-label mb-0"
             for="bulk-edit-rpm-limit-enabled"
           >
-            {{ t('admin.accounts.quotaControl.rpmLimit.label') }}
+            {{ t("admin.accounts.quotaControl.rpmLimit.label") }}
           </label>
           <input
             v-model="enableRpmLimit"
@@ -1313,19 +1534,23 @@
           aria-labelledby="bulk-edit-rpm-limit-label"
         >
           <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.quotaControl.rpmLimit.hint') }}</span>
+            <span class="text-sm text-gray-700 dark:text-gray-300">{{
+              t("admin.accounts.quotaControl.rpmLimit.hint")
+            }}</span>
             <button
               type="button"
               @click="rpmLimitEnabled = !rpmLimitEnabled"
               :class="[
                 'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                rpmLimitEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+                rpmLimitEnabled
+                  ? 'bg-primary-600'
+                  : 'bg-gray-200 dark:bg-dark-600',
               ]"
             >
               <span
                 :class="[
                   'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  rpmLimitEnabled ? 'translate-x-5' : 'translate-x-0'
+                  rpmLimitEnabled ? 'translate-x-5' : 'translate-x-0',
                 ]"
               />
             </button>
@@ -1333,7 +1558,9 @@
 
           <div v-if="rpmLimitEnabled" class="space-y-3">
             <div>
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpm') }}</label>
+              <label class="input-label text-xs">{{
+                t("admin.accounts.quotaControl.rpmLimit.baseRpm")
+              }}</label>
               <input
                 v-model.number="bulkBaseRpm"
                 type="number"
@@ -1341,13 +1568,19 @@
                 max="1000"
                 step="1"
                 class="input"
-                :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
+                :placeholder="
+                  t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')
+                "
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpmHint') }}</p>
+              <p class="input-hint">
+                {{ t("admin.accounts.quotaControl.rpmLimit.baseRpmHint") }}
+              </p>
             </div>
 
             <div>
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
+              <label class="input-label text-xs">{{
+                t("admin.accounts.quotaControl.rpmLimit.strategy")
+              }}</label>
               <div class="flex gap-2">
                 <button
                   type="button"
@@ -1356,10 +1589,10 @@
                     'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
                     bulkRpmStrategy === 'tiered'
                       ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500',
                   ]"
                 >
-                  {{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}
+                  {{ t("admin.accounts.quotaControl.rpmLimit.strategyTiered") }}
                 </button>
                 <button
                   type="button"
@@ -1368,45 +1601,65 @@
                     'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
                     bulkRpmStrategy === 'sticky_exempt'
                       ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500',
                   ]"
                 >
-                  {{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}
+                  {{
+                    t(
+                      "admin.accounts.quotaControl.rpmLimit.strategyStickyExempt",
+                    )
+                  }}
                 </button>
               </div>
             </div>
 
             <div v-if="bulkRpmStrategy === 'tiered'">
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBuffer') }}</label>
+              <label class="input-label text-xs">{{
+                t("admin.accounts.quotaControl.rpmLimit.stickyBuffer")
+              }}</label>
               <input
                 v-model.number="bulkRpmStickyBuffer"
                 type="number"
                 min="1"
                 step="1"
                 class="input"
-                :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
+                :placeholder="
+                  t(
+                    'admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder',
+                  )
+                "
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint') }}</p>
-            </div>
-
+              <p class="input-hint">
+                {{ t("admin.accounts.quotaControl.rpmLimit.stickyBufferHint") }}
+              </p>
             </div>
           </div>
+        </div>
 
         <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
         <div class="mt-4">
-          <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
+          <label class="input-label">{{
+            t("admin.accounts.quotaControl.rpmLimit.userMsgQueue")
+          }}</label>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
-            {{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}
+            {{ t("admin.accounts.quotaControl.rpmLimit.userMsgQueueHint") }}
           </p>
           <div class="flex space-x-2">
-            <button type="button" v-for="opt in umqModeOptions" :key="opt.value"
-              @click="userMsgQueueMode = userMsgQueueMode === opt.value ? null : opt.value"
+            <button
+              type="button"
+              v-for="opt in umqModeOptions"
+              :key="opt.value"
+              @click="
+                userMsgQueueMode =
+                  userMsgQueueMode === opt.value ? null : opt.value
+              "
               :class="[
                 'px-3 py-1.5 text-sm rounded-md border transition-colors',
                 userMsgQueueMode === opt.value
                   ? 'bg-primary-600 text-white border-primary-600'
-                  : 'bg-white dark:bg-dark-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-dark-500 hover:bg-gray-50 dark:hover:bg-dark-600'
-              ]">
+                  : 'bg-white dark:bg-dark-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-dark-500 hover:bg-gray-50 dark:hover:bg-dark-600',
+              ]"
+            >
               {{ opt.label }}
             </button>
           </div>
@@ -1421,7 +1674,7 @@
             class="input-label mb-0"
             for="bulk-edit-groups-enabled"
           >
-            {{ t('nav.groups') }}
+            {{ t("nav.groups") }}
           </label>
           <input
             v-model="enableGroups"
@@ -1431,7 +1684,10 @@
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
-        <div id="bulk-edit-groups" :class="!enableGroups && 'pointer-events-none opacity-50'">
+        <div
+          id="bulk-edit-groups"
+          :class="!enableGroups && 'pointer-events-none opacity-50'"
+        >
           <GroupSelector
             v-model="groupIds"
             :groups="groups"
@@ -1444,7 +1700,7 @@
     <template #footer>
       <div class="flex justify-end gap-3">
         <button type="button" class="btn btn-secondary" @click="handleClose">
-          {{ t('common.cancel') }}
+          {{ t("common.cancel") }}
         </button>
         <button
           type="submit"
@@ -1473,7 +1729,9 @@
             />
           </svg>
           {{
-            submitting ? t('admin.accounts.bulkEdit.updating') : t('admin.accounts.bulkEdit.submit')
+            submitting
+              ? t("admin.accounts.bulkEdit.updating")
+              : t("admin.accounts.bulkEdit.submit")
           }}
         </button>
       </div>
@@ -1493,10 +1751,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useAppStore } from '@/stores/app'
-import { adminAPI } from '@/api/admin'
+import { ref, watch, computed } from "vue";
+import { useI18n } from "vue-i18n";
+import { useAppStore } from "@/stores/app";
+import { adminAPI } from "@/api/admin";
 import type {
   Proxy as ProxyConfig,
   AdminGroup,
@@ -1504,121 +1762,131 @@ import type {
   AccountType,
   OpenAICompactMode,
   OpenAIEndpointCapability,
-  OpenAIResponsesMode
-} from '@/types'
-import BaseDialog from '@/components/common/BaseDialog.vue'
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import Select from '@/components/common/Select.vue'
-import ProxySelector from '@/components/common/ProxySelector.vue'
-import GroupSelector from '@/components/common/GroupSelector.vue'
-import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
-import Icon from '@/components/icons/Icon.vue'
+  OpenAIResponsesMode,
+} from "@/types";
+import BaseDialog from "@/components/common/BaseDialog.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import Select from "@/components/common/Select.vue";
+import ProxySelector from "@/components/common/ProxySelector.vue";
+import GroupSelector from "@/components/common/GroupSelector.vue";
+import ModelWhitelistSelector from "@/components/account/ModelWhitelistSelector.vue";
+import Icon from "@/components/icons/Icon.vue";
 import {
   buildModelMappingObject as buildModelMappingPayload,
-  getPresetMappingsByPlatform
-} from '@/composables/useModelWhitelist'
-import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
+  getPresetMappingsByPlatform,
+} from "@/composables/useModelWhitelist";
+import HeaderOverrideEditor from "@/components/account/HeaderOverrideEditor.vue";
 import {
   buildHeaderOverridesObject,
   isHeaderOverrideCapable,
   validateHeaderOverrideRows,
   HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY,
   HEADER_OVERRIDES_CREDENTIAL_KEY,
-  type HeaderOverrideRow
-} from '@/components/account/credentialsBuilder'
-import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
+  type HeaderOverrideRow,
+} from "@/components/account/credentialsBuilder";
+import GrokBaseUrlPresets from "@/components/account/GrokBaseUrlPresets.vue";
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
   OPENAI_WS_MODE_PASSTHROUGH,
   OPENAI_WS_MODE_HTTP_BRIDGE,
   isOpenAIWSModeEnabled,
-  resolveOpenAIWSModeHintKey
-} from '@/utils/openaiWsMode'
-import type { OpenAIWSMode } from '@/utils/openaiWsMode'
+  resolveOpenAIWSModeHintKey,
+} from "@/utils/openaiWsMode";
+import type { OpenAIWSMode } from "@/utils/openaiWsMode";
 interface Props {
-  show: boolean
-  accountIds: number[]
-  selectedPlatforms: AccountPlatform[]
-  selectedTypes: AccountType[]
+  show: boolean;
+  accountIds: number[];
+  selectedPlatforms: AccountPlatform[];
+  selectedTypes: AccountType[];
   target?: {
-    mode: 'selected' | 'filtered'
-    filters?: Record<string, unknown>
-    previewCount?: number
-    selectedPlatforms?: AccountPlatform[]
-    selectedTypes?: AccountType[]
-  }
-  proxies: ProxyConfig[]
-  groups: AdminGroup[]
+    mode: "selected" | "filtered";
+    filters?: Record<string, unknown>;
+    previewCount?: number;
+    selectedPlatforms?: AccountPlatform[];
+    selectedTypes?: AccountType[];
+  };
+  proxies: ProxyConfig[];
+  groups: AdminGroup[];
 }
 
-const props = defineProps<Props>()
+const props = defineProps<Props>();
 const emit = defineEmits<{
-  close: []
-  updated: []
-}>()
+  close: [];
+  updated: [];
+}>();
 
-const { t } = useI18n()
-const appStore = useAppStore()
+const { t } = useI18n();
+const appStore = useAppStore();
 
 // Platform awareness
-const targetMode = computed(() => props.target?.mode ?? 'selected')
-const targetPreviewCount = computed(() => props.target?.previewCount ?? props.accountIds.length)
-const targetSelectedPlatforms = computed(() => props.target?.selectedPlatforms ?? props.selectedPlatforms)
-const targetSelectedTypes = computed(() => props.target?.selectedTypes ?? props.selectedTypes)
+const targetMode = computed(() => props.target?.mode ?? "selected");
+const targetPreviewCount = computed(
+  () => props.target?.previewCount ?? props.accountIds.length,
+);
+const targetSelectedPlatforms = computed(
+  () => props.target?.selectedPlatforms ?? props.selectedPlatforms,
+);
+const targetSelectedTypes = computed(
+  () => props.target?.selectedTypes ?? props.selectedTypes,
+);
 // Grok 快捷端点仅在所选账号全部为 grok 平台时展示（其他平台不显示）
 const allTargetsGrok = computed(
   () =>
     targetSelectedPlatforms.value.length > 0 &&
-    targetSelectedPlatforms.value.every((p) => p === 'grok')
-)
-const isMixedPlatform = computed(() => targetSelectedPlatforms.value.length > 1)
+    targetSelectedPlatforms.value.every((p) => p === "grok"),
+);
+const isMixedPlatform = computed(
+  () => targetSelectedPlatforms.value.length > 1,
+);
 
 const allOpenAIPassthroughCapable = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedPlatforms.value[0] === "openai" &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token' || t === 'apikey')
-  )
-})
+    targetSelectedTypes.value.every(
+      (t) => t === "oauth" || t === "setup-token" || t === "apikey",
+    )
+  );
+});
 
 const allOpenAIOAuth = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedPlatforms.value[0] === "openai" &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token')
-  )
-})
+    targetSelectedTypes.value.every((t) => t === "oauth" || t === "setup-token")
+  );
+});
 
 // 严格 OAuth（不含 setup-token）：namespace 摊平兼容开关只对 OAuth 账号生效
 const allOpenAIOAuthOnly = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedPlatforms.value[0] === "openai" &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'oauth')
-  )
-})
+    targetSelectedTypes.value.every((t) => t === "oauth")
+  );
+});
 
 const allOpenAIAPIKey = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedPlatforms.value[0] === "openai" &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'apikey')
-  )
-})
+    targetSelectedTypes.value.every((t) => t === "apikey")
+  );
+});
 
 // 上游倍率自动探测已放宽到全部 API-key 平台：只要求所选类型全为 apikey，
 // 平台不限（sub2api 上游即可应答 /v1/sub2api/billing）。
 const allBillingProbeCapable = computed(() => {
   return (
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'apikey')
-  )
-})
+    targetSelectedTypes.value.every((t) => t === "apikey")
+  );
+});
 
 // 是否全部为支持请求头覆写的平台/账号类型
 // 所选平台 × 所选类型的全组合均需具备覆写资格（实际选中账号是该组合的子集，
@@ -1627,484 +1895,558 @@ const allHeaderOverrideCapable = computed(() => {
   return (
     targetSelectedPlatforms.value.length > 0 &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedPlatforms.value.every(p =>
-      targetSelectedTypes.value.every(ty => isHeaderOverrideCapable(p, ty))
+    targetSelectedPlatforms.value.every((p) =>
+      targetSelectedTypes.value.every((ty) => isHeaderOverrideCapable(p, ty)),
     )
-  )
-})
+  );
+});
 
 // 是否全部为 Anthropic OAuth/SetupToken（RPM 配置仅在此条件下显示）
 const allAnthropicOAuthOrSetupToken = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'anthropic' &&
-    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token')
-  )
-})
+    targetSelectedPlatforms.value[0] === "anthropic" &&
+    targetSelectedTypes.value.every((t) => t === "oauth" || t === "setup-token")
+  );
+});
 
 const filteredPresets = computed(() => {
-  if (targetSelectedPlatforms.value.length === 0) return []
+  if (targetSelectedPlatforms.value.length === 0) return [];
 
-  const dedupedPresets = new Map<string, ReturnType<typeof getPresetMappingsByPlatform>[number]>()
+  const dedupedPresets = new Map<
+    string,
+    ReturnType<typeof getPresetMappingsByPlatform>[number]
+  >();
   for (const platform of targetSelectedPlatforms.value) {
     for (const preset of getPresetMappingsByPlatform(platform)) {
-      const key = `${preset.from}=>${preset.to}`
+      const key = `${preset.from}=>${preset.to}`;
       if (!dedupedPresets.has(key)) {
-        dedupedPresets.set(key, preset)
+        dedupedPresets.set(key, preset);
       }
     }
   }
 
-  return Array.from(dedupedPresets.values())
-})
+  return Array.from(dedupedPresets.values());
+});
 
 // Model mapping type
 interface ModelMapping {
-  from: string
-  to: string
+  from: string;
+  to: string;
 }
 
 // State - field enable flags
-const enableBaseUrl = ref(false)
-const enableModelRestriction = ref(false)
-const enableCustomErrorCodes = ref(false)
-const enableInterceptWarmup = ref(false)
-const enableHeaderOverride = ref(false)
-const enableProxy = ref(false)
-const enableConcurrency = ref(false)
-const enableLoadFactor = ref(false)
-const enablePriority = ref(false)
-const enableRateMultiplier = ref(false)
-const enableStatus = ref(false)
-const enableGroups = ref(false)
-const enableOpenAIPassthrough = ref(false)
-const enableOpenAIFlattenNamespaces = ref(false)
-const enableOpenAILongContextBilling = ref(false)
-const enableOpenAIEndpointCapabilities = ref(false)
-const enableOpenAIResponsesMode = ref(false)
-const enableOpenAIWSMode = ref(false)
-const enableOpenAIAPIKeyWSMode = ref(false)
-const enableUpstreamBillingAutoProbe = ref(false)
-const enableCodexCLIOnly = ref(false)
-const enableCodexCLIOnlyAppServer = ref(false)
-const enableOpenAICompactMode = ref(false)
-const enableOpenAICompactModelMapping = ref(false)
-const enableRpmLimit = ref(false)
+const enableBaseUrl = ref(false);
+const enableModelRestriction = ref(false);
+const enableCustomErrorCodes = ref(false);
+const enableInterceptWarmup = ref(false);
+const enableHeaderOverride = ref(false);
+const enableProxy = ref(false);
+const enableConcurrency = ref(false);
+const enableLoadFactor = ref(false);
+const enablePriority = ref(false);
+const enableRateMultiplier = ref(false);
+const enableStatus = ref(false);
+const enableGroups = ref(false);
+const enableOpenAIPassthrough = ref(false);
+const enableOpenAIFlattenNamespaces = ref(false);
+const enableOpenAILongContextBilling = ref(false);
+const enableOpenAIEndpointCapabilities = ref(false);
+const enableOpenAIResponsesMode = ref(false);
+const enableOpenAIWSMode = ref(false);
+const enableOpenAIAPIKeyWSMode = ref(false);
+const enableUpstreamBillingAutoProbe = ref(false);
+const enableCodexCLIOnly = ref(false);
+const enableCodexCLIOnlyAppServer = ref(false);
+const enableOpenAICompactMode = ref(false);
+const enableOpenAICompactModelMapping = ref(false);
+const enableRpmLimit = ref(false);
 
 // State - field values
-const submitting = ref(false)
-const showMixedChannelWarning = ref(false)
-const mixedChannelWarningMessage = ref('')
-const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null)
-const baseUrl = ref('')
-const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
-const allowedModels = ref<string[]>([])
-const modelMappings = ref<ModelMapping[]>([])
-const selectedErrorCodes = ref<number[]>([])
-const customErrorCodeInput = ref<number | null>(null)
-const interceptWarmupRequests = ref(false)
-const headerOverrideEnabled = ref(false)
-const headerOverrideRows = ref<HeaderOverrideRow[]>([])
-const proxyId = ref<number | null>(null)
-const concurrency = ref(1)
-const loadFactor = ref<number | null>(null)
-const priority = ref(1)
-const rateMultiplier = ref(1)
-const status = ref<'active' | 'inactive'>('active')
-const groupIds = ref<number[]>([])
-const openaiPassthroughEnabled = ref(false)
+const submitting = ref(false);
+const showMixedChannelWarning = ref(false);
+const mixedChannelWarningMessage = ref("");
+const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null);
+const baseUrl = ref("");
+const modelRestrictionMode = ref<"whitelist" | "mapping">("whitelist");
+const allowedModels = ref<string[]>([]);
+const modelMappings = ref<ModelMapping[]>([]);
+const selectedErrorCodes = ref<number[]>([]);
+const customErrorCodeInput = ref<number | null>(null);
+const interceptWarmupRequests = ref(false);
+const headerOverrideEnabled = ref(false);
+const headerOverrideRows = ref<HeaderOverrideRow[]>([]);
+const proxyId = ref<number | null>(null);
+const concurrency = ref(1);
+const loadFactor = ref<number | null>(null);
+const priority = ref(1);
+const rateMultiplier = ref(1);
+const status = ref<"active" | "inactive">("active");
+const groupIds = ref<number[]>([]);
+const openaiPassthroughEnabled = ref(false);
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
-const openaiFlattenNamespacesEnabled = ref(false)
-const openAILongContextBillingEnabled = ref(false)
+const openaiFlattenNamespacesEnabled = ref(false);
+const openAILongContextBillingEnabled = ref(false);
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>([
-  'chat_completions',
-  'embeddings'
-])
-const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
-const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
-const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
-const upstreamBillingAutoProbeMode = ref<'enabled' | 'disabled'>('enabled')
-const codexCLIOnlyEnabled = ref(false)
-const codexCLIOnlyAppServerEnabled = ref(false)
-type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const enableCodexFingerprintMode = ref(false)
-const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+  "chat_completions",
+  "embeddings",
+]);
+const openAIResponsesMode = ref<OpenAIResponsesMode>("auto");
+const openaiOAuthResponsesWebSocketV2Mode =
+  ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF);
+const openaiAPIKeyResponsesWebSocketV2Mode =
+  ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF);
+const upstreamBillingAutoProbeMode = ref<"enabled" | "disabled">("enabled");
+const codexCLIOnlyEnabled = ref(false);
+const codexCLIOnlyAppServerEnabled = ref(false);
+type CodexFingerprintMode = "off" | "device" | "session" | "full";
+const enableCodexFingerprintMode = ref(false);
+const codexFingerprintMode = ref<CodexFingerprintMode>("off");
 const codexFingerprintModeOptions = computed(() => [
-  { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
-  { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
-  { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
-  { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
-])
-type ClaudeFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const enableClaudeFingerprintMode = ref(false)
-const claudeFingerprintMode = ref<ClaudeFingerprintMode>('off')
+  {
+    value: "off" as CodexFingerprintMode,
+    label: t("admin.accounts.openai.codexFingerprintOff"),
+  },
+  {
+    value: "device" as CodexFingerprintMode,
+    label: t("admin.accounts.openai.codexFingerprintDevice"),
+  },
+  {
+    value: "session" as CodexFingerprintMode,
+    label: t("admin.accounts.openai.codexFingerprintSession"),
+  },
+  {
+    value: "full" as CodexFingerprintMode,
+    label: t("admin.accounts.openai.codexFingerprintFull"),
+  },
+]);
+type ClaudeFingerprintMode = "off" | "device" | "session" | "full";
+const enableClaudeFingerprintMode = ref(false);
+const claudeFingerprintMode = ref<ClaudeFingerprintMode>("off");
 const claudeFingerprintModeOptions = computed(() => [
-  { value: 'off' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintOff') },
-  { value: 'device' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintDevice') },
-  { value: 'session' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintSession') },
-  { value: 'full' as ClaudeFingerprintMode, label: t('admin.accounts.anthropic.claudeFingerprintFull') },
-])
-const openAICompactMode = ref<OpenAICompactMode>('auto')
-const openAICompactModelMappings = ref<ModelMapping[]>([])
-const rpmLimitEnabled = ref(false)
-const bulkBaseRpm = ref<number | null>(null)
-const bulkRpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
-const bulkRpmStickyBuffer = ref<number | null>(null)
-const userMsgQueueMode = ref<string | null>(null)
+  {
+    value: "off" as ClaudeFingerprintMode,
+    label: t("admin.accounts.anthropic.claudeFingerprintOff"),
+  },
+  {
+    value: "device" as ClaudeFingerprintMode,
+    label: t("admin.accounts.anthropic.claudeFingerprintDevice"),
+  },
+  {
+    value: "session" as ClaudeFingerprintMode,
+    label: t("admin.accounts.anthropic.claudeFingerprintSession"),
+  },
+  {
+    value: "full" as ClaudeFingerprintMode,
+    label: t("admin.accounts.anthropic.claudeFingerprintFull"),
+  },
+]);
+const openAICompactMode = ref<OpenAICompactMode>("auto");
+const openAICompactModelMappings = ref<ModelMapping[]>([]);
+const rpmLimitEnabled = ref(false);
+const bulkBaseRpm = ref<number | null>(null);
+const bulkRpmStrategy = ref<"tiered" | "sticky_exempt">("tiered");
+const bulkRpmStickyBuffer = ref<number | null>(null);
+const userMsgQueueMode = ref<string | null>(null);
 const umqModeOptions = computed(() => [
-  { value: '', label: t('admin.accounts.quotaControl.rpmLimit.umqModeOff') },
-  { value: 'throttle', label: t('admin.accounts.quotaControl.rpmLimit.umqModeThrottle') },
-  { value: 'serialize', label: t('admin.accounts.quotaControl.rpmLimit.umqModeSerialize') },
-])
+  { value: "", label: t("admin.accounts.quotaControl.rpmLimit.umqModeOff") },
+  {
+    value: "throttle",
+    label: t("admin.accounts.quotaControl.rpmLimit.umqModeThrottle"),
+  },
+  {
+    value: "serialize",
+    label: t("admin.accounts.quotaControl.rpmLimit.umqModeSerialize"),
+  },
+]);
 
 // Common HTTP error codes
 const commonErrorCodes = [
-  { value: 401, label: 'Unauthorized' },
-  { value: 403, label: 'Forbidden' },
-  { value: 429, label: 'Rate Limit' },
-  { value: 500, label: 'Server Error' },
-  { value: 502, label: 'Bad Gateway' },
-  { value: 503, label: 'Unavailable' },
-  { value: 529, label: 'Overloaded' }
-]
+  { value: 401, label: "Unauthorized" },
+  { value: 403, label: "Forbidden" },
+  { value: 429, label: "Rate Limit" },
+  { value: 500, label: "Server Error" },
+  { value: 502, label: "Bad Gateway" },
+  { value: 503, label: "Unavailable" },
+  { value: 529, label: "Overloaded" },
+];
 
 const statusOptions = computed(() => [
-  { value: 'active', label: t('common.active') },
-  { value: 'inactive', label: t('common.inactive') }
-])
+  { value: "active", label: t("common.active") },
+  { value: "inactive", label: t("common.inactive") },
+]);
 const upstreamBillingAutoProbeOptions = computed(() => [
-  { value: 'enabled', label: t('common.enabled') },
-  { value: 'disabled', label: t('common.disabled') }
-])
+  { value: "enabled", label: t("common.enabled") },
+  { value: "disabled", label: t("common.disabled") },
+]);
 const isOpenAIModelRestrictionDisabled = computed(
   () =>
     allOpenAIPassthroughCapable.value &&
     enableOpenAIPassthrough.value &&
-    openaiPassthroughEnabled.value
-)
+    openaiPassthroughEnabled.value,
+);
 
 const openAIWSModeOptions = computed(() => [
-  { value: OPENAI_WS_MODE_OFF, label: t('admin.accounts.openai.wsModeOff') },
-  { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
-  { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') },
-  { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') }
-])
-const openAICompactModeOptions = computed(() => [
-  { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
-  { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
-  { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
-])
-const openAIResponsesModeOptions = computed(() => [
-  { value: 'auto', label: t('admin.accounts.openai.responsesModeAuto') },
-  { value: 'force_responses', label: t('admin.accounts.openai.responsesModeForceResponses') },
+  { value: OPENAI_WS_MODE_OFF, label: t("admin.accounts.openai.wsModeOff") },
   {
-    value: 'force_chat_completions',
-    label: t('admin.accounts.openai.responsesModeForceChatCompletions')
-  }
-])
+    value: OPENAI_WS_MODE_CTX_POOL,
+    label: t("admin.accounts.openai.wsModeCtxPool"),
+  },
+  {
+    value: OPENAI_WS_MODE_PASSTHROUGH,
+    label: t("admin.accounts.openai.wsModePassthrough"),
+  },
+  {
+    value: OPENAI_WS_MODE_HTTP_BRIDGE,
+    label: t("admin.accounts.openai.wsModeHttpBridge"),
+  },
+]);
+const openAICompactModeOptions = computed(() => [
+  { value: "auto", label: t("admin.accounts.openai.compactModeAuto") },
+  { value: "force_on", label: t("admin.accounts.openai.compactModeForceOn") },
+  { value: "force_off", label: t("admin.accounts.openai.compactModeForceOff") },
+]);
+const openAIResponsesModeOptions = computed(() => [
+  { value: "auto", label: t("admin.accounts.openai.responsesModeAuto") },
+  {
+    value: "force_responses",
+    label: t("admin.accounts.openai.responsesModeForceResponses"),
+  },
+  {
+    value: "force_chat_completions",
+    label: t("admin.accounts.openai.responsesModeForceChatCompletions"),
+  },
+]);
 const openAITextEndpointCapabilityLabel = computed(() => {
-  if (openAIResponsesMode.value === 'force_responses') {
-    return t('admin.accounts.openai.capabilityResponses')
+  if (openAIResponsesMode.value === "force_responses") {
+    return t("admin.accounts.openai.capabilityResponses");
   }
-  if (openAIResponsesMode.value === 'force_chat_completions') {
-    return t('admin.accounts.openai.capabilityChatCompletions')
+  if (openAIResponsesMode.value === "force_chat_completions") {
+    return t("admin.accounts.openai.capabilityChatCompletions");
   }
-  return t('admin.accounts.openai.capabilityTextAuto')
-})
+  return t("admin.accounts.openai.capabilityTextAuto");
+});
 const openAIEndpointCapabilityOptions = computed<
   Array<{ value: OpenAIEndpointCapability; label: string }>
 >(() => [
-  { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
-  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
-  { value: 'seedance', label: 'Seedance (Ark)' }
-])
+  { value: "chat_completions", label: openAITextEndpointCapabilityLabel.value },
+  {
+    value: "embeddings",
+    label: t("admin.accounts.openai.capabilityEmbeddings"),
+  },
+  { value: "seedance", label: "Seedance (Ark)" },
+]);
 const openAITextGenerationCapabilityEnabled = computed(() =>
-  openAIEndpointCapabilities.value.includes('chat_completions')
-)
+  openAIEndpointCapabilities.value.includes("chat_completions"),
+);
 const openAIResponsesModeApplicable = computed(
-  () => !enableOpenAIEndpointCapabilities.value || openAITextGenerationCapabilityEnabled.value
-)
+  () =>
+    !enableOpenAIEndpointCapabilities.value ||
+    openAITextGenerationCapabilityEnabled.value,
+);
 
-const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
-  const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : ['chat_completions', 'embeddings'] as OpenAIEndpointCapability[]
-}
+const normalizeOpenAIEndpointCapabilities = (
+  values: OpenAIEndpointCapability[],
+) => {
+  const allowed: OpenAIEndpointCapability[] = [
+    "chat_completions",
+    "embeddings",
+    "seedance",
+  ];
+  const selected = allowed.filter((value) => values.includes(value));
+  return selected.length > 0
+    ? selected
+    : (["chat_completions", "embeddings"] as OpenAIEndpointCapability[]);
+};
 
 const toggleOpenAIEndpointCapability = (
   capability: OpenAIEndpointCapability,
-  event?: Event
+  event?: Event,
 ) => {
   if (openAIEndpointCapabilities.value.includes(capability)) {
     if (openAIEndpointCapabilities.value.length <= 1) {
-      const input = event?.target as HTMLInputElement | null
-      if (input) input.checked = true
-      return
+      const input = event?.target as HTMLInputElement | null;
+      if (input) input.checked = true;
+      return;
     }
     openAIEndpointCapabilities.value = openAIEndpointCapabilities.value.filter(
-      (value) => value !== capability
-    )
+      (value) => value !== capability,
+    );
     if (!openAITextGenerationCapabilityEnabled.value) {
-      openAIResponsesMode.value = 'auto'
+      openAIResponsesMode.value = "auto";
     }
-    return
+    return;
   }
   openAIEndpointCapabilities.value = normalizeOpenAIEndpointCapabilities([
     ...openAIEndpointCapabilities.value,
-    capability
-  ])
-}
+    capability,
+  ]);
+};
 const openAIWSModeHintKey = computed(() =>
-  resolveOpenAIWSModeHintKey(openaiOAuthResponsesWebSocketV2Mode.value)
-)
+  resolveOpenAIWSModeHintKey(openaiOAuthResponsesWebSocketV2Mode.value),
+);
 const openAIAPIKeyWSModeHintKey = computed(() =>
-  resolveOpenAIWSModeHintKey(openaiAPIKeyResponsesWebSocketV2Mode.value)
-)
+  resolveOpenAIWSModeHintKey(openaiAPIKeyResponsesWebSocketV2Mode.value),
+);
 
 // Model mapping helpers
 const addModelMapping = () => {
-  modelMappings.value.push({ from: '', to: '' })
-}
+  modelMappings.value.push({ from: "", to: "" });
+};
 
 const removeModelMapping = (index: number) => {
-  modelMappings.value.splice(index, 1)
-}
+  modelMappings.value.splice(index, 1);
+};
 
 const addOpenAICompactModelMapping = () => {
-  openAICompactModelMappings.value.push({ from: '', to: '' })
-}
+  openAICompactModelMappings.value.push({ from: "", to: "" });
+};
 
 const removeOpenAICompactModelMapping = (index: number) => {
-  openAICompactModelMappings.value.splice(index, 1)
-}
+  openAICompactModelMappings.value.splice(index, 1);
+};
 
 const addPresetMapping = (from: string, to: string) => {
-  const exists = modelMappings.value.some((m) => m.from === from)
+  const exists = modelMappings.value.some((m) => m.from === from);
   if (exists) {
-    appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
-    return
+    appStore.showInfo(t("admin.accounts.mappingExists", { model: from }));
+    return;
   }
-  modelMappings.value.push({ from, to })
-}
+  modelMappings.value.push({ from, to });
+};
 
 // Error code helpers
 const toggleErrorCode = (code: number) => {
-  const index = selectedErrorCodes.value.indexOf(code)
+  const index = selectedErrorCodes.value.indexOf(code);
   if (index === -1) {
     // Adding code - check for 429/529 warning
     if (code === 429) {
-      if (!confirm(t('admin.accounts.customErrorCodes429Warning'))) {
-        return
+      if (!confirm(t("admin.accounts.customErrorCodes429Warning"))) {
+        return;
       }
     } else if (code === 529) {
-      if (!confirm(t('admin.accounts.customErrorCodes529Warning'))) {
-        return
+      if (!confirm(t("admin.accounts.customErrorCodes529Warning"))) {
+        return;
       }
     }
-    selectedErrorCodes.value.push(code)
+    selectedErrorCodes.value.push(code);
   } else {
-    selectedErrorCodes.value.splice(index, 1)
+    selectedErrorCodes.value.splice(index, 1);
   }
-}
+};
 
 const addCustomErrorCode = () => {
-  const code = customErrorCodeInput.value
+  const code = customErrorCodeInput.value;
   if (code === null || code < 100 || code > 599) {
-    appStore.showError(t('admin.accounts.invalidErrorCode'))
-    return
+    appStore.showError(t("admin.accounts.invalidErrorCode"));
+    return;
   }
   if (selectedErrorCodes.value.includes(code)) {
-    appStore.showInfo(t('admin.accounts.errorCodeExists'))
-    return
+    appStore.showInfo(t("admin.accounts.errorCodeExists"));
+    return;
   }
   // Check for 429/529 warning
   if (code === 429) {
-    if (!confirm(t('admin.accounts.customErrorCodes429Warning'))) {
-      return
+    if (!confirm(t("admin.accounts.customErrorCodes429Warning"))) {
+      return;
     }
   } else if (code === 529) {
-    if (!confirm(t('admin.accounts.customErrorCodes529Warning'))) {
-      return
+    if (!confirm(t("admin.accounts.customErrorCodes529Warning"))) {
+      return;
     }
   }
-  selectedErrorCodes.value.push(code)
-  customErrorCodeInput.value = null
-}
+  selectedErrorCodes.value.push(code);
+  customErrorCodeInput.value = null;
+};
 
 const removeErrorCode = (code: number) => {
-  const index = selectedErrorCodes.value.indexOf(code)
+  const index = selectedErrorCodes.value.indexOf(code);
   if (index !== -1) {
-    selectedErrorCodes.value.splice(index, 1)
+    selectedErrorCodes.value.splice(index, 1);
   }
-}
+};
 
 const buildModelMappingObject = (): Record<string, string> | null => {
   return buildModelMappingPayload(
     modelRestrictionMode.value,
     allowedModels.value,
-    modelMappings.value
-  )
-}
+    modelMappings.value,
+  );
+};
 
 const buildOpenAICompactModelMapping = (): Record<string, string> | null => {
-  return buildModelMappingPayload('mapping', [], openAICompactModelMappings.value)
-}
+  return buildModelMappingPayload(
+    "mapping",
+    [],
+    openAICompactModelMappings.value,
+  );
+};
 
 const buildUpdatePayload = (): Record<string, unknown> | null => {
-  const updates: Record<string, unknown> = {}
-  const credentials: Record<string, unknown> = {}
-  let credentialsChanged = false
+  const updates: Record<string, unknown> = {};
+  const credentials: Record<string, unknown> = {};
+  let credentialsChanged = false;
   const applyOpenAILongContextBilling =
-    enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value
+    enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value;
   const applyOpenAIEndpointCapabilities =
-    enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value
-  const applyOpenAIResponsesMode = enableOpenAIResponsesMode.value && allOpenAIAPIKey.value
+    enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value;
+  const applyOpenAIResponsesMode =
+    enableOpenAIResponsesMode.value && allOpenAIAPIKey.value;
   const ensureExtra = (): Record<string, unknown> => {
     if (!updates.extra) {
-      updates.extra = {}
+      updates.extra = {};
     }
-    return updates.extra as Record<string, unknown>
-  }
+    return updates.extra as Record<string, unknown>;
+  };
 
   if (enableProxy.value) {
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
-    updates.proxy_id = proxyId.value === null ? 0 : proxyId.value
+    updates.proxy_id = proxyId.value === null ? 0 : proxyId.value;
   }
 
   if (enableConcurrency.value) {
-    updates.concurrency = concurrency.value
+    updates.concurrency = concurrency.value;
   }
 
   if (enableLoadFactor.value) {
     // 空值/NaN/0 时发送 0（后端约定 <= 0 表示清除）
-    const lf = loadFactor.value
-    updates.load_factor = (lf != null && !Number.isNaN(lf) && lf > 0) ? lf : 0
+    const lf = loadFactor.value;
+    updates.load_factor = lf != null && !Number.isNaN(lf) && lf > 0 ? lf : 0;
   }
 
   if (enablePriority.value) {
-    updates.priority = priority.value
+    updates.priority = priority.value;
   }
 
   if (enableRateMultiplier.value) {
-    updates.rate_multiplier = rateMultiplier.value
+    updates.rate_multiplier = rateMultiplier.value;
   }
 
   if (enableStatus.value) {
-    updates.status = status.value
+    updates.status = status.value;
   }
 
   if (enableGroups.value) {
-    updates.group_ids = groupIds.value
+    updates.group_ids = groupIds.value;
   }
 
   if (enableBaseUrl.value) {
-    const baseUrlValue = baseUrl.value.trim()
+    const baseUrlValue = baseUrl.value.trim();
     if (baseUrlValue) {
-      credentials.base_url = baseUrlValue
-      credentialsChanged = true
+      credentials.base_url = baseUrlValue;
+      credentialsChanged = true;
     }
   }
 
   if (enableOpenAIPassthrough.value) {
-    const extra = ensureExtra()
-    extra.openai_passthrough = openaiPassthroughEnabled.value
+    const extra = ensureExtra();
+    extra.openai_passthrough = openaiPassthroughEnabled.value;
     if (!openaiPassthroughEnabled.value) {
-      extra.openai_oauth_passthrough = false
+      extra.openai_oauth_passthrough = false;
     }
   }
 
   // 同时校验可见性：勾选后又改了目标筛选条件时，不应把该键写到非 OAuth 账号上
   if (enableOpenAIFlattenNamespaces.value && allOpenAIOAuthOnly.value) {
-    const extra = ensureExtra()
-    extra.openai_responses_flatten_namespaces = openaiFlattenNamespacesEnabled.value
+    const extra = ensureExtra();
+    extra.openai_responses_flatten_namespaces =
+      openaiFlattenNamespacesEnabled.value;
   }
 
   if (applyOpenAILongContextBilling) {
-    const extra = ensureExtra()
-    extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+    const extra = ensureExtra();
+    extra.openai_long_context_billing_enabled =
+      openAILongContextBillingEnabled.value;
   }
 
   if (applyOpenAIEndpointCapabilities) {
     credentials.openai_capabilities =
-      openAIEndpointCapabilities.value.length === 2 && !openAIEndpointCapabilities.value.includes('seedance')
+      openAIEndpointCapabilities.value.length === 2 &&
+      !openAIEndpointCapabilities.value.includes("seedance")
         ? null
-        : [...openAIEndpointCapabilities.value]
-    credentialsChanged = true
+        : [...openAIEndpointCapabilities.value];
+    credentialsChanged = true;
   }
 
   if (
     applyOpenAIResponsesMode ||
-    (applyOpenAIEndpointCapabilities && !openAITextGenerationCapabilityEnabled.value)
+    (applyOpenAIEndpointCapabilities &&
+      !openAITextGenerationCapabilityEnabled.value)
   ) {
-    const extra = ensureExtra()
+    const extra = ensureExtra();
     extra.openai_responses_mode =
-      !openAIResponsesModeApplicable.value || openAIResponsesMode.value === 'auto'
+      !openAIResponsesModeApplicable.value ||
+      openAIResponsesMode.value === "auto"
         ? null
-        : openAIResponsesMode.value
+        : openAIResponsesMode.value;
   }
 
   if (enableModelRestriction.value && !isOpenAIModelRestrictionDisabled.value) {
     // 统一使用 model_mapping 字段
-    if (modelRestrictionMode.value === 'whitelist') {
+    if (modelRestrictionMode.value === "whitelist") {
       // 白名单模式：将模型转换为 model_mapping 格式（key=value）
       // 空白名单表示“支持所有模型”，需显式发送空对象以覆盖已有限制。
-      const mapping: Record<string, string> = {}
+      const mapping: Record<string, string> = {};
       for (const m of allowedModels.value) {
-        mapping[m] = m
+        mapping[m] = m;
       }
-      credentials.model_mapping = mapping
-      credentialsChanged = true
+      credentials.model_mapping = mapping;
+      credentialsChanged = true;
     } else {
       // 映射模式下空配置同样表示“支持所有模型”。
-      const modelMapping = buildModelMappingObject()
-      credentials.model_mapping = modelMapping ?? {}
-      credentialsChanged = true
+      const modelMapping = buildModelMappingObject();
+      credentials.model_mapping = modelMapping ?? {};
+      credentialsChanged = true;
     }
   }
 
   if (enableCustomErrorCodes.value) {
-    credentials.custom_error_codes_enabled = true
-    credentials.custom_error_codes = [...selectedErrorCodes.value]
-    credentialsChanged = true
+    credentials.custom_error_codes_enabled = true;
+    credentials.custom_error_codes = [...selectedErrorCodes.value];
+    credentialsChanged = true;
   }
 
   if (enableInterceptWarmup.value) {
-    credentials.intercept_warmup_requests = interceptWarmupRequests.value
-    credentialsChanged = true
+    credentials.intercept_warmup_requests = interceptWarmupRequests.value;
+    credentialsChanged = true;
   }
 
   if (enableHeaderOverride.value) {
     // 后端使用 JSONB || merge 语义：关闭时显式写入 false + 空对象以清除旧配置
-    credentials[HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY] = headerOverrideEnabled.value
+    credentials[HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY] =
+      headerOverrideEnabled.value;
     credentials[HEADER_OVERRIDES_CREDENTIAL_KEY] = headerOverrideEnabled.value
       ? buildHeaderOverridesObject(headerOverrideRows.value)
-      : {}
-    credentialsChanged = true
+      : {};
+    credentialsChanged = true;
   }
 
   if (enableOpenAIWSMode.value) {
-    const extra = ensureExtra()
-    extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
+    const extra = ensureExtra();
+    extra.openai_oauth_responses_websockets_v2_mode =
+      openaiOAuthResponsesWebSocketV2Mode.value;
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(
-      openaiOAuthResponsesWebSocketV2Mode.value
-    )
+      openaiOAuthResponsesWebSocketV2Mode.value,
+    );
   }
 
   if (enableOpenAIAPIKeyWSMode.value) {
-    const extra = ensureExtra()
-    extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
+    const extra = ensureExtra();
+    extra.openai_apikey_responses_websockets_v2_mode =
+      openaiAPIKeyResponsesWebSocketV2Mode.value;
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(
-      openaiAPIKeyResponsesWebSocketV2Mode.value
-    )
+      openaiAPIKeyResponsesWebSocketV2Mode.value,
+    );
   }
 
   if (enableUpstreamBillingAutoProbe.value) {
-    updates.upstream_billing_probe_enabled = upstreamBillingAutoProbeMode.value === 'enabled'
+    updates.upstream_billing_probe_enabled =
+      upstreamBillingAutoProbeMode.value === "enabled";
   }
 
   if (enableCodexCLIOnly.value) {
-    const extra = ensureExtra()
-    extra.codex_cli_only = codexCLIOnlyEnabled.value
+    const extra = ensureExtra();
+    extra.codex_cli_only = codexCLIOnlyEnabled.value;
   }
 
   // 子开关从属于 codex_cli_only：仅当同一次批量编辑也把父开关设为开启时才写入，
@@ -2114,12 +2456,12 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     enableCodexCLIOnly.value &&
     codexCLIOnlyEnabled.value
   ) {
-    const extra = ensureExtra()
-    extra.codex_cli_only_allow_app_server = codexCLIOnlyAppServerEnabled.value
+    const extra = ensureExtra();
+    extra.codex_cli_only_allow_app_server = codexCLIOnlyAppServerEnabled.value;
   }
 
   if (enableCodexFingerprintMode.value) {
-    const extra = ensureExtra()
+    const extra = ensureExtra();
     // off 必须显式落键，不能靠删本地键表达。批量更新走 JSONB 顶层合并
     // （extra = COALESCE(extra,'{}') || payload），删掉 payload 里的键只表示
     // "本次不更新该键"，清不掉账号上已有的 device/session/full；而且只删不写会让
@@ -2136,11 +2478,11 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     //
     // 与本函数里其它"关闭/清除"字段的写法一致：codex_cli_only 直接落 false，
     // load_factor 落 0，proxy_id 落 0 —— 批量路径一律用显式哨兵值，不用省略。
-    extra.codex_fingerprint_mode = codexFingerprintMode.value
+    extra.codex_fingerprint_mode = codexFingerprintMode.value;
   }
 
   if (enableClaudeFingerprintMode.value) {
-    const extra = ensureExtra()
+    const extra = ensureExtra();
     // 与 codex_fingerprint_mode 同源：批量更新走 JSONB 顶层合并，off 必须显式落键才能清掉
     // 账号上已有的 device/session/full，删键只表示"本次不更新该键"；且只删不写会让 payload
     // 退化成 {extra:{}}，被后端 len(req.Extra) > 0 判为空更新直接 400 "No updates provided"（#6327）。
@@ -2149,54 +2491,58 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     // default 回落 off，对 "off" 命中同一分支，所以 #5610 定下的"不显式 opt-in 就保持旧客户端
     // 身份"不受影响；ShouldEnsureClaudeFingerprintSeedForExtraUpdates 同样只在 device/session/
     // full 时要种子，off 不会触发。claude_fingerprint_seed 由后端托管，前端永不写入。
-    extra.claude_fingerprint_mode = claudeFingerprintMode.value
+    extra.claude_fingerprint_mode = claudeFingerprintMode.value;
   }
 
   if (enableOpenAICompactMode.value) {
-    const extra = ensureExtra()
-    extra.openai_compact_mode = openAICompactMode.value
+    const extra = ensureExtra();
+    extra.openai_compact_mode = openAICompactMode.value;
   }
 
   if (enableOpenAICompactModelMapping.value) {
-    credentials.compact_model_mapping = buildOpenAICompactModelMapping() ?? {}
-    credentialsChanged = true
+    credentials.compact_model_mapping = buildOpenAICompactModelMapping() ?? {};
+    credentialsChanged = true;
   }
 
   // RPM limit settings (写入 extra 字段)
   if (enableRpmLimit.value) {
-    const extra = ensureExtra()
-    if (rpmLimitEnabled.value && bulkBaseRpm.value != null && bulkBaseRpm.value > 0) {
-      extra.base_rpm = bulkBaseRpm.value
-      extra.rpm_strategy = bulkRpmStrategy.value
+    const extra = ensureExtra();
+    if (
+      rpmLimitEnabled.value &&
+      bulkBaseRpm.value != null &&
+      bulkBaseRpm.value > 0
+    ) {
+      extra.base_rpm = bulkBaseRpm.value;
+      extra.rpm_strategy = bulkRpmStrategy.value;
       if (bulkRpmStickyBuffer.value != null && bulkRpmStickyBuffer.value > 0) {
-        extra.rpm_sticky_buffer = bulkRpmStickyBuffer.value
+        extra.rpm_sticky_buffer = bulkRpmStickyBuffer.value;
       }
     } else {
       // 关闭 RPM 限制 - 设置 base_rpm 为 0，并用空值覆盖关联字段
       // 后端使用 JSONB || merge 语义，不会删除已有 key，
       // 所以必须显式发送空值来重置（后端读取时会 fallback 到默认值）
-      extra.base_rpm = 0
-      extra.rpm_strategy = ''
-      extra.rpm_sticky_buffer = 0
+      extra.base_rpm = 0;
+      extra.rpm_strategy = "";
+      extra.rpm_sticky_buffer = 0;
     }
-    updates.extra = extra
+    updates.extra = extra;
   }
 
   // UMQ mode（独立于 RPM 保存）
   if (userMsgQueueMode.value !== null) {
-    const umqExtra = ensureExtra()
-    umqExtra.user_msg_queue_mode = userMsgQueueMode.value  // '' = 清除账号级覆盖
-    umqExtra.user_msg_queue_enabled = false  // 清理旧字段（JSONB merge）
+    const umqExtra = ensureExtra();
+    umqExtra.user_msg_queue_mode = userMsgQueueMode.value; // '' = 清除账号级覆盖
+    umqExtra.user_msg_queue_enabled = false; // 清理旧字段（JSONB merge）
   }
 
   if (credentialsChanged) {
-    updates.credentials = credentials
+    updates.credentials = credentials;
   }
 
-  return Object.keys(updates).length > 0 ? updates : null
-}
+  return Object.keys(updates).length > 0 ? updates : null;
+};
 
-const mixedChannelConfirmed = ref(false)
+const mixedChannelConfirmed = ref(false);
 
 // 是否需要预检查：改了分组 + 全是单一的 antigravity 或 anthropic 平台
 // 多平台混合的情况由 submitBulkUpdate 的 409 catch 兜底
@@ -2204,49 +2550,54 @@ const canPreCheck = () =>
   enableGroups.value &&
   groupIds.value.length > 0 &&
   targetSelectedPlatforms.value.length === 1 &&
-  (targetSelectedPlatforms.value[0] === 'antigravity' || targetSelectedPlatforms.value[0] === 'anthropic')
+  (targetSelectedPlatforms.value[0] === "antigravity" ||
+    targetSelectedPlatforms.value[0] === "anthropic");
 
 const handleClose = () => {
-  showMixedChannelWarning.value = false
-  mixedChannelWarningMessage.value = ''
-  pendingUpdatesForConfirm.value = null
-  mixedChannelConfirmed.value = false
-  emit('close')
-}
+  showMixedChannelWarning.value = false;
+  mixedChannelWarningMessage.value = "";
+  pendingUpdatesForConfirm.value = null;
+  mixedChannelConfirmed.value = false;
+  emit("close");
+};
 
 // 预检查：提交前调接口检测，有风险就弹窗阻止，返回 false 表示需要用户确认
-const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise<boolean> => {
-  if (!canPreCheck()) return true
-  if (mixedChannelConfirmed.value) return true
+const preCheckMixedChannelRisk = async (
+  built: Record<string, unknown>,
+): Promise<boolean> => {
+  if (!canPreCheck()) return true;
+  if (mixedChannelConfirmed.value) return true;
 
   try {
     const result = await adminAPI.accounts.checkMixedChannelRisk({
       platform: targetSelectedPlatforms.value[0],
-      group_ids: groupIds.value
-    })
-    if (!result.has_risk) return true
+      group_ids: groupIds.value,
+    });
+    if (!result.has_risk) return true;
 
-    pendingUpdatesForConfirm.value = built
-    mixedChannelWarningMessage.value = result.message || t('admin.accounts.bulkEdit.failed')
-    showMixedChannelWarning.value = true
-    return false
+    pendingUpdatesForConfirm.value = built;
+    mixedChannelWarningMessage.value =
+      result.message || t("admin.accounts.bulkEdit.failed");
+    showMixedChannelWarning.value = true;
+    return false;
   } catch (error: any) {
-    appStore.showError(error.message || t('admin.accounts.bulkEdit.failed'))
-    return false
+    appStore.showError(error.message || t("admin.accounts.bulkEdit.failed"));
+    return false;
   }
-}
+};
 
 const handleSubmit = async () => {
-  if (targetMode.value === 'selected' && props.accountIds.length === 0) {
-    appStore.showError(t('admin.accounts.bulkEdit.noSelection'))
-    return
+  if (targetMode.value === "selected" && props.accountIds.length === 0) {
+    appStore.showError(t("admin.accounts.bulkEdit.noSelection"));
+    return;
   }
 
   const hasAnyFieldEnabled =
     enableBaseUrl.value ||
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
-    (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
+    (enableOpenAILongContextBilling.value &&
+      allOpenAIPassthroughCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
     enableModelRestriction.value ||
@@ -2270,20 +2621,20 @@ const handleSubmit = async () => {
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
-    userMsgQueueMode.value !== null
+    userMsgQueueMode.value !== null;
 
   if (!hasAnyFieldEnabled) {
-    appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
-    return
+    appStore.showError(t("admin.accounts.bulkEdit.noFieldsSelected"));
+    return;
   }
 
   // base_url 现在也会作用于 Grok OAuth 订阅账号的转发端点；坏值会让请求期
   // 校验失败、账号请求全挂，因此保存前强制格式校验（与单账号编辑一致）。
   if (enableBaseUrl.value) {
-    const trimmedBaseUrl = baseUrl.value.trim()
+    const trimmedBaseUrl = baseUrl.value.trim();
     if (trimmedBaseUrl && !/^https?:\/\//i.test(trimmedBaseUrl)) {
-      appStore.showError(t('admin.accounts.grokCustomBaseUrl.invalid'))
-      return
+      appStore.showError(t("admin.accounts.grokCustomBaseUrl.invalid"));
+      return;
     }
   }
 
@@ -2291,103 +2642,113 @@ const handleSubmit = async () => {
     // 批量保存对 header_overrides 是整键替换：开启但没有任何有效行会把所选账号的
     // 既有覆写配置静默清空，必须显式拦截（清空请走关闭开关的路径，有专门提示）
     if (!headerOverrideRows.value.some((row) => row.name.trim())) {
-      appStore.showError(t('admin.accounts.headerOverride.bulkEmptyRows'))
-      return
+      appStore.showError(t("admin.accounts.headerOverride.bulkEmptyRows"));
+      return;
     }
-    const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+    const headerError = validateHeaderOverrideRows(headerOverrideRows.value);
     if (headerError) {
-      appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
-      return
+      appStore.showError(t(`admin.accounts.headerOverride.${headerError}`));
+      return;
     }
   }
 
-  const built = buildUpdatePayload()
+  const built = buildUpdatePayload();
   if (!built) {
-    appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
-    return
+    appStore.showError(t("admin.accounts.bulkEdit.noFieldsSelected"));
+    return;
   }
 
-  const canContinue = await preCheckMixedChannelRisk(built)
-  if (!canContinue) return
+  const canContinue = await preCheckMixedChannelRisk(built);
+  if (!canContinue) return;
 
-  await submitBulkUpdate(built)
-}
+  await submitBulkUpdate(built);
+};
 
 const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
   // 无论是预检查确认还是 409 兜底确认，只要 mixedChannelConfirmed 为 true 就带上 flag
   const updates = mixedChannelConfirmed.value
     ? { ...baseUpdates, confirm_mixed_channel_risk: true }
-    : baseUpdates
+    : baseUpdates;
 
-  submitting.value = true
+  submitting.value = true;
 
   try {
-    const res = targetMode.value === 'filtered' && props.target?.filters
-      ? await adminAPI.accounts.bulkUpdate({
-        filters: props.target.filters,
-        ...updates
-      })
-      : await adminAPI.accounts.bulkUpdate(props.accountIds, updates)
-    const success = res.success || 0
-    const failed = res.failed || 0
-    const inherited = res.long_context_inherited_count || 0
+    const res =
+      targetMode.value === "filtered" && props.target?.filters
+        ? await adminAPI.accounts.bulkUpdate({
+            filters: props.target.filters,
+            ...updates,
+          })
+        : await adminAPI.accounts.bulkUpdate(props.accountIds, updates);
+    const success = res.success || 0;
+    const failed = res.failed || 0;
+    const inherited = res.long_context_inherited_count || 0;
 
     if (success > 0 && failed === 0) {
       if (inherited > 0) {
-        appStore.showSuccess(t('admin.accounts.bulkEdit.successWithInherited', {
-          count: success,
-          inherited
-        }))
+        appStore.showSuccess(
+          t("admin.accounts.bulkEdit.successWithInherited", {
+            count: success,
+            inherited,
+          }),
+        );
       } else {
-        appStore.showSuccess(t('admin.accounts.bulkEdit.success', { count: success }))
+        appStore.showSuccess(
+          t("admin.accounts.bulkEdit.success", { count: success }),
+        );
       }
     } else if (success > 0) {
-      const key = inherited > 0
-        ? 'admin.accounts.bulkEdit.partialSuccessWithInherited'
-        : 'admin.accounts.bulkEdit.partialSuccess'
-      appStore.showError(t(key, { success, failed, inherited }))
+      const key =
+        inherited > 0
+          ? "admin.accounts.bulkEdit.partialSuccessWithInherited"
+          : "admin.accounts.bulkEdit.partialSuccess";
+      appStore.showError(t(key, { success, failed, inherited }));
     } else {
-      appStore.showError(t('admin.accounts.bulkEdit.failed'))
+      appStore.showError(t("admin.accounts.bulkEdit.failed"));
     }
 
     if (success > 0) {
-      pendingUpdatesForConfirm.value = null
-      emit('updated')
-      handleClose()
+      pendingUpdatesForConfirm.value = null;
+      emit("updated");
+      handleClose();
     }
   } catch (error: any) {
     // 兜底：多平台混合场景下，预检查跳过，由后端 409 触发确认框
-    if (error.status === 409 && error.error === 'mixed_channel_warning') {
-      pendingUpdatesForConfirm.value = baseUpdates
-      mixedChannelWarningMessage.value = error.message
-      showMixedChannelWarning.value = true
-    } else if (error.reason === 'UPSTREAM_BILLING_RATE_SYNC_BULK_CONFLICT') {
-      appStore.showError(t('admin.accounts.bulkEdit.rateSyncConflict', {
-        count: error.metadata?.count ?? 1
-      }))
-    } else if (error.reason === 'OPENAI_LONG_CONTEXT_PARENT_REQUIRED') {
-      appStore.showError(t('admin.accounts.bulkEdit.longContextParentRequired'))
+    if (error.status === 409 && error.error === "mixed_channel_warning") {
+      pendingUpdatesForConfirm.value = baseUpdates;
+      mixedChannelWarningMessage.value = error.message;
+      showMixedChannelWarning.value = true;
+    } else if (error.reason === "UPSTREAM_BILLING_RATE_SYNC_BULK_CONFLICT") {
+      appStore.showError(
+        t("admin.accounts.bulkEdit.rateSyncConflict", {
+          count: error.metadata?.count ?? 1,
+        }),
+      );
+    } else if (error.reason === "OPENAI_LONG_CONTEXT_PARENT_REQUIRED") {
+      appStore.showError(
+        t("admin.accounts.bulkEdit.longContextParentRequired"),
+      );
     } else {
-      appStore.showError(error.message || t('admin.accounts.bulkEdit.failed'))
-      console.error('Error bulk updating accounts:', error)
+      appStore.showError(error.message || t("admin.accounts.bulkEdit.failed"));
+      console.error("Error bulk updating accounts:", error);
     }
   } finally {
-    submitting.value = false
+    submitting.value = false;
   }
-}
+};
 
 const handleMixedChannelConfirm = async () => {
-  showMixedChannelWarning.value = false
-  mixedChannelConfirmed.value = true
+  showMixedChannelWarning.value = false;
+  mixedChannelConfirmed.value = true;
   if (pendingUpdatesForConfirm.value) {
-    await submitBulkUpdate(pendingUpdatesForConfirm.value)
+    await submitBulkUpdate(pendingUpdatesForConfirm.value);
   }
-}
+};
 
 const handleMixedChannelCancel = () => {
-  showMixedChannelWarning.value = false
-  pendingUpdatesForConfirm.value = null
-}
+  showMixedChannelWarning.value = false;
+  pendingUpdatesForConfirm.value = null;
+};
 
 // Reset form when modal closes
 watch(
@@ -2395,77 +2756,77 @@ watch(
   (newShow) => {
     if (!newShow) {
       // Reset all enable flags
-      enableBaseUrl.value = false
-      enableModelRestriction.value = false
-      enableCustomErrorCodes.value = false
-      enableInterceptWarmup.value = false
-      enableHeaderOverride.value = false
-      enableProxy.value = false
-      enableConcurrency.value = false
-      enableLoadFactor.value = false
-      enablePriority.value = false
-      enableRateMultiplier.value = false
-      enableStatus.value = false
-      enableGroups.value = false
-      enableOpenAIPassthrough.value = false
-      enableOpenAIFlattenNamespaces.value = false
-      enableOpenAILongContextBilling.value = false
-      enableOpenAIEndpointCapabilities.value = false
-      enableOpenAIResponsesMode.value = false
-      enableOpenAIWSMode.value = false
-      enableOpenAIAPIKeyWSMode.value = false
-      enableUpstreamBillingAutoProbe.value = false
-      enableCodexCLIOnly.value = false
-      enableCodexCLIOnlyAppServer.value = false
-      enableCodexFingerprintMode.value = false
-      codexFingerprintMode.value = 'off'
-      enableClaudeFingerprintMode.value = false
-      claudeFingerprintMode.value = 'off'
-      enableOpenAICompactMode.value = false
-      enableOpenAICompactModelMapping.value = false
-      enableRpmLimit.value = false
+      enableBaseUrl.value = false;
+      enableModelRestriction.value = false;
+      enableCustomErrorCodes.value = false;
+      enableInterceptWarmup.value = false;
+      enableHeaderOverride.value = false;
+      enableProxy.value = false;
+      enableConcurrency.value = false;
+      enableLoadFactor.value = false;
+      enablePriority.value = false;
+      enableRateMultiplier.value = false;
+      enableStatus.value = false;
+      enableGroups.value = false;
+      enableOpenAIPassthrough.value = false;
+      enableOpenAIFlattenNamespaces.value = false;
+      enableOpenAILongContextBilling.value = false;
+      enableOpenAIEndpointCapabilities.value = false;
+      enableOpenAIResponsesMode.value = false;
+      enableOpenAIWSMode.value = false;
+      enableOpenAIAPIKeyWSMode.value = false;
+      enableUpstreamBillingAutoProbe.value = false;
+      enableCodexCLIOnly.value = false;
+      enableCodexCLIOnlyAppServer.value = false;
+      enableCodexFingerprintMode.value = false;
+      codexFingerprintMode.value = "off";
+      enableClaudeFingerprintMode.value = false;
+      claudeFingerprintMode.value = "off";
+      enableOpenAICompactMode.value = false;
+      enableOpenAICompactModelMapping.value = false;
+      enableRpmLimit.value = false;
 
       // Reset all values
-      baseUrl.value = ''
-      openaiPassthroughEnabled.value = false
-      openaiFlattenNamespacesEnabled.value = false
-      openAILongContextBillingEnabled.value = false
-      openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
-      openAIResponsesMode.value = 'auto'
-      modelRestrictionMode.value = 'whitelist'
-      allowedModels.value = []
-      modelMappings.value = []
-      selectedErrorCodes.value = []
-      customErrorCodeInput.value = null
-      interceptWarmupRequests.value = false
-      headerOverrideEnabled.value = false
-      headerOverrideRows.value = []
-      proxyId.value = null
-      concurrency.value = 1
-      loadFactor.value = null
-      priority.value = 1
-      rateMultiplier.value = 1
-      status.value = 'active'
-      groupIds.value = []
-      openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
-      openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
-      upstreamBillingAutoProbeMode.value = 'enabled'
-      codexCLIOnlyEnabled.value = false
-      codexCLIOnlyAppServerEnabled.value = false
-      openAICompactMode.value = 'auto'
-      openAICompactModelMappings.value = []
-      rpmLimitEnabled.value = false
-      bulkBaseRpm.value = null
-      bulkRpmStrategy.value = 'tiered'
-      bulkRpmStickyBuffer.value = null
-      userMsgQueueMode.value = null
+      baseUrl.value = "";
+      openaiPassthroughEnabled.value = false;
+      openaiFlattenNamespacesEnabled.value = false;
+      openAILongContextBillingEnabled.value = false;
+      openAIEndpointCapabilities.value = ["chat_completions", "embeddings"];
+      openAIResponsesMode.value = "auto";
+      modelRestrictionMode.value = "whitelist";
+      allowedModels.value = [];
+      modelMappings.value = [];
+      selectedErrorCodes.value = [];
+      customErrorCodeInput.value = null;
+      interceptWarmupRequests.value = false;
+      headerOverrideEnabled.value = false;
+      headerOverrideRows.value = [];
+      proxyId.value = null;
+      concurrency.value = 1;
+      loadFactor.value = null;
+      priority.value = 1;
+      rateMultiplier.value = 1;
+      status.value = "active";
+      groupIds.value = [];
+      openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF;
+      openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF;
+      upstreamBillingAutoProbeMode.value = "enabled";
+      codexCLIOnlyEnabled.value = false;
+      codexCLIOnlyAppServerEnabled.value = false;
+      openAICompactMode.value = "auto";
+      openAICompactModelMappings.value = [];
+      rpmLimitEnabled.value = false;
+      bulkBaseRpm.value = null;
+      bulkRpmStrategy.value = "tiered";
+      bulkRpmStickyBuffer.value = null;
+      userMsgQueueMode.value = null;
 
       // Reset mixed channel warning state
-      showMixedChannelWarning.value = false
-      mixedChannelWarningMessage.value = ''
-      pendingUpdatesForConfirm.value = null
-      mixedChannelConfirmed.value = false
+      showMixedChannelWarning.value = false;
+      mixedChannelWarningMessage.value = "";
+      pendingUpdatesForConfirm.value = null;
+      mixedChannelConfirmed.value = false;
     }
-  }
-)
+  },
+);
 </script>
