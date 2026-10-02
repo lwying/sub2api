@@ -158,10 +158,14 @@
         </div>
 
         <!-- 下游 Mock：首次进入该标签才挂载并加载，之后保留编辑状态，失败可重试。 -->
-        <div v-show="activeTab === 'mock'" data-test="tab-panel-mock">
+        <div
+          v-show="activeTab === 'mock'"
+          class="min-w-0 pt-5"
+          data-test="tab-panel-mock"
+        >
           <p
             data-test="mock-audit-order-hint"
-            class="mb-4 rounded-lg bg-gray-50 px-4 py-3 text-xs text-gray-600 dark:bg-dark-900 dark:text-dark-300"
+            class="max-w-4xl border-l-2 border-primary-200 pl-3 text-xs leading-5 text-gray-500 dark:border-primary-800 dark:text-dark-300"
           >
             {{ t("admin.promptAudit.mock.auditOrderHint") }}
           </p>

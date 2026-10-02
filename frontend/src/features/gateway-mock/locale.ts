@@ -5,19 +5,18 @@ export const gatewayMockEn = {
       "Answers a configured test message locally: no upstream attempt is made and no usage record is written.",
     loading: "Loading mock rules…",
     unavailable: "Mock rules are not available on this deployment.",
-    stateLabel: "Effective state",
-    stateNote:
-      "Saving replaces the whole rule set at once; a rule that is not enabled never answers.",
+    stateLabel: "Saved state",
+    stateNote: "Changes take effect only after you save the whole rule set.",
     on: "On",
     off: "Off",
     switchLabel: "Global switch",
     switchNote:
-      "Off by default. Only when it is on do the enabled rules below answer downstream test requests locally.",
+      "When the switch is off, requests continue through the normal gateway.",
     unsaved: "Unsaved changes",
     rules: {
       title: "Rules",
       description:
-        "A rule answers only a request whose whole text equals the keyword. The reply text is sent to the downstream client as it is.",
+        "Single-turn plain text must fully match the keyword. Fixed account-test instructions are supported; tasks, tools and history are not.",
       empty:
         "No rules yet. Add one, or load the built-in presets and enable the ones you want.",
       add: "Add rule",
@@ -40,7 +39,15 @@ export const gatewayMockEn = {
     events: {
       title: "Recent mock hits",
       description:
-        "Which rule answered which request, newest first. Keywords and reply text are not stored, so they cannot appear here.",
+        "Local replies, newest first. Expand a row to inspect its request metadata.",
+      recordingNote: "About recorded data and retention",
+      retry: "Retry",
+      details: {
+        show: "Details",
+        hide: "Collapse",
+        title: "Request metadata",
+        metadataNote: "Keywords and reply text are not stored with hits.",
+      },
       refresh: "Refresh",
       refreshing: "Refreshing…",
       loading: "Loading mock hits…",
@@ -50,7 +57,7 @@ export const gatewayMockEn = {
       absentNote:
         "— means the gateway did not record that value; it is not an empty value.",
       retentionNote:
-        "These hits follow the current usage-log retention policy: a hit is removed once it is older than that window, and while the usage auto-cleanup is off nothing is removed automatically. The cleanup column shows a deadline only when one was recorded; it is not the effective cleanup time.",
+        "Hits follow the usage-log retention policy. Records older than that window are removed while auto-cleanup is enabled. No cleanup deadline is disclosed in the event details; an internal estimate must not be read as the actual cleanup time.",
       noDeadline: "No deadline recorded",
       absent: "—",
       columns: {
@@ -66,6 +73,8 @@ export const gatewayMockEn = {
         traceId: "Trace",
         cleanup: "Cleanup after",
         contentAudit: "Content audit",
+        requestSource: "Request source",
+        details: "Details",
       },
       contentAudit: {
         unknown: "Not recorded",
@@ -113,18 +122,17 @@ export const gatewayMockZh = {
       "命中配置的测试词时由本地直接作答：不发出上游请求，也不产生使用记录。",
     loading: "正在读取 mock 规则…",
     unavailable: "当前部署不可读取 mock 规则。",
-    stateLabel: "当前生效状态",
-    stateNote: "保存会一次性替换整份规则集；未启用的规则不会命中。",
+    stateLabel: "已保存状态",
+    stateNote: "编辑不会立即生效，保存后统一更新整份规则。",
     on: "已开启",
     off: "已关闭",
     switchLabel: "总开关",
-    switchNote:
-      "默认关闭。只有开启后，下方已启用的规则才会对下游测试请求本地作答。",
+    switchNote: "总开关关闭时，请求继续走正常网关流程。",
     unsaved: "有未保存的改动",
     rules: {
       title: "规则",
       description:
-        "只有整条请求文本与关键词完全相同的请求才会命中；回复正文原样发给下游客户端。",
+        "仅匹配单轮纯文本；兼容固定账号测试指令，附加任务、工具或历史不命中。",
       empty: "还没有规则。可以手动添加，或载入预置词后按需启用。",
       add: "添加规则",
       remove: "删除",
@@ -144,9 +152,16 @@ export const gatewayMockZh = {
     presetsLoaded: "已写入 {written} 条预置规则，全部默认未启用。",
     presetsUnchanged: "规则集非空，未写入预置词。",
     events: {
-      title: "最近的 mock 命中",
-      description:
-        "按时间倒序列出哪条规则在何时因哪个请求命中过。关键词与回复正文未落库，因此也不会出现在这里。",
+      title: "最近命中",
+      description: "按时间查看本地回复，展开记录可查看请求元数据。",
+      recordingNote: "记录范围与保留策略",
+      retry: "重新读取",
+      details: {
+        show: "详情",
+        hide: "收起",
+        title: "请求元数据",
+        metadataNote: "命中记录不保存当时的关键词与回复正文。",
+      },
       refresh: "刷新",
       refreshing: "正在刷新…",
       loading: "正在读取 mock 命中…",
@@ -154,7 +169,7 @@ export const gatewayMockZh = {
       empty: "尚未记录到任何 mock 命中。",
       absentNote: "— 表示网关当时没有记录该值，不代表它是空值。",
       retentionNote:
-        "这些命中记录跟随当前的使用记录保留策略清理：超过保留窗口即被删除；使用记录自动清理关闭时不会被自动删除。「清理截止」列只在确实记录到期限时显示日期，不代表实际清理时间。",
+        "命中记录跟随使用记录的保留策略清理；自动清理关闭时不会自动删除。记录详情不披露清理期限，内部估算不能当作实际清理时间。",
       noDeadline: "未记录清理期限",
       absent: "—",
       columns: {
@@ -170,6 +185,8 @@ export const gatewayMockZh = {
         traceId: "Trace",
         cleanup: "清理截止",
         contentAudit: "内容审计",
+        requestSource: "请求来源",
+        details: "详情",
       },
       contentAudit: {
         unknown: "未记录",

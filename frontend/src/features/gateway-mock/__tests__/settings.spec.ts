@@ -102,16 +102,15 @@ describe("gateway mock rule editor", () => {
         .attributes("data-state"),
     ).toBe("on");
     expect(
-      (
-        wrapper.get('[data-testid="gateway-mock-switch"]')
-          .element as HTMLInputElement
-      ).checked,
-    ).toBe(true);
+      wrapper
+        .get('[data-testid="gateway-mock-switch"]')
+        .attributes("aria-checked"),
+    ).toBe("true");
     expect(wrapper.find('[data-testid="gateway-mock-unsaved"]').exists()).toBe(
       false,
     );
 
-    await wrapper.get('[data-testid="gateway-mock-switch"]').setValue(false);
+    await wrapper.get('[data-testid="gateway-mock-switch"]').trigger("click");
     // 存下的状态仍然是服务端上一次答复的那一个。
     expect(
       wrapper
@@ -120,6 +119,42 @@ describe("gateway mock rule editor", () => {
     ).toBe("on");
     expect(wrapper.find('[data-testid="gateway-mock-unsaved"]').exists()).toBe(
       true,
+    );
+  });
+
+  it("uses labelled switches without changing the saved state before saving", async () => {
+    const wrapper = await mountWithRules([rule()]);
+    const toggle = wrapper.get('[data-testid="gateway-mock-switch"]');
+    expect(toggle.attributes("role")).toBe("switch");
+    expect(toggle.attributes("aria-label")).toBeTruthy();
+    expect(toggle.attributes("aria-checked")).toBe("true");
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-checked")).toBe("false");
+    expect(
+      wrapper
+        .get('[data-testid="gateway-mock-state"]')
+        .attributes("data-state"),
+    ).toBe("on");
+    expect(wrapper.find('[data-testid="gateway-mock-unsaved"]').exists()).toBe(
+      true,
+    );
+  });
+
+  it("preserves multiline replies when saving the compact rule editor", async () => {
+    const wrapper = await mountWithRules([rule()]);
+    const reply = "第一行回复\n第二行回复";
+    api.updateOperatorSettings.mockResolvedValue(
+      status({ rules: [rule({ reply })] }),
+    );
+    await wrapper
+      .get('[data-testid="gateway-mock-rule-reply"]')
+      .setValue(reply);
+    await wrapper.get('[data-testid="gateway-mock-save"]').trigger("click");
+    await flushPromises();
+    expect(api.updateOperatorSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rules: [expect.objectContaining({ reply })],
+      }),
     );
   });
 
@@ -200,7 +235,7 @@ describe("gateway mock rule editor", () => {
       .trigger("click");
     await wrapper
       .get('[data-testid="gateway-mock-rule-enabled"]')
-      .setValue(false);
+      .trigger("click");
     expect(
       wrapper.get('[data-testid="gateway-mock-rule-enabled-label"]').text(),
     ).toBe("admin.gatewayMock.rules.enabledOff");
@@ -271,11 +306,10 @@ describe("gateway mock rule editor", () => {
         .attributes("data-state"),
     ).toBe("off");
     expect(
-      (
-        wrapper.get('[data-testid="gateway-mock-rule-enabled"]')
-          .element as HTMLInputElement
-      ).checked,
-    ).toBe(false);
+      wrapper
+        .get('[data-testid="gateway-mock-rule-enabled"]')
+        .attributes("aria-checked"),
+    ).toBe("false");
 
     api.seedPresets.mockResolvedValueOnce({
       status: status({ rules: [rule()] }),

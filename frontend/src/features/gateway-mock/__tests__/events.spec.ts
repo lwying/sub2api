@@ -69,6 +69,13 @@ async function mountLoaded(payload: Raw = page()) {
   return wrapper;
 }
 
+// 账号 / IP / Trace / 规则版本 / 清理说明在展开的只读元数据区，先展开再断言。
+async function expandDetail(wrapper: ReturnType<typeof mountPanel>) {
+  await wrapper
+    .get('[data-testid="gateway-mock-events-detail-toggle"]')
+    .trigger("click");
+}
+
 describe("admin gateway mock hit list", () => {
   beforeEach(() => {
     mocks.listEvents.mockReset();
@@ -78,6 +85,218 @@ describe("admin gateway mock hit list", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("keeps secondary metadata in an accessible expandable detail region", async () => {
+    const wrapper = await mountLoaded();
+    const toggle = wrapper.get(
+      '[data-testid="gateway-mock-events-detail-toggle"]',
+    );
+    expect(toggle.attributes("aria-expanded")).toBe("false");
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-trace"]').exists(),
+    ).toBe(false);
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-expanded")).toBe("true");
+    expect(
+      wrapper.get('[data-testid="gateway-mock-events-trace"]').text(),
+    ).toBe("0123456789abcdef0123456789abcdef");
+    expect(
+      wrapper.get('[data-testid="gateway-mock-events-account"]').text(),
+    ).toBe("#11");
+    await toggle.trigger("click");
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-trace"]').exists(),
+    ).toBe(false);
+  });
+
+  it("retries a failed read without treating it as an empty history", async () => {
+    mocks.listEvents.mockRejectedValueOnce(new Error("unavailable"));
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-failed"]').exists(),
+    ).toBe(true);
+    mocks.listEvents.mockResolvedValueOnce(page());
+    await wrapper
+      .get('[data-testid="gateway-mock-events-retry"]')
+      .trigger("click");
+    await flushPromises();
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-row"]').exists(),
+    ).toBe(true);
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-failed"]').exists(),
+    ).toBe(false);
+  });
+
+  it("opens and closes the detail from the keyboard, not only a pointer", async () => {
+    const wrapper = await mountLoaded();
+    const toggle = wrapper.get(
+      '[data-testid="gateway-mock-events-detail-toggle"]',
+    );
+    // 原生 button 才具备键盘可达性，配合 aria-expanded / aria-controls 暴露展开态。
+    expect(toggle.element.tagName).toBe("BUTTON");
+
+    // jsdom 不合成原生键盘点击；用 click 验证同一激活事件，真实键盘行为由浏览器验收。
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-expanded")).toBe("true");
+    expect(
+      wrapper.find(`#${toggle.attributes("aria-controls")}`).exists(),
+    ).toBe(true);
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-expanded")).toBe("false");
+    expect(toggle.attributes("aria-controls")).toBeUndefined();
+  });
+
+  it("collapses the open detail when a refresh replaces the rows", async () => {
+    const wrapper = await mountLoaded();
+    await expandDetail(wrapper);
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-trace"]').exists(),
+    ).toBe(true);
+
+    mocks.listEvents.mockResolvedValueOnce(
+      page({ items: [event({ rule_id: "gmr_second" })] }),
+    );
+    await wrapper
+      .get('[data-testid="gateway-mock-events-refresh"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(
+      wrapper.get('[data-testid="gateway-mock-events-rule-id"]').text(),
+    ).toBe("gmr_second");
+    // 事件没有稳定 id：旧行下标不能把详情展开到新内容上。
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-trace"]').exists(),
+    ).toBe(false);
+    expect(
+      wrapper
+        .get('[data-testid="gateway-mock-events-detail-toggle"]')
+        .attributes("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("does not reopen a stale row when details are clicked during a refresh", async () => {
+    const wrapper = await mountLoaded();
+    let resolveRead!: (value: unknown) => void;
+    mocks.listEvents.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    await wrapper
+      .get('[data-testid="gateway-mock-events-refresh"]')
+      .trigger("click");
+    const toggle = wrapper.get(
+      '[data-testid="gateway-mock-events-detail-toggle"]',
+    );
+    expect((toggle.element as HTMLButtonElement).disabled).toBe(true);
+    await toggle.trigger("click");
+    resolveRead(page({ items: [event({ rule_id: "gmr_replacement" })] }));
+    await flushPromises();
+    expect(
+      wrapper.find('[data-testid="gateway-mock-events-detail-row"]').exists(),
+    ).toBe(false);
+  });
+
+  it("retries the requested page and disables retry while a read is in flight", async () => {
+    const wrapper = await mountLoaded(page({ total: 60 }));
+    mocks.listEvents.mockRejectedValueOnce(new Error("unavailable"));
+    wrapper.getComponent(Pagination).vm.$emit("update:page", 2);
+    await flushPromises();
+    let resolveRead!: (value: unknown) => void;
+    mocks.listEvents.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    await wrapper
+      .get('[data-testid="gateway-mock-events-retry"]')
+      .trigger("click");
+    expect(mocks.listEvents).toHaveBeenLastCalledWith(
+      { page: 2, page_size: 20 },
+      expect.anything(),
+    );
+    const retry = wrapper.get('[data-testid="gateway-mock-events-retry"]');
+    expect((retry.element as HTMLButtonElement).disabled).toBe(true);
+    resolveRead(page({ page: 2, total: 60 }));
+    await flushPromises();
+  });
+
+  it("announces its phase: busy while reading, a status role when empty", async () => {
+    let resolveRead!: (value: unknown) => void;
+    mocks.listEvents.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    const wrapper = mountPanel();
+    await wrapper.vm.$nextTick();
+
+    expect(
+      wrapper
+        .get('[data-testid="gateway-mock-events"]')
+        .attributes("aria-busy"),
+    ).toBe("true");
+    expect(
+      wrapper
+        .get('[data-testid="gateway-mock-events-loading"]')
+        .attributes("role"),
+    ).toBe("status");
+
+    resolveRead({ items: [], total: 0, page: 1, page_size: 20 });
+    await flushPromises();
+
+    expect(
+      wrapper
+        .get('[data-testid="gateway-mock-events-empty"]')
+        .attributes("role"),
+    ).toBe("status");
+    expect(
+      wrapper
+        .get('[data-testid="gateway-mock-events"]')
+        .attributes("aria-busy"),
+    ).toBe("false");
+  });
+
+  it("keeps one table whose cells label themselves for the narrow layout", async () => {
+    const wrapper = await mountLoaded();
+
+    // 单一 DOM：桌面与窄屏共用同一张 6 列表格，不再渲染第二套带重复 testid 的行。
+    const table = wrapper.get("table.gateway-mock-events-table");
+    expect(table.element.tagName).toBe("TABLE");
+    expect(table.findAll("thead th")).toHaveLength(6);
+    expect(
+      wrapper.findAll('[data-testid="gateway-mock-events-row"]'),
+    ).toHaveLength(1);
+    expect(
+      wrapper.findAll('[data-testid="gateway-mock-events-time"]'),
+    ).toHaveLength(1);
+
+    // 除展开按钮外每个数据单元格都带行内标签，窄屏折叠后仍能读出字段名。
+    const labelled = table.findAll("tbody tr:first-child td[data-label]");
+    expect(labelled).toHaveLength(5);
+    for (const cell of labelled) {
+      expect(cell.attributes("data-label")).toBeTruthy();
+    }
+
+    // 详情独占整行，用 aria-controls 指向的 id 关联。
+    await expandDetail(wrapper);
+    const toggle = wrapper.get(
+      '[data-testid="gateway-mock-events-detail-toggle"]',
+    );
+    const detailCell = wrapper.get(
+      '[data-testid="gateway-mock-events-detail-row"] td',
+    );
+    expect(detailCell.attributes("colspan")).toBe("6");
+    expect(detailCell.attributes("id")).toBe(
+      toggle.attributes("aria-controls"),
+    );
+  });
+
   it("reads the first page on mount and renders the stored facts", async () => {
     const wrapper = await mountLoaded(page({ total: 1 }));
 
@@ -86,6 +305,8 @@ describe("admin gateway mock hit list", () => {
       { page: 1, page_size: 20 },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    // 规则版本 / 账号 / IP / Trace 在详情里，展开后再检查（不删除原有断言）。
+    await expandDetail(wrapper);
     expect(
       wrapper.get('[data-testid="gateway-mock-events-rule-id"]').text(),
     ).toBe("gmr_0123456789abcdef");
@@ -128,6 +349,7 @@ describe("admin gateway mock hit list", () => {
     const wrapper = await mountLoaded(
       page({ items: [event({ cleanup_after: null })] }),
     );
+    await expandDetail(wrapper);
 
     const cell = wrapper.get('[data-testid="gateway-mock-events-cleanup"]');
     expect(cell.text()).toBe("admin.gatewayMock.events.noDeadline");
@@ -142,6 +364,7 @@ describe("admin gateway mock hit list", () => {
     const wrapper = await mountLoaded(
       page({ items: [event({ cleanup_after: "2026-12-29T03:04:05Z" })] }),
     );
+    await expandDetail(wrapper);
 
     const cell = wrapper.get('[data-testid="gateway-mock-events-cleanup"]');
     expect(cell.text()).toBe("admin.gatewayMock.events.noDeadline");
@@ -181,6 +404,7 @@ describe("admin gateway mock hit list", () => {
     );
 
     const absent = "admin.gatewayMock.events.absent";
+    await expandDetail(wrapper);
     for (const testid of [
       "gateway-mock-events-rule-version",
       "gateway-mock-events-model",

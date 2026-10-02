@@ -1,152 +1,203 @@
 <template>
-  <section class="card" data-testid="gateway-mock-settings">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-        {{ t("admin.gatewayMock.title") }}
-      </h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-        {{ t("admin.gatewayMock.description") }}
-      </p>
-    </div>
-    <div class="space-y-4 p-6">
-      <p v-if="loading && !status" data-testid="gateway-mock-loading">
-        {{ t("admin.gatewayMock.loading") }}
-      </p>
-      <p
-        v-else-if="!status"
-        role="alert"
-        data-testid="gateway-mock-unavailable"
-      >
-        {{ t("admin.gatewayMock.unavailable") }}
-      </p>
-      <template v-else>
-        <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
-          <dt>{{ t("admin.gatewayMock.stateLabel") }}</dt>
-          <dd
-            data-testid="gateway-mock-state"
-            :data-state="status.enabled ? 'on' : 'off'"
-          >
-            {{
-              status.enabled
-                ? t("admin.gatewayMock.on")
-                : t("admin.gatewayMock.off")
-            }}
-          </dd>
-        </dl>
-        <p
-          class="text-xs text-gray-500 dark:text-gray-400"
-          data-testid="gateway-mock-state-note"
-        >
-          {{ t("admin.gatewayMock.stateNote") }}
+  <section
+    class="py-6"
+    data-testid="gateway-mock-settings"
+    :aria-busy="loading || saving"
+  >
+    <header class="flex flex-wrap items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+          {{ t("admin.gatewayMock.title") }}
+        </h2>
+        <p class="mt-1 max-w-2xl text-sm text-gray-500 dark:text-dark-300">
+          {{ t("admin.gatewayMock.description") }}
         </p>
-
-        <label
-          class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300"
-          for="gateway-mock-switch"
+      </div>
+      <div v-if="status" class="flex flex-wrap items-center gap-4">
+        <span
+          class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium"
+          :class="
+            status.enabled
+              ? 'bg-primary-50 text-primary-700 dark:bg-primary-950/50 dark:text-primary-300'
+              : 'bg-gray-100 text-gray-600 dark:bg-dark-800 dark:text-dark-300'
+          "
+          data-testid="gateway-mock-state"
+          :data-state="status.enabled ? 'on' : 'off'"
         >
-          <input
+          <span
+            class="h-1.5 w-1.5 rounded-full bg-current"
+            aria-hidden="true"
+          />
+          {{ t("admin.gatewayMock.stateLabel") }}
+          {{
+            status.enabled
+              ? t("admin.gatewayMock.on")
+              : t("admin.gatewayMock.off")
+          }}
+        </span>
+        <div
+          class="flex items-center gap-2.5 text-sm text-gray-700 dark:text-dark-200"
+        >
+          <label for="gateway-mock-switch" class="cursor-pointer">{{
+            t("admin.gatewayMock.switchLabel")
+          }}</label>
+          <Toggle
             id="gateway-mock-switch"
             v-model="enabled"
-            type="checkbox"
+            :aria-label="t('admin.gatewayMock.switchLabel')"
+            :disabled="saving || presetsLoading"
             data-testid="gateway-mock-switch"
           />
-          <span>{{ t("admin.gatewayMock.switchLabel") }}</span>
-        </label>
-        <p
-          class="text-xs text-gray-500 dark:text-gray-400"
-          data-testid="gateway-mock-switch-note"
-        >
+        </div>
+      </div>
+    </header>
+
+    <p
+      v-if="loading && !status"
+      role="status"
+      class="py-10 text-center text-sm text-gray-500 dark:text-dark-300"
+      data-testid="gateway-mock-loading"
+    >
+      {{ t("admin.gatewayMock.loading") }}
+    </p>
+    <p
+      v-else-if="!status"
+      role="alert"
+      class="mt-5 rounded-lg bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300"
+      data-testid="gateway-mock-unavailable"
+    >
+      {{ t("admin.gatewayMock.unavailable") }}
+    </p>
+    <template v-else>
+      <div
+        class="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs leading-5 text-gray-500 dark:text-dark-400"
+      >
+        <p data-testid="gateway-mock-state-note">
+          {{ t("admin.gatewayMock.stateNote") }}
+        </p>
+        <p data-testid="gateway-mock-switch-note">
           {{ t("admin.gatewayMock.switchNote") }}
         </p>
+      </div>
 
-        <div class="border-t pt-4 dark:border-dark-700">
+      <div class="mt-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
             {{ t("admin.gatewayMock.rules.title") }}
           </h3>
           <p
-            class="mt-1 text-xs text-gray-500 dark:text-gray-400"
+            class="max-w-2xl text-xs text-gray-500 dark:text-dark-400"
             data-testid="gateway-mock-rules-note"
           >
             {{ t("admin.gatewayMock.rules.description") }}
           </p>
-          <p
-            v-if="!rules.length"
-            class="mt-3 text-sm text-gray-500 dark:text-gray-400"
-            data-testid="gateway-mock-rules-empty"
+        </div>
+        <p
+          v-if="!rules.length"
+          class="mt-4 rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-300"
+          data-testid="gateway-mock-rules-empty"
+        >
+          {{ t("admin.gatewayMock.rules.empty") }}
+        </p>
+        <div
+          v-else
+          class="mt-3 divide-y divide-gray-100 border-y border-gray-100 dark:divide-dark-700 dark:border-dark-700"
+        >
+          <div
+            class="hidden grid-cols-[minmax(10rem,1fr)_minmax(0,2fr)_6rem_4rem] gap-4 py-2.5 text-xs font-medium text-gray-500 dark:text-dark-400 lg:grid"
+            aria-hidden="true"
           >
-            {{ t("admin.gatewayMock.rules.empty") }}
-          </p>
-          <div v-else class="mt-3 space-y-3">
-            <div
-              v-for="(rule, index) in rules"
-              :key="index"
-              class="rounded-lg border border-gray-200 p-3 dark:border-dark-700"
-              data-testid="gateway-mock-rule-row"
-            >
-              <div class="flex flex-wrap items-end gap-3">
-                <label
-                  class="min-w-[12rem] flex-1 text-xs text-gray-600 dark:text-dark-300"
-                >
-                  <span>{{ t("admin.gatewayMock.rules.keyword") }}</span>
-                  <input
-                    v-model="rule.keyword"
-                    data-testid="gateway-mock-rule-keyword"
-                    class="input mt-1 w-full"
-                    autocomplete="off"
-                  />
-                </label>
-                <label
-                  class="flex items-center gap-2 text-xs text-gray-600 dark:text-dark-300"
-                >
-                  <input
-                    v-model="rule.enabled"
-                    type="checkbox"
-                    data-testid="gateway-mock-rule-enabled"
-                  />
-                  <span data-testid="gateway-mock-rule-enabled-label">
-                    {{
-                      rule.enabled
-                        ? t("admin.gatewayMock.rules.enabledOn")
-                        : t("admin.gatewayMock.rules.enabledOff")
-                    }}
-                  </span>
-                </label>
-                <button
-                  type="button"
-                  class="btn btn-secondary btn-sm"
-                  data-testid="gateway-mock-rule-remove"
-                  @click="removeRule(index)"
-                >
-                  {{ t("admin.gatewayMock.rules.remove") }}
-                </button>
-              </div>
-              <label
-                class="mt-2 block text-xs text-gray-600 dark:text-dark-300"
-              >
-                <span>{{ t("admin.gatewayMock.rules.reply") }}</span>
-                <textarea
-                  v-model="rule.reply"
-                  data-testid="gateway-mock-rule-reply"
-                  rows="2"
-                  class="mt-1 w-full rounded-lg border border-gray-200 p-2 text-xs dark:border-dark-700 dark:bg-dark-900"
-                />
-              </label>
-            </div>
+            <span>{{ t("admin.gatewayMock.rules.keyword") }}</span>
+            <span>{{ t("admin.gatewayMock.rules.reply") }}</span>
+            <span>{{ t("admin.gatewayMock.rules.enabled") }}</span>
+            <span class="sr-only">{{
+              t("admin.gatewayMock.rules.remove")
+            }}</span>
           </div>
-          <div class="mt-3 flex flex-wrap gap-2">
+          <div
+            v-for="(rule, index) in rules"
+            :key="index"
+            class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 py-4 lg:grid-cols-[minmax(10rem,1fr)_minmax(0,2fr)_6rem_4rem] lg:items-start lg:gap-4"
+            data-testid="gateway-mock-rule-row"
+          >
+            <label
+              class="col-span-2 min-w-0 text-xs text-gray-600 dark:text-dark-300 lg:col-span-1"
+            >
+              <span class="mb-1.5 block lg:sr-only">{{
+                t("admin.gatewayMock.rules.keyword")
+              }}</span>
+              <input
+                v-model="rule.keyword"
+                data-testid="gateway-mock-rule-keyword"
+                class="input w-full"
+                autocomplete="off"
+                :disabled="saving || presetsLoading"
+              />
+            </label>
+            <label
+              class="col-span-2 min-w-0 text-xs text-gray-600 dark:text-dark-300 lg:col-span-1"
+            >
+              <span class="mb-1.5 block lg:sr-only">{{
+                t("admin.gatewayMock.rules.reply")
+              }}</span>
+              <textarea
+                v-model="rule.reply"
+                data-testid="gateway-mock-rule-reply"
+                rows="2"
+                class="input block w-full resize-y text-sm leading-5"
+                :disabled="saving || presetsLoading"
+              />
+            </label>
+            <div class="flex items-center gap-2.5 lg:pt-2">
+              <Toggle
+                v-model="rule.enabled"
+                :aria-label="t('admin.gatewayMock.rules.enabled')"
+                :disabled="saving || presetsLoading"
+                data-testid="gateway-mock-rule-enabled"
+              />
+              <span
+                class="text-xs text-gray-500 dark:text-dark-300 lg:sr-only"
+                data-testid="gateway-mock-rule-enabled-label"
+              >
+                {{
+                  rule.enabled
+                    ? t("admin.gatewayMock.rules.enabledOn")
+                    : t("admin.gatewayMock.rules.enabledOff")
+                }}
+              </span>
+            </div>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm justify-self-end text-gray-500 hover:text-red-600 dark:text-dark-400 dark:hover:text-red-400"
+              data-testid="gateway-mock-rule-remove"
+              :disabled="saving || presetsLoading"
+              @click="removeRule(index)"
+            >
+              <Icon name="trash" size="sm" aria-hidden="true" />
+              <span class="sm:sr-only">{{
+                t("admin.gatewayMock.rules.remove")
+              }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-2">
             <button
               type="button"
               class="btn btn-secondary btn-sm"
               data-testid="gateway-mock-rule-add"
+              :disabled="saving || presetsLoading"
               @click="addRule"
             >
+              <Icon name="plus" size="sm" aria-hidden="true" />
               {{ t("admin.gatewayMock.rules.add") }}
             </button>
             <button
               type="button"
-              class="btn btn-secondary btn-sm"
+              class="btn btn-ghost btn-sm text-gray-600 dark:text-dark-300"
               data-testid="gateway-mock-presets"
-              :disabled="presetsLoading"
+              :disabled="saving || presetsLoading"
               @click="loadPresets"
             >
               {{
@@ -155,11 +206,21 @@
                   : t("admin.gatewayMock.actions.loadPresets")
               }}
             </button>
+          </div>
+          <div class="flex w-full items-center justify-end gap-3 sm:w-auto">
+            <p
+              v-if="dirty"
+              class="text-xs font-medium text-amber-700 dark:text-amber-300"
+              role="status"
+              data-testid="gateway-mock-unsaved"
+            >
+              {{ t("admin.gatewayMock.unsaved") }}
+            </p>
             <button
               type="button"
               class="btn btn-primary btn-sm"
               data-testid="gateway-mock-save"
-              :disabled="saving"
+              :disabled="saving || presetsLoading"
               @click="save"
             >
               {{
@@ -169,37 +230,33 @@
               }}
             </button>
           </div>
-          <p
-            v-if="dirty"
-            class="mt-2 text-xs text-amber-700 dark:text-amber-300"
-            data-testid="gateway-mock-unsaved"
-          >
-            {{ t("admin.gatewayMock.unsaved") }}
-          </p>
-          <p
-            v-if="notice"
-            class="mt-2 text-xs text-gray-600 dark:text-dark-300"
-            data-testid="gateway-mock-notice"
-          >
-            {{ notice }}
-          </p>
-          <p
-            v-if="errorMessage"
-            role="alert"
-            class="mt-2 text-sm text-red-700 dark:text-red-300"
-            data-testid="gateway-mock-error"
-          >
-            {{ errorMessage }}
-          </p>
         </div>
-      </template>
-    </div>
+        <p
+          v-if="notice"
+          role="status"
+          class="mt-3 text-sm text-primary-700 dark:text-primary-300"
+          data-testid="gateway-mock-notice"
+        >
+          {{ notice }}
+        </p>
+        <p
+          v-if="errorMessage"
+          role="alert"
+          class="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300"
+          data-testid="gateway-mock-error"
+        >
+          {{ errorMessage }}
+        </p>
+      </div>
+    </template>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import Toggle from "@/components/common/Toggle.vue";
+import Icon from "@/components/icons/Icon.vue";
 import { seedPresets, updateOperatorSettings } from "./api";
 import { gatewayMockFailureKey } from "./labels";
 import type { GatewayMockOperatorStatus, GatewayMockRuleInput } from "./types";
