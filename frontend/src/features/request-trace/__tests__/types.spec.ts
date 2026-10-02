@@ -71,6 +71,62 @@ const goOperatorStatusJSON = {
 };
 
 describe("operator status boundary", () => {
+  it("defaults legacy capture options without enabling the capture gate", () => {
+    const normalized = normalizeRequestTraceOperatorStatus(status);
+    expect(normalized).toMatchObject({
+      capture_allowed: false,
+      capture_body: true,
+      capture_http_200: true,
+      sample_rate_http_200: 100,
+      sample_rate_other: 100,
+      body_max_bytes: 1048576,
+      capture_duration_seconds: 0,
+      capture_until: null,
+      capture_expired: false,
+    });
+  });
+
+  it("preserves disabled capture options and zero sampling", () => {
+    const normalized = normalizeRequestTraceOperatorStatus({
+      ...status,
+      capture_body: false,
+      capture_http_200: false,
+      sample_rate_http_200: 0,
+      sample_rate_other: 25,
+      body_max_bytes: 65536,
+      capture_duration_seconds: 900,
+      capture_until: "2026-10-02T00:15:00Z",
+      capture_expired: true,
+    });
+    expect(normalized).toMatchObject({
+      capture_body: false,
+      capture_http_200: false,
+      sample_rate_http_200: 0,
+      sample_rate_other: 25,
+      body_max_bytes: 65536,
+      capture_duration_seconds: 900,
+      capture_until: "2026-10-02T00:15:00Z",
+      capture_expired: true,
+    });
+  });
+
+  it.each([
+    { capture_body: "false" },
+    { capture_http_200: null },
+    { sample_rate_other: 101 },
+    { sample_rate_http_200: -1 },
+    { body_max_bytes: 1 },
+    { capture_duration_seconds: 60 },
+    { capture_until: "invalid" },
+  ])(
+    "does not render a malformed capture option as a permissive default: %o",
+    (options) => {
+      expect(() =>
+        normalizeRequestTraceOperatorStatus({ ...status, ...options }),
+      ).toThrow();
+    },
+  );
+
   it("reads the status the Go handler actually sends, without a phantom unknown-platform flag", () => {
     // Round-tripped through JSON so this is exactly a wire record, not a literal.
     const normalized = normalizeRequestTraceOperatorStatus(
@@ -78,7 +134,13 @@ describe("operator status boundary", () => {
     );
     expect(Object.keys(normalized).sort()).toEqual([
       "all_groups",
+      "body_max_bytes",
       "capture_allowed",
+      "capture_body",
+      "capture_duration_seconds",
+      "capture_expired",
+      "capture_http_200",
+      "capture_until",
       "enabled",
       "group_ids",
       "model_scope",
@@ -92,6 +154,8 @@ describe("operator status boundary", () => {
       "risk_phrase_en",
       "risk_phrase_zh",
       "risk_version",
+      "sample_rate_http_200",
+      "sample_rate_other",
     ]);
     expect(normalized).toMatchObject({
       platform_scope: "exclude",

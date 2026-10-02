@@ -88,10 +88,19 @@ interface Props {
   platform?: GroupPlatform; // Optional platform filter
   mixedScheduling?: boolean; // For antigravity accounts: allow anthropic/gemini groups
   searchable?: boolean | "auto";
+  /**
+   * Keep every supplied group selectable regardless of simple mode: composite
+   * groups are listed and historical selections are never trimmed. Callers that
+   * treat the list as a runtime *scope* (rather than an account binding) must set
+   * this, because silently dropping a stored group would change what the scope
+   * captures. Defaults to the previous simple-mode behavior.
+   */
+  preserveAllGroups?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   searchable: "auto",
+  preserveAllGroups: false,
 });
 const emit = defineEmits<{
   "update:modelValue": [value: number[]];
@@ -106,9 +115,11 @@ const isSearchable = computed(() => {
 
 // Filter groups by platform if specified
 const filteredGroups = computed(() => {
-  let result = authStore.isSimpleMode
-    ? props.groups.filter((g) => g.platform !== "composite")
-    : props.groups;
+  let result = props.preserveAllGroups
+    ? props.groups
+    : authStore.isSimpleMode
+      ? props.groups.filter((g) => g.platform !== "composite")
+      : props.groups;
   if (props.platform) {
     // antigravity 账户启用混合调度后，可选择 anthropic/gemini 分组
     if (props.platform === "antigravity" && props.mixedScheduling) {
@@ -140,6 +151,9 @@ const filteredGroups = computed(() => {
 watch(
   () => [authStore.isSimpleMode, props.groups, props.modelValue] as const,
   () => {
+    // A scope caller keeps every stored group; the simple-mode auto-trim would
+    // drop composite selections and silently narrow the stored scope.
+    if (props.preserveAllGroups) return;
     if (!authStore.isSimpleMode || props.groups.length === 0) return;
     const visibleIDs = new Set(
       props.groups

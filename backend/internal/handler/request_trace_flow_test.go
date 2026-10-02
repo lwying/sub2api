@@ -784,6 +784,182 @@ func TestRequestTraceRecordsSelectedAccountPlatformOnWireAttempt(t *testing.T) {
 	require.True(t, found, "a real attempt must have been observed")
 }
 
+// 正文关闭：四路正文都不创建 slot／payload，但尝试元信息与 EOF／Close 结束时间仍在。
+func TestRequestTraceFlowBodyCaptureDisabledKeepsMetadataOnly(t *testing.T) {
+	flow := newRequestTraceFlowWithCapture(false, service.RequestTraceBodyLimit)
+	// 入站正文观察回调即使被调用，也不得留下任何字节。
+	flow.inboundBody(httputil.InboundBodyObservation{
+		Outcome:       httputil.InboundBodyComplete,
+		DecodedPrefix: []byte(`{"prompt":"TRACE_PROMPT_CANARY"}`), DecodedBytes: 31,
+	})
+	sink := flow.traceObserver().OnAttempt(httpattempt.TraceAttemptStart{
+		Ordinal: 1, Method: http.MethodPost, Protocol: "anthropic.messages", ValueProtocol: "messages",
+		Header: http.Header{"Content-Type": {"application/json"}},
+	})
+	sink.RequestBodyChunk([]byte(`{"prompt":"TRACE_PROMPT_CANARY"}`), io.EOF)
+	sink.RoundTripResult(http.StatusOK, http.Header{"Content-Type": {"application/json"}}, nil)
+	sink.ResponseBodyChunk([]byte(`{"answer":"TRACE_RESPONSE_CANARY"}`), io.EOF)
+	flow.downstreamChunk([]byte(`{"answer":"TRACE_RESPONSE_CANARY"}`), http.StatusOK)
+
+	stages := flow.finish(strings.Repeat("a", 32), true)
+	for _, stage := range stages {
+		require.Empty(t, stage.Payload, "正文关闭不得留下任何 payload: %s/%s", stage.Stage, stage.View)
+		require.Zero(t, stage.RetainedBytes)
+		if stage.Stage == "wire_request" || stage.Stage == "upstream_response" ||
+			(stage.Stage == "client_response" && stage.View == "downstream") {
+			t.Fatalf("正文关闭不应出现正文阶段 %s/%s", stage.Stage, stage.View)
+		}
+	}
+	encoded, err := json.Marshal(stages)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "TRACE_PROMPT_CANARY")
+	require.NotContains(t, string(encoded), "TRACE_RESPONSE_CANARY")
+
+	var disabled, attempt bool
+	for _, stage := range stages {
+		if stage.Stage == "client_entry" && stage.Reason == "capture_body_disabled" {
+			disabled = true
+		}
+		if stage.Stage == "wire_attempt" {
+			attempt = true
+			require.NotNil(t, stage.Metadata, "尝试元信息必须保留")
+			require.Equal(t, http.StatusOK, stage.Metadata.Status, "状态码必须保留")
+			require.NotNil(t, stage.Metadata.EndedAt, "响应 EOF 的结束时间不得因关闭正文而丢失")
+		}
+	}
+	require.True(t, disabled, "应以非失败原因码 capture_body_disabled 表达仅元信息")
+	require.True(t, attempt)
+}
+
+// HTTP 200 总开关：只跳过客户端最终状态恰好 200 的整条 Trace，201／204／4xx／5xx 保留。
+func TestRequestTraceHTTP200SwitchDropsOnlyFinal200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gate := func() service.RequestTraceGate {
+		return service.RequestTraceGate{CaptureAllowed: true, Scope: service.RequestTraceSettings{
+			CaptureBody: true, CaptureHTTP200: false, SampleRateHTTP200: 100, SampleRateOther: 100,
+			BodyMaxBytes: service.RequestTraceBodyLimit,
+			AllGroups:    true, ModelScope: service.RequestTraceScopeAll, PlatformScope: service.RequestTraceScopeAll,
+		}}
+	}
+	for _, tc := range []struct {
+		status int
+		want   int
+	}{{http.StatusOK, 0}, {http.StatusCreated, 1}, {http.StatusNoContent, 1}, {http.StatusNotFound, 1}, {http.StatusInternalServerError, 1}} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			repo := &gateSnapshotTraceRepo{}
+			queue := service.NewRequestTraceCaptureQueue(repo)
+			defer queue.Stop()
+			r := gin.New()
+			r.POST("/v1/messages",
+				RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return gate() }, repo, queue),
+				func(c *gin.Context) { c.Status(tc.status) },
+			)
+			r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("body")))
+			if tc.want > 0 {
+				waitForGateSnapshotTraces(t, repo, tc.want)
+			} else {
+				// 用 Stop 排空队列后再断言，而不是靠 sleep 的"时间上没发生"：
+				// 队列若真的入队了，Stop 会等它落库，断言因此是确定性的。
+				queue.Stop()
+			}
+			require.Len(t, repo.storedTraces(), tc.want)
+		})
+	}
+}
+
+// 采样：0% 全跳过、100% 全保留，且 HTTP 200 与非 200 各自独立。
+func TestRequestTraceSamplingByFinalStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gate := func(http200, other int) service.RequestTraceGate {
+		return service.RequestTraceGate{CaptureAllowed: true, Scope: service.RequestTraceSettings{
+			CaptureBody: true, CaptureHTTP200: true, SampleRateHTTP200: http200, SampleRateOther: other,
+			BodyMaxBytes: service.RequestTraceBodyLimit,
+			AllGroups:    true, ModelScope: service.RequestTraceScopeAll, PlatformScope: service.RequestTraceScopeAll,
+		}}
+	}
+	for _, tc := range []struct {
+		name                 string
+		status               int
+		http200, other, want int
+	}{
+		{"200 dropped by 0% http200 rate", http.StatusOK, 0, 100, 0},
+		{"non-200 kept by 100% other rate", http.StatusBadRequest, 0, 100, 1},
+		{"non-200 dropped by 0% other rate", http.StatusBadRequest, 100, 0, 0},
+		{"200 kept by 100% http200 rate", http.StatusOK, 100, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &gateSnapshotTraceRepo{}
+			queue := service.NewRequestTraceCaptureQueue(repo)
+			defer queue.Stop()
+			r := gin.New()
+			r.POST("/v1/messages",
+				RequestTraceCaptureMiddleware(func(context.Context) service.RequestTraceGate { return gate(tc.http200, tc.other) }, repo, queue),
+				func(c *gin.Context) { c.Status(tc.status) },
+			)
+			r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("body")))
+			if tc.want > 0 {
+				waitForGateSnapshotTraces(t, repo, tc.want)
+			} else {
+				// 用 Stop 排空队列后再断言，而不是靠 sleep 的"时间上没发生"：
+				// 队列若真的入队了，Stop 会等它落库，断言因此是确定性的。
+				queue.Stop()
+			}
+			require.Len(t, repo.storedTraces(), tc.want)
+		})
+	}
+}
+
+// 端到端：正文关闭 + 已认证 + 没有真实缺口（本地 mock 应答）时，metadata-only 采集
+// 必须走到既有的 stored 状态并被队列 finalize；同时确实没有任何正文阶段。
+func TestRequestTraceBodyDisabledMetadataOnlyReachesStored(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &finalizingRequestTraceRepoStub{finalized: make(chan service.RequestTraceCaptureState, 1)}
+	queue := service.NewRequestTraceCaptureQueue(repo)
+	defer queue.Stop()
+
+	gate := func(context.Context) service.RequestTraceGate {
+		return service.RequestTraceGate{CaptureAllowed: true, Scope: service.RequestTraceSettings{
+			CaptureBody: false, CaptureHTTP200: true, SampleRateHTTP200: 100, SampleRateOther: 100,
+			BodyMaxBytes: service.RequestTraceBodyLimit,
+			AllGroups:    true, ModelScope: service.RequestTraceScopeAll, PlatformScope: service.RequestTraceScopeAll,
+		}}
+	}
+	r := gin.New()
+	r.POST("/v1/messages",
+		RequestTraceCaptureMiddleware(gate, repo, queue),
+		func(c *gin.Context) {
+			c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 61, UserID: 71})
+			BindRequestTraceAfterAuth()(c)
+		},
+		func(c *gin.Context) {
+			recordLocalMockTraceDecision(c)
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		},
+	)
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("body")))
+
+	select {
+	case state := <-repo.finalized:
+		require.Equal(t, service.RequestTraceStored, state,
+			"完整 metadata-only 采集必须使用既有 stored 状态")
+	case <-time.After(2 * time.Second):
+		t.Fatal("body-disabled metadata-only trace must finalize as stored")
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	var disabled bool
+	for _, stage := range repo.stages {
+		require.Empty(t, stage.Payload, "正文关闭不得留下任何 payload")
+		require.NotEqual(t, "wire_request", stage.Stage)
+		require.NotEqual(t, "upstream_response", stage.Stage)
+		if stage.Stage == "client_entry" && stage.Reason == "capture_body_disabled" {
+			disabled = true
+		}
+	}
+	require.True(t, disabled)
+}
+
 func TestRequestTraceAuthenticatedFlowHasInboundAndWireAndFinalStages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &requestTraceWriterRepoStub{}

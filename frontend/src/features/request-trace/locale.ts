@@ -3,6 +3,10 @@ export const requestTraceEn = {
     title: "Request Traces",
     description:
       "One logical request per Trace; stages show only observed facts and explicit gaps.",
+    tabs: {
+      records: "Records",
+      config: "Capture settings",
+    },
     list: {
       refresh: "Refresh",
       search: "Search",
@@ -64,6 +68,49 @@ export const requestTraceEn = {
       statsCapture: "Capture completeness",
       statsUsage: "Usage association",
       statsOther: "Other / not observed",
+      filterPlaceholder: {
+        group: "Select a group",
+        model: "Select a model",
+        platform: "Select a platform",
+      },
+      candidates: {
+        loading: "Loading model candidates…",
+        error:
+          "Model candidates could not be loaded. Retry to choose from the full list.",
+        retry: "Retry",
+      },
+      cleanupActions: {
+        selectedAction: "Delete checked Traces",
+        filteredAction: "Delete all Traces matching this query",
+        selectedTitle: "Delete checked Traces",
+        selectedMessage:
+          "Delete {count} checked Trace(s)? This cannot be undone. Usage and billing data are kept.",
+        previewTitle: "Delete matching Traces",
+        previewHint:
+          "Preview the count and conditions first; the deletion is bound to the query you actually ran.",
+        previewCount: "{count} Trace(s) currently match this query.",
+        previewExpired:
+          "This preview token has expired. Preview again before deleting.",
+        noMatches: "No Traces match this query; nothing to delete.",
+        filterChanged:
+          "The query changed since the preview. Preview again before deleting.",
+        snapshotNote:
+          "Newer Trace IDs are excluded. Within the preview boundary, the confirmed filters are checked again; linkage or labels may change, so the final count can differ.",
+        confirm: "Delete matching Traces",
+        cancel: "Cancel",
+        deleting: "Deleting…",
+        deleted: "Deleted {count} Trace(s).",
+        cleaned: "Cleanup finished.",
+        partial:
+          "Deleted {count} Trace(s), then cleanup stopped. The remaining matches were not fully deleted.",
+        failed:
+          "The deletion did not complete. What was deleted is reported; check the list again.",
+        needsSearch:
+          "Run a search with real conditions before deleting a filtered set.",
+        immutableNote:
+          "Usage records, billing and user data are never deleted with a Trace.",
+        previewFailed: "The preview could not be read; nothing was deleted.",
+      },
       captureStateLabel: {
         not_observed: "Not observed",
         stored: "Stored",
@@ -115,6 +162,7 @@ export const requestTraceEn = {
         metadata_observed: "Metadata observed",
         retained: "Retained",
         body_not_observed: "Body not observed",
+        capture_body_disabled: "Body not captured: body capture is disabled",
         auth_rejected_body_not_observed:
           "Body not observed: the request was rejected before it was read",
         attempt_not_observed: "No upstream attempt was observed",
@@ -167,6 +215,9 @@ export const requestTraceEn = {
       startedAt: "Started",
       endedAt: "Ended",
       body: "Retained text",
+      metadataOnly: "Metadata only — body capture was disabled for this Trace.",
+      captureBodyDisabledNote:
+        "Body capture is off, so only link metadata was stored. This is expected, not a capture gap.",
       plannedCleanup:
         "Scheduled for cleanup after {date}; readable until removed.",
       decision: {
@@ -418,6 +469,20 @@ export const requestTraceEn = {
         title: "Capture scope",
         description:
           "The scope decides which future requests are captured. It is stored with the same switch and never rewrites Traces that are already stored.",
+        groupsMode: {
+          all: "All groups",
+          selected: "Selected groups",
+        },
+        groupsPlaceholder: "Choose groups",
+        modelsPlaceholder: "Choose models",
+        platformsPlaceholder: "Choose platforms",
+        staleNote:
+          "Some saved or selected entries are not in the current catalog. They are kept and shown so a saved scope is never silently cleared.",
+        optionsLoading: "Loading options…",
+        optionsError:
+          "Options could not be loaded. Retry to choose from the full list.",
+        retryOptions: "Retry",
+        selectedCount: "{count} selected",
         storedGroups: "Stored groups",
         storedModels: "Stored models",
         storedPlatforms: "Stored platforms",
@@ -461,6 +526,109 @@ export const requestTraceEn = {
           "Capture is on: saving the scope writes a new risk acknowledgement, so the statement has to be typed again.",
         phraseLabel: "Risk acknowledgement for this scope change",
         updated: "Capture scope saved.",
+      },
+      summaryTitle: "Applied and draft",
+      summaryDescription:
+        "Applied values are what the server stores now; draft values are what saving would write. They differ until you save.",
+      summaryField: "Setting",
+      summaryApplied: "Applied",
+      summaryDraft: "Draft",
+      status: {
+        title: "Capture status",
+        description:
+          "The stored switch and the server's effective verdict are separate: a stored-on gate can still be blocked by deployment, acknowledgement or an expired window.",
+        stored: "Stored switch",
+        effective: "Effective capture",
+        expiresAt: "Capture until",
+        remaining: "Time remaining",
+        forever: "No time limit",
+        expired: "Expired — capture stopped",
+        expiredNote:
+          "The capture window ended, so nothing is being captured. Restart the window or enable capture again to resume; history is not deleted.",
+        expiredPendingNote:
+          "This device's clock shows the capture window has ended, but the server has not confirmed it yet. The status is being refreshed; nothing is being captured in the meantime.",
+        active: "Capturing",
+        inactive: "Not capturing",
+      },
+      presets: {
+        title: "Quick presets",
+        description:
+          "Presets only fill the body and HTTP 200 switches below. They never change scope, sampling, size limit, stop time or the master switch, and nothing is saved until you save.",
+        custom: "Custom",
+        lite: "Lightweight triage",
+        liteHint: "Body off, HTTP 200 off: link and non-200 failures only.",
+        chain: "Link observation",
+        chainHint: "Body off, HTTP 200 on: full request links, metadata only.",
+        detailed: "Detailed diagnosis",
+        detailedHint: "Body on, HTTP 200 on: full plaintext capture.",
+      },
+      content: {
+        title: "What to capture",
+        description:
+          "These two switches decide whether body text and successful (HTTP 200) Traces are captured at all.",
+        body: "Capture request and response bodies",
+        bodyHint:
+          "One switch for client request, upstream request, upstream response and client response bodies. Off means no body is captured or stored.",
+        http200: "Capture HTTP 200 Traces",
+        http200Hint:
+          "Only the client's final status 200 is skipped when off. Other 2xx statuses (201, 204) are still captured.",
+        metadataOnly: "Metadata only",
+        metadataOnlyNote:
+          "Body capture is off: link metadata, attempts, decisions and timing are kept, but no body bytes.",
+      },
+      advanced: {
+        title: "Advanced capture",
+        description:
+          "Rarely changed bounds. Disabled fields keep their current value and are still saved.",
+        sampleHttp200: "HTTP 200 sample rate (%)",
+        sampleOther: "Other statuses sample rate (%)",
+        sampleHint:
+          "Stable per-Trace sampling, 0–100%. It lowers stored volume only; 0% stores none, 100% stores all.",
+        bodyLimit: "Body limit per stage",
+        bodyLimitHint:
+          "Maximum retained bytes for each body view. Larger bodies are truncated with an explicit mark.",
+        duration: "Stop capture after",
+        durationHint:
+          "The server times this window. A normal save never restarts it.",
+        durationForever: "No time limit",
+        duration15m: "15 minutes",
+        duration1h: "1 hour",
+        duration24h: "24 hours",
+        renew: "Restart capture window",
+        renewHint:
+          "Starts a new window from the server's current time using the selected duration.",
+        renewNeedsEnabled:
+          "Capture is off. Enable capture first to set a stop time.",
+        renewNeedsDuration:
+          "Choose a stop time above; with “No time limit” there is no window to restart.",
+        renewRequiredAfterExpiry:
+          "The window has expired. Restart it explicitly to capture again.",
+        disabledKeepsValue:
+          "Off: the value is kept and saved, but has no effect while this switch is off.",
+      },
+      actions: {
+        dirty: "Unsaved changes",
+        synced: "All changes saved",
+        reset: "Reset",
+        save: "Save capture settings",
+        saving: "Saving…",
+        saved: "Capture settings saved.",
+        saveFailed:
+          "Capture settings were not saved; the server has not confirmed a change.",
+      },
+      confirm: {
+        enableTitle: "Enable Trace capture",
+        enableMessage:
+          "Enabling capture stores plaintext request and response fragments. Type the risk statement below to confirm.",
+        disableTitle: "Disable Trace capture",
+        disableMessage:
+          "Disabling stops new captures immediately. Already stored Traces remain readable. This does not need the risk statement.",
+        phraseLabel: "Risk acknowledgement",
+        confirm: "Confirm",
+        cancel: "Cancel",
+        renewTitle: "Restart capture window",
+        renewMessage:
+          "Capture is already on. Restarting the window begins a new timed period from now.",
       },
       support: {
         supported: "The database can enforce usage-owned Trace deletion.",
@@ -554,6 +722,10 @@ export const requestTraceZh = {
   requestTrace: {
     title: "请求 Trace",
     description: "每条逻辑请求一条 Trace；各阶段只显示已观察事实和明确缺口。",
+    tabs: {
+      records: "记录",
+      config: "采集配置",
+    },
     list: {
       refresh: "刷新",
       search: "查询",
@@ -612,6 +784,42 @@ export const requestTraceZh = {
       statsCapture: "采集完整性",
       statsUsage: "使用记录关联",
       statsOther: "其他／未观察",
+      filterPlaceholder: {
+        group: "选择分组",
+        model: "选择模型",
+        platform: "选择平台",
+      },
+      candidates: {
+        loading: "正在加载模型候选…",
+        error: "无法加载模型候选；请重试以从完整列表中选择。",
+        retry: "重试",
+      },
+      cleanupActions: {
+        selectedAction: "清理勾选记录",
+        filteredAction: "清理全部匹配当前查询的记录",
+        selectedTitle: "清理勾选记录",
+        selectedMessage:
+          "确认删除已勾选的 {count} 条 Trace？此操作不可恢复；使用量与计费数据会保留。",
+        previewTitle: "清理匹配记录",
+        previewHint: "请先预览数量与条件；删除绑定到你实际执行的查询。",
+        previewCount: "当前查询匹配 {count} 条 Trace。",
+        previewExpired: "该预览令牌已过期；请重新预览后再删除。",
+        noMatches: "没有 Trace 匹配该查询，无需清理。",
+        filterChanged: "查询条件已变化；请重新预览后再删除。",
+        snapshotNote:
+          "仅清理预览时的 ID 边界内、执行时仍匹配这些条件的 Trace。关联状态或显示名称可能变化，因此最终数量可能与预览不同。新 ID 不会被清理。",
+        confirm: "删除匹配的 Trace",
+        cancel: "取消",
+        deleting: "正在删除…",
+        deleted: "已删除 {count} 条 Trace。",
+        cleaned: "清理已完成。",
+        partial:
+          "已删除 {count} 条 Trace，随后清理中断；剩余匹配记录尚未全部删除。",
+        failed: "删除未全部完成；已如实报告删除数量，请重新查看列表。",
+        needsSearch: "删除筛选集合前，请先用真实条件执行一次查询。",
+        immutableNote: "使用记录、计费与用户数据不会随 Trace 删除。",
+        previewFailed: "无法读取预览；没有删除任何内容。",
+      },
       captureStateLabel: {
         not_observed: "未观察到",
         stored: "已存储",
@@ -663,6 +871,7 @@ export const requestTraceZh = {
         metadata_observed: "已观察元数据",
         retained: "已保留",
         body_not_observed: "正文未被观察",
+        capture_body_disabled: "未采集正文：正文采集已关闭",
         auth_rejected_body_not_observed: "正文未被观察：请求在读取前即被拒绝",
         attempt_not_observed: "未观察到上游尝试",
         wire_observed: "已观察尝试，但未保留正文",
@@ -711,6 +920,9 @@ export const requestTraceZh = {
       startedAt: "开始时间",
       endedAt: "结束时间",
       body: "已保留文本",
+      metadataOnly: "仅元信息——该 Trace 未采集正文。",
+      captureBodyDisabledNote:
+        "正文采集已关闭，因此只存储链路元信息；这是预期结果，不是采集缺口。",
       plannedCleanup: "计划于 {date} 起清理；实际删除前仍可读取。",
       decision: {
         title: "网关决定",
@@ -929,6 +1141,19 @@ export const requestTraceZh = {
         title: "采集范围",
         description:
           "范围决定后续哪些请求进入采集；它与同一个开关一起保存，不追溯改变已存 Trace。",
+        groupsMode: {
+          all: "全部分组",
+          selected: "指定分组",
+        },
+        groupsPlaceholder: "选择分组",
+        modelsPlaceholder: "选择模型",
+        platformsPlaceholder: "选择平台",
+        staleNote:
+          "部分已保存或已选条目不在当前目录中；它们会被保留并显示，已保存范围不会被静默清空。",
+        optionsLoading: "正在加载选项…",
+        optionsError: "无法加载选项；请重试以从完整列表中选择。",
+        retryOptions: "重试",
+        selectedCount: "已选 {count} 项",
         storedGroups: "已保存的分组",
         storedModels: "已保存的模型",
         storedPlatforms: "已保存的平台",
@@ -969,6 +1194,103 @@ export const requestTraceZh = {
           "采集已开启：保存范围会写入一次新的风险确认，因此需要重新逐字输入该语句。",
         phraseLabel: "本次范围变更的风险确认",
         updated: "采集范围已保存。",
+      },
+      summaryTitle: "生效与草稿",
+      summaryDescription:
+        "“生效”是服务端当前的存储值；“草稿”是保存后将写入的值，保存前二者可能不同。",
+      summaryField: "项目",
+      summaryApplied: "生效",
+      summaryDraft: "草稿",
+      status: {
+        title: "采集状态",
+        description:
+          "已保存的开关与服务端的实际结论相互独立：已保存为开启，仍可能因部署、风险确认或窗口到期而未在采集。",
+        stored: "已保存的开关",
+        effective: "实际采集结论",
+        expiresAt: "采集截止时间",
+        remaining: "剩余时间",
+        forever: "无时限",
+        expired: "已到期——采集已停止",
+        expiredNote:
+          "采集窗口已结束，当前不再采集。可重新开始窗口或再次开启采集；历史记录不会被删除。",
+        expiredPendingNote:
+          "按本机时间采集窗口已结束，但服务端尚未确认；状态正在刷新，在此期间不进行采集。",
+        active: "采集中",
+        inactive: "未采集",
+      },
+      presets: {
+        title: "快捷预设",
+        description:
+          "预设只会填充下方的正文与 HTTP 200 开关，不改变范围、采样率、体积上限、停止时间或总开关；保存前不会生效。",
+        custom: "自定义",
+        lite: "轻量排查",
+        liteHint: "正文关闭、200 关闭：只看链路与非 200 失败。",
+        chain: "链路观察",
+        chainHint: "正文关闭、200 开启：保留完整链路，仅元信息。",
+        detailed: "详细诊断",
+        detailedHint: "正文开启、200 开启：完整明文采集。",
+      },
+      content: {
+        title: "采集内容",
+        description:
+          "这两个开关决定是否采集正文文本以及最终状态为 HTTP 200 的整条 Trace。",
+        body: "采集请求与响应正文",
+        bodyHint:
+          "一个开关控制客户端请求、上游请求、上游响应与客户端响应正文。关闭后不采集、不存储任何正文。",
+        http200: "采集 HTTP 200 的 Trace",
+        http200Hint:
+          "关闭时只跳过客户端最终状态码为 200 的整条 Trace；其他 2xx（201、204）仍会采集。",
+        metadataOnly: "仅元信息",
+        metadataOnlyNote:
+          "正文采集已关闭：保留链路元信息、上游尝试、决定与耗时，但不保留任何正文字节。",
+      },
+      advanced: {
+        title: "高级采集",
+        description: "这些边界很少改动。禁用字段会保留当前值并照常保存。",
+        sampleHttp200: "HTTP 200 采样率（%）",
+        sampleOther: "其他状态采样率（%）",
+        sampleHint:
+          "按 Trace 稳定取样的 0–100%。仅降低入库量；0% 全部跳过，100% 全部保留。",
+        bodyLimit: "每阶段正文上限",
+        bodyLimitHint:
+          "每个正文视图的最大保留字节数；超出部分会被截断并明确标识。",
+        duration: "停止采集于",
+        durationHint: "窗口由服务端计时；普通保存不会重新计时。",
+        durationForever: "无时限",
+        duration15m: "15 分钟",
+        duration1h: "1 小时",
+        duration24h: "24 小时",
+        renew: "重新开始采集窗口",
+        renewHint: "按所选时长，以服务端当前时间开始一个新窗口。",
+        renewNeedsEnabled: "采集已关闭；请先开启采集，再设置停止时间。",
+        renewNeedsDuration:
+          "请先在上方选择停止时间；“无时限”下没有可重新开始的窗口。",
+        renewRequiredAfterExpiry: "窗口已到期；需显式重新开始才能继续采集。",
+        disabledKeepsValue:
+          "已关闭：该值会被保留并保存，但在此开关关闭期间不生效。",
+      },
+      actions: {
+        dirty: "有未保存的修改",
+        synced: "已全部保存",
+        reset: "重置",
+        save: "保存采集设置",
+        saving: "正在保存…",
+        saved: "采集设置已保存。",
+        saveFailed: "采集设置未保存；服务端未确认变更。",
+      },
+      confirm: {
+        enableTitle: "开启 Trace 采集",
+        enableMessage:
+          "开启后会存储明文请求与响应片段；请在下方逐字输入风险语句以确认。",
+        disableTitle: "关闭 Trace 采集",
+        disableMessage:
+          "关闭后立即停止新的采集；已存储的 Trace 仍可读取。此操作不需要风险语句。",
+        phraseLabel: "风险确认",
+        confirm: "确认",
+        cancel: "取消",
+        renewTitle: "重新开始采集窗口",
+        renewMessage:
+          "采集已开启；重新开始窗口将从当前时间起计算新的限时周期。",
       },
       support: {
         supported: "数据库可保证随使用记录删除关联 Trace。",

@@ -107,9 +107,14 @@ describe("retired legacy capture surfaces", () => {
     const settingsView = source("views/admin/SettingsView.vue");
     expect(settingsView).not.toContain("requestAuditValueDetail");
     expect(settingsView).not.toContain("RequestTraceOperatorSettings");
-    expect(
-      source("features/request-trace/RequestTraceSettingsDialog.vue"),
-    ).toContain("RequestTraceOperatorSettings");
+    // The capture gate stays reachable: the Trace feature still owns it, now on
+    // the capture-settings tab rather than inside the export dialog. The gate
+    // component itself is the guard, whichever surface renders it.
+    const operatorSettings = source(
+      "features/request-trace/RequestTraceOperatorSettings.vue",
+    );
+    expect(operatorSettings).toContain("updateOperatorSettings");
+    expect(operatorSettings).toContain("request-trace-enable");
   });
 });
 

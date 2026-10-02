@@ -37,6 +37,25 @@ func (r *compositeModelRouteRepository) ListByGroup(ctx context.Context, groupID
 	return out, nil
 }
 
+// ListEnabledPublicModels returns the public model names of every enabled
+// composite route across all groups. It is the minimal global read the admin
+// request-trace model candidate aggregation needs; only the public_model column
+// is selected, so no upstream target or notes leave the database.
+func (r *compositeModelRouteRepository) ListEnabledPublicModels(ctx context.Context) ([]string, error) {
+	rows, err := clientFromContext(ctx, r.client).CompositeModelRoute.Query().
+		Where(compositemodelroute.EnabledEQ(true)).
+		Select(compositemodelroute.FieldPublicModel).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.PublicModel)
+	}
+	return out, nil
+}
+
 func (r *compositeModelRouteRepository) Create(ctx context.Context, route *service.CompositeModelRoute) error {
 	if route == nil {
 		return service.ErrCompositeRouteNotFound

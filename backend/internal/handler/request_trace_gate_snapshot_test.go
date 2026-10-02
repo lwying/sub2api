@@ -86,7 +86,10 @@ func changedScopeGate() service.RequestTraceGate {
 		CaptureAllowed: true,
 		Scope: service.RequestTraceSettings{
 			Enabled: true, RiskAcknowledged: true,
-			AllGroups: false, GroupIDs: []int64{424242},
+			CaptureBody: true, CaptureHTTP200: true,
+			SampleRateHTTP200: 100, SampleRateOther: 100,
+			BodyMaxBytes:  service.RequestTraceBodyLimit,
+			AllGroups:     false, GroupIDs: []int64{424242},
 			ModelScope:    service.RequestTraceScopeAll,
 			PlatformScope: service.RequestTraceScopeAll,
 		},

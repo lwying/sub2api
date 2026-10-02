@@ -38,11 +38,7 @@ var (
 const requestTraceExportFilterWhere = requestTraceFilterWhere + ` AND ($20::text[] IS NULL OR trace_id = ANY($20::text[]))`
 
 func requestTraceExportFilterArgs(filter service.RequestTraceExportFilter) []any {
-	args := requestTraceFilterArgs(filter.TraceID, filter.RouteFamily, filter.ClientStatus,
-		filter.CreatedFrom, filter.CreatedTo, filter.UsageLinked, filter.UsageLogID,
-		filter.AccountID, filter.GroupID, filter.GroupUnknown, filter.RequestedModel,
-		filter.ModelUnknown, filter.Platform, filter.PlatformUnknown,
-		filter.UserID, filter.UserUnknown, filter.APIKeyID, filter.APIKeyUnknown, filter.Keyword)
+	args := requestTraceMetadataFilterArgs(filter)
 	var selected any
 	if len(filter.TraceIDs) > 0 {
 		selected = pq.Array(filter.TraceIDs)

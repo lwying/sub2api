@@ -116,3 +116,14 @@ func requestTraceListFilterArgs(filter service.RequestTraceListFilter) []any {
 		filter.RequestedModel, filter.ModelUnknown, filter.Platform, filter.PlatformUnknown,
 		filter.UserID, filter.UserUnknown, filter.APIKeyID, filter.APIKeyUnknown, filter.Keyword)
 }
+
+// requestTraceMetadataFilterArgs 把导出／删除筛选映射成 requestTraceFilterWhere 的
+// $1..$19 绑定参数（不含导出所选 ID 的 $20）。列表、导出与手动清理共用同一份 clause
+// 与同一份参数顺序，筛选语义不会各写一套而漂移。
+func requestTraceMetadataFilterArgs(filter service.RequestTraceExportFilter) []any {
+	return requestTraceFilterArgs(filter.TraceID, filter.RouteFamily, filter.ClientStatus,
+		filter.CreatedFrom, filter.CreatedTo, filter.UsageLinked, filter.UsageLogID,
+		filter.AccountID, filter.GroupID, filter.GroupUnknown, filter.RequestedModel,
+		filter.ModelUnknown, filter.Platform, filter.PlatformUnknown,
+		filter.UserID, filter.UserUnknown, filter.APIKeyID, filter.APIKeyUnknown, filter.Keyword)
+}

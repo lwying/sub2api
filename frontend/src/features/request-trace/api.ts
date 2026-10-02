@@ -22,6 +22,8 @@ import {
   type RequestTraceExportTask,
   type RequestTraceOpsStatus,
   type TraceAckLanguage,
+  type RequestTraceDeletePreview,
+  type RequestTraceDeleteResult,
 } from "./types";
 
 const path = "/admin/settings/request-trace";
@@ -56,6 +58,23 @@ export async function getTrace(
   return normalizeRequestTraceDetail(data);
 }
 
+export async function getTraceModelCandidates(): Promise<string[]> {
+  const { data } = await apiClient.get<{ models: unknown }>(
+    `${path}/model-candidates`,
+    { headers },
+  );
+  if (
+    !Array.isArray(data.models) ||
+    data.models.some(
+      (value) =>
+        typeof value !== "string" || !value.trim() || value.length > 128,
+    )
+  ) {
+    throw new Error("Trace model candidates are unavailable");
+  }
+  return [...new Set(data.models as string[])];
+}
+
 export async function getOperatorSettings(): Promise<RequestTraceOperatorStatus> {
   const { data } = await apiClient.get<unknown>(path, { headers });
   return normalizeRequestTraceOperatorStatus(data);
@@ -87,12 +106,23 @@ export async function getTraceOpsStatus(options?: {
 export async function updateOperatorSettings(
   input: RequestTraceOperatorUpdateInput,
 ): Promise<RequestTraceOperatorStatus> {
-  const body = {
+  const body: Record<string, unknown> = {
     enabled: input.enabled,
     language: input.language,
     phrase: input.phrase,
     scope_provided: input.scope_provided === true,
   };
+  for (const key of [
+    "capture_body",
+    "capture_http_200",
+    "sample_rate_http_200",
+    "sample_rate_other",
+    "body_max_bytes",
+    "capture_duration_seconds",
+    "renew_capture_window",
+  ] as const) {
+    if (input[key] !== undefined) body[key] = input[key];
+  }
   const payload =
     input.scope_provided === true
       ? {
@@ -137,6 +167,81 @@ const exportFilterKeys = [
   "api_key_unknown",
   "q",
 ] as const;
+
+export async function previewTraceDelete(
+  filter: RequestTraceExportFilter,
+): Promise<RequestTraceDeletePreview> {
+  const normalizedFilter = exportQueryParams(filter);
+  if (Object.keys(normalizedFilter).length === 0)
+    throw new Error("Trace cleanup requires an executed filter");
+  const { data } = await apiClient.post<RequestTraceDeletePreview>(
+    `${tracePath}/delete-preview`,
+    { filter: normalizedFilter },
+    { headers },
+  );
+  if (
+    !Number.isSafeInteger(data.matched_count) ||
+    data.matched_count < 0 ||
+    !Number.isSafeInteger(data.snapshot_max_id) ||
+    data.snapshot_max_id < 0 ||
+    typeof data.filter_hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(data.filter_hash) ||
+    typeof data.confirmation_token !== "string" ||
+    !data.confirmation_token ||
+    !Number.isFinite(Date.parse(data.expires_at))
+  ) {
+    throw new Error("Trace cleanup preview is unavailable");
+  }
+  return data;
+}
+
+function deleteResult(
+  data: RequestTraceDeleteResult,
+): RequestTraceDeleteResult {
+  if (
+    !Number.isSafeInteger(data.deleted_count) ||
+    data.deleted_count < 0 ||
+    typeof data.completed !== "boolean"
+  ) {
+    throw new Error("Trace cleanup result is unavailable");
+  }
+  return { deleted_count: data.deleted_count, completed: data.completed };
+}
+
+export async function deleteSelectedTraces(
+  traceIDs: string[],
+): Promise<RequestTraceDeleteResult> {
+  const { data } = await apiClient.post<RequestTraceDeleteResult>(
+    `${tracePath}/batch-delete`,
+    {
+      trace_ids: boundedTraceSelection(traceIDs),
+      confirm: true,
+    },
+    { headers },
+  );
+  return deleteResult(data);
+}
+
+export async function deleteTracesByFilter(
+  filter: RequestTraceExportFilter,
+  preview: RequestTraceDeletePreview,
+): Promise<RequestTraceDeleteResult> {
+  const normalizedFilter = exportQueryParams(filter);
+  if (Object.keys(normalizedFilter).length === 0)
+    throw new Error("Trace cleanup requires an executed filter");
+  const { data } = await apiClient.post<RequestTraceDeleteResult>(
+    `${tracePath}/delete-by-filter`,
+    {
+      filter: normalizedFilter,
+      snapshot_max_id: preview.snapshot_max_id,
+      filter_hash: preview.filter_hash,
+      confirmation_token: preview.confirmation_token,
+      confirm: true,
+    },
+    { headers },
+  );
+  return deleteResult(data);
+}
 
 /**
  * The server's bounded reasons, mapped onto the outcomes the UI can explain.

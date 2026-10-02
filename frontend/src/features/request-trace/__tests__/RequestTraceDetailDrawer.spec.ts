@@ -119,6 +119,40 @@ requestTraceDecisionSources.forEach((value, index) => {
 describe("admin Request Trace detail", () => {
   beforeEach(() => api.getTrace.mockReset());
 
+  it("shows intentional metadata-only capture without a missing-body warning", async () => {
+    const id = "b".repeat(32);
+    api.getTrace.mockResolvedValue(
+      detail(id, {
+        capture_state: "stored",
+        stages: [
+          {
+            ordinal: 1,
+            stage: "client_entry",
+            state: "not_observed",
+            reason: "capture_body_disabled",
+            attempt_index: 0,
+            view_name: "",
+            observed_bytes: 0,
+            retained_bytes: 0,
+            dropped_events: 0,
+            redaction_unverified: false,
+          },
+        ],
+      }),
+    );
+    const wrapper = mountDrawer(id);
+    await flushPromises();
+    expect(wrapper.get('[data-testid="trace-metadata-only"]').text()).toContain(
+      "admin.requestTrace.detail.metadataOnly",
+    );
+    expect(
+      wrapper.find('[data-testid="trace-stage-not-observed"]').exists(),
+    ).toBe(false);
+    expect(wrapper.find('[data-testid="trace-retained-text"]').exists()).toBe(
+      false,
+    );
+  });
+
   it("labels rejected request body as unobserved without inventing an upstream attempt", async () => {
     const id = "b".repeat(32);
     api.getTrace.mockResolvedValue(detail(id));

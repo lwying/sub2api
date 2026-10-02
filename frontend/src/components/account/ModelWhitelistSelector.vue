@@ -127,6 +127,7 @@
     <!-- Quick Actions -->
     <div class="mb-4 flex flex-wrap gap-2">
       <button
+        v-if="allowCustom"
         type="button"
         @click="fillRelated"
         class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
@@ -156,7 +157,7 @@
     </div>
 
     <!-- Custom Model Input -->
-    <div class="mb-3">
+    <div v-if="allowCustom" class="mb-3">
       <label
         class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300"
         >{{ t("admin.accounts.customModelName") }}</label
@@ -199,19 +200,38 @@ import {
 
 const { t } = useI18n();
 
-const props = defineProps<{
-  modelValue: string[];
-  modelMappings?: { from: string; to: string }[];
-  platform?: string;
-  platforms?: string[];
-  accountId?: number;
-  syncCredentials?: {
-    platform: string;
-    type: string;
-    base_url?: string;
-    api_key: string;
-  };
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: string[];
+    modelMappings?: { from: string; to: string }[];
+    platform?: string;
+    platforms?: string[];
+    accountId?: number;
+    syncCredentials?: {
+      platform: string;
+      type: string;
+      base_url?: string;
+      api_key: string;
+    };
+    /**
+     * Extra candidate model names to offer beside the built-in catalog. When
+     * supplied without a platform, the candidates ARE the catalog (the caller is
+     * providing a server-resolved list rather than a platform's known models);
+     * an explicit empty array means an empty catalog, never a fallback. Callers
+     * that omit it entirely keep the built-in behavior.
+     */
+    extraOptions?: string[];
+    /**
+     * Whether the operator may type an arbitrary model name. Defaults to true
+     * (the account-editing behavior). Scope callers pass false so a free-text
+     * model cannot be the primary entry point, leaving only the candidate list.
+     */
+    allowCustom?: boolean;
+  }>(),
+  {
+    allowCustom: true,
+  },
+);
 
 const emit = defineEmits<{
   "update:modelValue": [value: string[]];
@@ -271,18 +291,39 @@ const canSyncUpstream = computed(() => {
 });
 
 const availableOptions = computed(() => {
-  if (normalizedPlatforms.value.length === 0) {
-    return allModels;
+  // 显式传入（即使是空数组）表示调用方提供了完整候选：不再回退内置目录。
+  // 只有完全未传 extraOptions 的旧调用方才沿用内置列表。
+  const extrasProvided = props.extraOptions !== undefined;
+  const extras = (props.extraOptions ?? [])
+    .map((model) => model.trim())
+    .filter((model) => model !== "");
+  const base: { value: string; label: string }[] = [];
+
+  if (normalizedPlatforms.value.length > 0) {
+    const allowedModels = new Set<string>();
+    for (const platform of normalizedPlatforms.value) {
+      for (const model of getModelsByPlatform(platform)) {
+        allowedModels.add(model);
+      }
+    }
+    base.push(...allModels.filter((model) => allowedModels.has(model.value)));
+  } else if (!extrasProvided) {
+    // No platform filter and no extraOptions prop: the built-in catalog, as
+    // before. A caller that supplies candidates replaces it entirely, and an
+    // explicit empty list stays empty rather than leaking the built-in list.
+    base.push(...allModels);
   }
 
-  const allowedModels = new Set<string>();
-  for (const platform of normalizedPlatforms.value) {
-    for (const model of getModelsByPlatform(platform)) {
-      allowedModels.add(model);
+  if (extras.length > 0) {
+    const seen = new Set(base.map((model) => model.value));
+    for (const model of extras) {
+      if (seen.has(model)) continue;
+      seen.add(model);
+      base.push({ value: model, label: model });
     }
   }
 
-  return allModels.filter((model) => allowedModels.has(model.value));
+  return base;
 });
 
 const filteredModels = computed(() => {

@@ -302,6 +302,69 @@ describe("ModelWhitelistSelector", () => {
     ]);
   });
 
+  it("offers supplied candidate models when no platform catalog applies", async () => {
+    const wrapper = mountSelector({
+      platform: "",
+      extraOptions: ["claude-opus-4-1", "gpt-5.3-codex"],
+    });
+    await wrapper.get("div.cursor-pointer").trigger("click");
+    const rows = wrapper.findAll('[data-testid="model-option"]');
+    const text = rows.map((row) => row.text()).join(" ");
+    expect(text).toContain("claude-opus-4-1");
+    expect(text).toContain("gpt-5.3-codex");
+    // The built-in catalog is replaced, not merged: a scope caller's candidates
+    // are the whole list.
+    expect(text).not.toContain("gpt-5.6-sol");
+  });
+
+  it("keeps the built-in catalog when extraOptions is omitted entirely", async () => {
+    const wrapper = mountSelector({ platform: "" });
+    await wrapper.get("div.cursor-pointer").trigger("click");
+    const text = wrapper
+      .findAll('[data-testid="model-option"]')
+      .map((row) => row.text())
+      .join(" ");
+    expect(text).toContain("gpt-5.6-sol");
+  });
+
+  it("treats an explicit empty extraOptions as an empty catalog, not a fallback", async () => {
+    const wrapper = mountSelector({ platform: "", extraOptions: [] });
+    await wrapper.get("div.cursor-pointer").trigger("click");
+    // An explicit empty list is a real (empty) server-resolved catalog: the
+    // built-in list must not leak back in.
+    expect(wrapper.findAll('[data-testid="model-option"]')).toHaveLength(0);
+    expect(wrapper.text()).toContain("admin.accounts.noMatchingModels");
+  });
+
+  it("hides the custom-model input when allowCustom is false", () => {
+    const wrapper = mountSelector({ allowCustom: false });
+    expect(
+      wrapper
+        .find('input[placeholder="admin.accounts.enterCustomModelName"]')
+        .exists(),
+    ).toBe(false);
+    expect(
+      wrapper
+        .findAll("button")
+        .some((button) => button.text() === "admin.accounts.addModel"),
+    ).toBe(false);
+    // Clearing a selection stays available so a scope is never stuck.
+    expect(
+      wrapper
+        .findAll("button")
+        .some((button) => button.text() === "admin.accounts.clearAllModels"),
+    ).toBe(true);
+  });
+
+  it("keeps the custom-model input by default", () => {
+    const wrapper = mountSelector();
+    expect(
+      wrapper
+        .find('input[placeholder="admin.accounts.enterCustomModelName"]')
+        .exists(),
+    ).toBe(true);
+  });
+
   it("shows the upstream sync button for OpenCode Go create-account credentials", () => {
     const wrapper = mountSelector({
       platform: "opencode_go",

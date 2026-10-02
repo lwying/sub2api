@@ -49,3 +49,38 @@ describe("GroupSelector simple-mode binding policy", () => {
     expect(wrapper.emitted("update:modelValue")).toEqual([[[1]]]);
   });
 });
+
+describe("GroupSelector preserveAllGroups (scope callers)", () => {
+  beforeEach(() => {
+    authState.isSimpleMode = false;
+  });
+
+  const mountPreserving = (modelValue: number[] = []) =>
+    mount(GroupSelector, {
+      props: { modelValue, groups, preserveAllGroups: true },
+      global: {
+        stubs: {
+          GroupBadge: { props: ["name"], template: "<span>{{ name }}</span>" },
+          Icon: true,
+        },
+      },
+    });
+
+  it("keeps composite groups visible in simple mode instead of hiding them", () => {
+    authState.isSimpleMode = true;
+    const wrapper = mountPreserving();
+    expect(wrapper.text()).toContain("Basic");
+    expect(wrapper.text()).toContain("Composite");
+  });
+
+  it("never trims a stored composite selection in simple mode", () => {
+    authState.isSimpleMode = true;
+    const wrapper = mountPreserving([1, 2]);
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+  });
+
+  it("still exposes composite groups in advanced mode", () => {
+    const wrapper = mountPreserving();
+    expect(wrapper.text()).toContain("Composite");
+  });
+});

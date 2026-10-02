@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -23,19 +25,47 @@ var (
 	errRequestTraceUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "REQUEST_TRACE_UNAVAILABLE", "request traces are temporarily unavailable")
 	errRequestTraceNotFound        = infraerrors.NotFound("REQUEST_TRACE_NOT_FOUND", "request trace not found")
 	errRequestTraceInvalidFilter   = infraerrors.BadRequest("REQUEST_TRACE_INVALID_FILTER", "invalid request trace filter")
+	// 手动清理的 HTTP 层错误：消息固定且不含任何 DB／正文细节。
+	errRequestTraceDeleteUnavailable          = infraerrors.New(http.StatusServiceUnavailable, "REQUEST_TRACE_DELETE_UNAVAILABLE", "request trace cleanup is temporarily unavailable")
+	errRequestTraceDeleteInvalidFilter        = infraerrors.BadRequest("REQUEST_TRACE_DELETE_INVALID_FILTER", "request trace cleanup requires a non-empty valid filter")
+	errRequestTraceDeleteConfirmRequired      = infraerrors.BadRequest("REQUEST_TRACE_DELETE_CONFIRM_REQUIRED", "request trace cleanup requires confirm=true")
+	errRequestTraceDeleteConfirmationInvalid  = infraerrors.BadRequest("REQUEST_TRACE_DELETE_CONFIRMATION_INVALID", "request trace cleanup confirmation is invalid or expired")
+	errRequestTraceDeleteSelectionInvalid     = infraerrors.BadRequest("REQUEST_TRACE_DELETE_SELECTION_INVALID", "request trace cleanup selection is invalid")
+	errRequestTraceDeleteRequestMalformed     = infraerrors.BadRequest("REQUEST_TRACE_DELETE_REQUEST_MALFORMED", "request trace cleanup request is malformed")
+	errRequestTraceDeleteBodyTooLarge         = infraerrors.BadRequest("REQUEST_TRACE_DELETE_BODY_TOO_LARGE", "request trace cleanup request body is too large")
+	errRequestTraceDeleteAdminSessionRequired = infraerrors.Forbidden("REQUEST_TRACE_DELETE_ADMIN_SESSION_REQUIRED", "an admin login session is required to clean up request traces")
 )
+
+// requestTraceDeleteBodyLimit 是手动清理请求体的硬上限。2000 个 32 位十六进制 ID 的
+// JSON 数组、筛选对象与确认令牌都远小于它；超出即拒绝，不把任意大小的请求体读进内存。
+const requestTraceDeleteBodyLimit = 1 << 20
 
 type requestTraceReader interface {
 	ListRequestTraces(ctx context.Context, filter service.RequestTraceListFilter) ([]service.RequestTrace, int64, error)
 	GetRequestTrace(ctx context.Context, traceID string) (*service.RequestTraceDetail, error)
 }
 
-type RequestTraceHandler struct {
-	reader requestTraceReader
+// requestTraceDeleteService 是手动清理的用例接缝。删除与读侧分开：缺少它时清理
+// 端点明确不可用，而不是退化成读侧或静默成功。
+type requestTraceDeleteService interface {
+	PreviewDelete(ctx context.Context, filter service.RequestTraceExportFilter, adminID int64) (*service.RequestTraceDeletePreview, error)
+	DeleteByFilter(ctx context.Context, request service.RequestTraceDeleteByFilterRequest, adminID int64) (*service.RequestTraceDeleteResult, error)
+	DeleteByIDs(ctx context.Context, traceIDs []string, confirm bool) (*service.RequestTraceDeleteResult, error)
 }
 
-func NewRequestTraceHandler(repo requestTraceReader) *RequestTraceHandler {
-	return &RequestTraceHandler{reader: repo}
+type RequestTraceHandler struct {
+	reader        requestTraceReader
+	deleteService requestTraceDeleteService
+}
+
+// NewRequestTraceHandler 的删除服务是可选参数：既有只读调用（repo 单参）保持兼容，
+// 删除端点在未接线时返回 503 而不是 panic。
+func NewRequestTraceHandler(repo requestTraceReader, deleteServices ...requestTraceDeleteService) *RequestTraceHandler {
+	handler := &RequestTraceHandler{reader: repo}
+	if len(deleteServices) > 0 {
+		handler.deleteService = deleteServices[0]
+	}
+	return handler
 }
 
 // requestTraceQueryParam 读取一个列表与导出共用的筛选关键字。
@@ -373,4 +403,222 @@ func (h *RequestTraceHandler) Get(c *gin.Context) {
 		view.Stages = append(view.Stages, item)
 	}
 	response.Success(c, view)
+}
+
+// ---- 手动清理（勾选删除 / 筛选删除预览与确认）----
+//
+// 信任边界与导出完全一致：只有管理员登录会话（JWT + 认证主体 + 绑定的会话 ID）
+// 可以预览和确认删除。管理员 API Key、普通用户和其它身份一律被拒，不做回退。
+
+type requestTraceDeletePreviewRequest struct {
+	Filter service.RequestTraceExportFilter `json:"filter"`
+}
+
+type requestTraceDeleteByIDsRequest struct {
+	TraceIDs []string `json:"trace_ids"`
+	Confirm  bool     `json:"confirm"`
+}
+
+func setRequestTraceDeleteHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
+}
+
+// requestTraceDeleteSession 实施手动清理的信任边界。三项缺一即拒绝，不退化到
+// API Key 或任何其它身份来源。
+func requestTraceDeleteSession(c *gin.Context) (int64, bool) {
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		return 0, false
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		return 0, false
+	}
+	if strings.TrimSpace(c.GetString(middleware.ContextKeySessionID)) == "" {
+		return 0, false
+	}
+	return subject.UserID, true
+}
+
+func requestTraceDeleteBindJSON(c *gin.Context, target any) *infraerrors.ApplicationError {
+	if c.Request == nil || c.Request.Body == nil {
+		return errRequestTraceDeleteRequestMalformed
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, requestTraceDeleteBodyLimit)
+	if err := c.ShouldBindJSON(target); err != nil {
+		var maxBytes *http.MaxBytesError
+		if errors.As(err, &maxBytes) {
+			return errRequestTraceDeleteBodyTooLarge
+		}
+		return errRequestTraceDeleteRequestMalformed
+	}
+	return nil
+}
+
+// requestTraceDeleteError 把服务哨兵错误映射为稳定的 HTTP 状态。未识别的错误
+// （含任何 DB 错误）一律折叠为 503，绝不外泄原始错误文本。
+func requestTraceDeleteError(err error) *infraerrors.ApplicationError {
+	switch {
+	case errors.Is(err, service.ErrRequestTraceDeleteInvalidFilter), errors.Is(err, service.ErrRequestTraceInvalidRecord):
+		return errRequestTraceDeleteInvalidFilter
+	case errors.Is(err, service.ErrRequestTraceDeleteConfirmRequired):
+		return errRequestTraceDeleteConfirmRequired
+	case errors.Is(err, service.ErrRequestTraceDeleteConfirmationInvalid):
+		return errRequestTraceDeleteConfirmationInvalid
+	case errors.Is(err, service.ErrRequestTraceDeleteSelectionInvalid):
+		return errRequestTraceDeleteSelectionInvalid
+	case errors.Is(err, service.ErrRequestTraceRepositoryUnavailable):
+		return errRequestTraceDeleteUnavailable
+	default:
+		return errRequestTraceDeleteUnavailable
+	}
+}
+
+func setRequestTraceDeleteAudit(c *gin.Context, result, errorCode string) {
+	fields := map[string]any{"result": result}
+	if errorCode != "" {
+		fields["error_code"] = errorCode
+	}
+	if status := c.Writer.Status(); status > 0 {
+		fields["http_status"] = status
+	}
+	middleware.SetAuditExtra(c, fields)
+}
+
+// logRequestTraceDeleteOperation 记录不含正文的操作审计：只有管理员 ID、封闭结果码、
+// 计数与快照边界。确认令牌、筛选条件、关键词与任何 Trace 内容都绝不进入日志。
+func logRequestTraceDeleteOperation(result string, adminID, deleted, matched, snapshot int64, errorCode string) {
+	attrs := []any{"result", result, "admin_id", adminID, "deleted_count", deleted}
+	if result == "previewed" {
+		attrs = append(attrs, "matched_count", matched, "snapshot_max_id", snapshot)
+	}
+	if errorCode != "" {
+		attrs = append(attrs, "error_code", errorCode)
+	}
+	if result == "previewed" || result == "deleted" {
+		slog.Info("request_trace_delete", attrs...)
+		return
+	}
+	slog.Warn("request_trace_delete", attrs...)
+}
+
+// DeletePreview 只返回匹配数量、快照边界与绑定该筛选的确认令牌，不删除任何记录。
+func (h *RequestTraceHandler) DeletePreview(c *gin.Context) {
+	setRequestTraceDeleteHeaders(c)
+	adminID, ok := requestTraceDeleteSession(c)
+	if !ok {
+		response.ErrorFrom(c, errRequestTraceDeleteAdminSessionRequired)
+		setRequestTraceDeleteAudit(c, "failed", "request_trace_delete_admin_session_required")
+		logRequestTraceDeleteOperation("failed", 0, 0, 0, 0, "request_trace_delete_admin_session_required")
+		return
+	}
+	if h == nil || h.deleteService == nil {
+		response.ErrorFrom(c, errRequestTraceDeleteUnavailable)
+		setRequestTraceDeleteAudit(c, "failed", "request_trace_delete_unavailable")
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, "request_trace_delete_unavailable")
+		return
+	}
+	var request requestTraceDeletePreviewRequest
+	if appErr := requestTraceDeleteBindJSON(c, &request); appErr != nil {
+		response.ErrorFrom(c, appErr)
+		setRequestTraceDeleteAudit(c, "failed", strings.ToLower(appErr.Reason))
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, strings.ToLower(appErr.Reason))
+		return
+	}
+	preview, err := h.deleteService.PreviewDelete(c.Request.Context(), request.Filter, adminID)
+	if err != nil {
+		appErr := requestTraceDeleteError(err)
+		response.ErrorFrom(c, appErr)
+		setRequestTraceDeleteAudit(c, "failed", strings.ToLower(appErr.Reason))
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, strings.ToLower(appErr.Reason))
+		return
+	}
+	response.Success(c, preview)
+	middleware.SetAuditExtra(c, map[string]any{"matched_count": preview.MatchedCount, "snapshot_max_id": preview.SnapshotMaxID})
+	setRequestTraceDeleteAudit(c, "success", "")
+	logRequestTraceDeleteOperation("previewed", adminID, 0, preview.MatchedCount, preview.SnapshotMaxID, "")
+}
+
+// DeleteByFilter 按已预览并确认的筛选删除全部匹配记录。新入队记录由快照边界排除；
+// 确认令牌与管理员、筛选哈希、快照边界绑定，任一不一致都必须重新预览。
+func (h *RequestTraceHandler) DeleteByFilter(c *gin.Context) {
+	setRequestTraceDeleteHeaders(c)
+	adminID, ok := requestTraceDeleteSession(c)
+	if !ok {
+		response.ErrorFrom(c, errRequestTraceDeleteAdminSessionRequired)
+		setRequestTraceDeleteAudit(c, "failed", "request_trace_delete_admin_session_required")
+		logRequestTraceDeleteOperation("failed", 0, 0, 0, 0, "request_trace_delete_admin_session_required")
+		return
+	}
+	if h == nil || h.deleteService == nil {
+		response.ErrorFrom(c, errRequestTraceDeleteUnavailable)
+		setRequestTraceDeleteAudit(c, "failed", "request_trace_delete_unavailable")
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, "request_trace_delete_unavailable")
+		return
+	}
+	var request service.RequestTraceDeleteByFilterRequest
+	if appErr := requestTraceDeleteBindJSON(c, &request); appErr != nil {
+		response.ErrorFrom(c, appErr)
+		setRequestTraceDeleteAudit(c, "failed", strings.ToLower(appErr.Reason))
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, strings.ToLower(appErr.Reason))
+		return
+	}
+	result, err := h.deleteService.DeleteByFilter(c.Request.Context(), request, adminID)
+	if err != nil {
+		// 部分完成：已经有真实删除数时如实回显 completed=false，而不是把整次调用
+		// 折叠成失败、抹掉已删除的进度。
+		if result != nil && result.DeletedCount > 0 {
+			response.Success(c, result)
+			setRequestTraceDeleteAudit(c, "partial", "request_trace_delete_interrupted")
+			logRequestTraceDeleteOperation("partial", adminID, result.DeletedCount, 0, 0, "request_trace_delete_interrupted")
+			return
+		}
+		appErr := requestTraceDeleteError(err)
+		response.ErrorFrom(c, appErr)
+		setRequestTraceDeleteAudit(c, "failed", strings.ToLower(appErr.Reason))
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, strings.ToLower(appErr.Reason))
+		return
+	}
+	response.Success(c, result)
+	setRequestTraceDeleteAudit(c, "success", "")
+	logRequestTraceDeleteOperation("deleted", adminID, result.DeletedCount, 0, 0, "")
+}
+
+// BatchDelete 按明确勾选的 32 位 Trace ID 集合删除并返回实际删除数。集合非空、
+// 有界、无重复，缺 confirm=true 即拒绝。
+func (h *RequestTraceHandler) BatchDelete(c *gin.Context) {
+	setRequestTraceDeleteHeaders(c)
+	adminID, ok := requestTraceDeleteSession(c)
+	if !ok {
+		response.ErrorFrom(c, errRequestTraceDeleteAdminSessionRequired)
+		setRequestTraceDeleteAudit(c, "failed", "request_trace_delete_admin_session_required")
+		logRequestTraceDeleteOperation("failed", 0, 0, 0, 0, "request_trace_delete_admin_session_required")
+		return
+	}
+	if h == nil || h.deleteService == nil {
+		response.ErrorFrom(c, errRequestTraceDeleteUnavailable)
+		setRequestTraceDeleteAudit(c, "failed", "request_trace_delete_unavailable")
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, "request_trace_delete_unavailable")
+		return
+	}
+	var request requestTraceDeleteByIDsRequest
+	if appErr := requestTraceDeleteBindJSON(c, &request); appErr != nil {
+		response.ErrorFrom(c, appErr)
+		setRequestTraceDeleteAudit(c, "failed", strings.ToLower(appErr.Reason))
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, strings.ToLower(appErr.Reason))
+		return
+	}
+	result, err := h.deleteService.DeleteByIDs(c.Request.Context(), request.TraceIDs, request.Confirm)
+	if err != nil {
+		appErr := requestTraceDeleteError(err)
+		response.ErrorFrom(c, appErr)
+		setRequestTraceDeleteAudit(c, "failed", strings.ToLower(appErr.Reason))
+		logRequestTraceDeleteOperation("failed", adminID, 0, 0, 0, strings.ToLower(appErr.Reason))
+		return
+	}
+	response.Success(c, result)
+	middleware.SetAuditExtra(c, map[string]any{"requested_count": len(request.TraceIDs)})
+	setRequestTraceDeleteAudit(c, "success", "")
+	logRequestTraceDeleteOperation("deleted", adminID, result.DeletedCount, 0, 0, "")
 }

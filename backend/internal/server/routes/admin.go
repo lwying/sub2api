@@ -628,6 +628,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 导出任务上限：管理员可配置但必须有限，任务开始时取快照。
 		adminSettings.GET("/request-trace/export-limits", h.Admin.Setting.GetRequestTraceExportLimits)
 		adminSettings.PUT("/request-trace/export-limits", h.Admin.Setting.UpdateRequestTraceExportLimits)
+		// 全局模型候选（仅模型名称）：只读汇总，供采集范围与检索筛选共用。
+		adminSettings.GET("/request-trace/model-candidates", h.Admin.Group.GetRequestTraceModelCandidates)
 		// 最小命中事件只读列表：只有元数据与总数，不含关键词与回复正文，
 		// 因此与 request-trace 的运维状态端点同一先例，普通管理员凭据即可读；
 		// 上方三个改规则的入口仍要求管理员登录会话。
@@ -755,6 +757,12 @@ func registerRequestTraceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	traces.GET("/exports", h.Admin.RequestTraceExport.List)
 	traces.GET("/exports/:id", h.Admin.RequestTraceExport.Get)
 	traces.GET("/exports/:id/download", h.Admin.RequestTraceExport.Download)
+	// 手动清理：静态段同样注册在 /:trace_id 之前，gin 先解析精确路径，
+	// "delete-preview" / "delete-by-filter" / "batch-delete" 都不是 32 位十六进制 ID。
+	// 三个入口都要求管理员登录会话，且筛选删除必须给出非空实际筛选。
+	traces.POST("/delete-preview", h.Admin.RequestTrace.DeletePreview)
+	traces.POST("/delete-by-filter", h.Admin.RequestTrace.DeleteByFilter)
+	traces.POST("/batch-delete", h.Admin.RequestTrace.BatchDelete)
 	traces.GET("/:trace_id", h.Admin.RequestTrace.Get)
 }
 

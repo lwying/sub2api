@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -551,4 +552,431 @@ func TestRequestTraceGateWriteTakesEffectImmediately(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, svc.RequestTraceGate(context.Background()).CaptureAllowed,
 		"emergency disable must invalidate an enabled decision immediately")
+}
+
+func requestTraceBoolPtr(value bool) *bool    { return &value }
+func requestTraceIntPtr(value int) *int       { return &value }
+func requestTraceInt64Ptr(value int64) *int64 { return &value }
+
+// failingTraceSettingRepo 让设置读取稳定失败，模拟设置表读不可用。
+type failingTraceSettingRepo struct{ *traceSettingRepoStub }
+
+func (r failingTraceSettingRepo) GetValue(context.Context, string) (string, error) {
+	return "", errors.New("settings store unavailable")
+}
+
+func newSupportedTraceSettingService(repo *traceSettingRepoStub) *SettingService {
+	svc := NewSettingService(repo, &config.Config{})
+	svc.SetRequestTraceSupportProbe(&traceSupportProbeStub{
+		support: PlaintextCaptureSupport{Supported: true, Reason: PlaintextCaptureSupportReasonSupported},
+	})
+	return svc
+}
+
+func enableTraceSettings(t *testing.T, svc *SettingService, extra RequestTraceOperatorUpdateInput) RequestTraceOperatorStatus {
+	t.Helper()
+	extra.Enabled = true
+	extra.AdminUserID = 7
+	extra.Language = "en"
+	extra.Phrase = RequestTraceRiskAcknowledgementPhraseEN
+	status, err := svc.UpdateRequestTraceOperatorSettings(context.Background(), extra)
+	require.NoError(t, err)
+	return status
+}
+
+// 本版本之前写下的旧配置没有任何采集内容／限时键。缺字段必须兼容为"两个开关开启、
+// 两类采样 100%、1 MiB、持续"，而不是零值（那会读成"正文关闭 + 0% 采样"）。
+func TestRequestTraceLegacySettingsDefaultNewCaptureFields(t *testing.T) {
+	ctx := context.Background()
+	repo := &traceSettingRepoStub{values: map[string]string{
+		SettingKeyRequestTrace: `{"enabled":true,"risk_acknowledged":true}`,
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	stored, err := svc.readRequestTraceSettings(ctx)
+	require.NoError(t, err)
+	require.True(t, stored.CaptureBody, "缺 capture_body 键必须缺省为开启正文")
+	require.True(t, stored.CaptureHTTP200, "缺 capture_http_200 键必须缺省为采集 200")
+	require.Equal(t, 100, stored.SampleRateHTTP200)
+	require.Equal(t, 100, stored.SampleRateOther)
+	require.EqualValues(t, RequestTraceBodyLimit, stored.BodyMaxBytes)
+	require.EqualValues(t, 0, stored.CaptureDurationSeconds)
+	require.Nil(t, stored.CaptureUntil, "缺省是持续，不应凭空造出截止时间")
+}
+
+// 显式 false／0 必须能落库并回读，绝不能被 omitempty 丢掉，也不能在再次读取时
+// 被缺省覆盖成开启。
+func TestRequestTraceExplicitFalseAndZeroCaptureFieldsPersist(t *testing.T) {
+	ctx := context.Background()
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+
+	status := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureBody:       requestTraceBoolPtr(false),
+		CaptureHTTP200:    requestTraceBoolPtr(false),
+		SampleRateHTTP200: requestTraceIntPtr(0),
+		SampleRateOther:   requestTraceIntPtr(0),
+	})
+	require.False(t, status.CaptureBody)
+	require.False(t, status.CaptureHTTP200)
+	require.Equal(t, 0, status.SampleRateHTTP200)
+	require.Equal(t, 0, status.SampleRateOther)
+
+	raw := repo.values[SettingKeyRequestTrace]
+	require.Contains(t, raw, `"capture_body":false`, "显式 false 不得被 omitempty 丢弃")
+	require.Contains(t, raw, `"capture_http_200":false`)
+	require.Contains(t, raw, `"sample_rate_http_200":0`, "0% 是有效设置，必须落库")
+
+	stored, err := svc.readRequestTraceSettings(ctx)
+	require.NoError(t, err)
+	require.False(t, stored.CaptureBody)
+	require.False(t, stored.CaptureHTTP200)
+	require.Zero(t, stored.SampleRateHTTP200)
+	require.Zero(t, stored.SampleRateOther)
+}
+
+// 旧客户端只改开关／范围时不提交新字段（指针为 nil）：服务端必须保留既有新设置，
+// 不得把它们重置成缺省。
+func TestRequestTraceUpdateWithoutNewFieldsKeepsExistingCaptureSettings(t *testing.T) {
+	ctx := context.Background()
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+
+	enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureBody:            requestTraceBoolPtr(false),
+		SampleRateOther:        requestTraceIntPtr(25),
+		BodyMaxBytes:           requestTraceInt64Ptr(requestTraceBodyMaxBytes256KiB),
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration1Hour),
+	})
+
+	// 只提交范围与开关，不带任何新字段。
+	status := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		ScopeProvided: true, AllGroups: false, GroupIDs: []int64{7},
+		ModelScope: RequestTraceScopeAll, PlatformScope: RequestTraceScopeAll,
+	})
+	require.False(t, status.CaptureBody, "未提交 capture_body 时不得被重置成缺省开启")
+	require.Equal(t, 25, status.SampleRateOther)
+	require.EqualValues(t, requestTraceBodyMaxBytes256KiB, status.BodyMaxBytes)
+	require.EqualValues(t, requestTraceCaptureDuration1Hour, status.CaptureDurationSeconds)
+
+	stored, err := svc.readRequestTraceSettings(ctx)
+	require.NoError(t, err)
+	require.False(t, stored.CaptureBody)
+	require.Equal(t, 25, stored.SampleRateOther)
+}
+
+// 非法提交必须在写入前整体拒绝：采样率超出 0～100、体积上限不在闭集、时长不在闭集，
+// 都不能被静默解释成更宽的缺省。
+func TestRequestTraceCaptureSubmissionRejectsInvalidValues(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input RequestTraceOperatorUpdateInput
+		want  error
+	}{
+		{"sample rate above max", RequestTraceOperatorUpdateInput{SampleRateHTTP200: requestTraceIntPtr(101)}, ErrRequestTraceSampleRateInvalid},
+		{"sample rate below zero", RequestTraceOperatorUpdateInput{SampleRateOther: requestTraceIntPtr(-1)}, ErrRequestTraceSampleRateInvalid},
+		{"body size not in closed set", RequestTraceOperatorUpdateInput{BodyMaxBytes: requestTraceInt64Ptr(1 << 19)}, ErrRequestTraceBodyMaxBytesInvalid},
+		{"duration not in closed set", RequestTraceOperatorUpdateInput{CaptureDurationSeconds: requestTraceInt64Ptr(120)}, ErrRequestTraceCaptureDurationInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &traceSettingRepoStub{values: map[string]string{}}
+			svc := newSupportedTraceSettingService(repo)
+			_, err := svc.UpdateRequestTraceOperatorSettings(context.Background(), tc.input)
+			require.ErrorIs(t, err, tc.want)
+			require.NotContains(t, repo.values, SettingKeyRequestTrace, "非法提交不得落库")
+		})
+	}
+}
+
+// 合法闭集值照常保存。
+func TestRequestTraceCaptureSubmissionAcceptsClosedSetValues(t *testing.T) {
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+	status := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		SampleRateHTTP200: requestTraceIntPtr(0), SampleRateOther: requestTraceIntPtr(100),
+		BodyMaxBytes:           requestTraceInt64Ptr(requestTraceBodyMaxBytes64KiB),
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration15Min),
+	})
+	require.Equal(t, 0, status.SampleRateHTTP200)
+	require.Equal(t, 100, status.SampleRateOther)
+	require.EqualValues(t, requestTraceBodyMaxBytes64KiB, status.BodyMaxBytes)
+	require.EqualValues(t, requestTraceCaptureDuration15Min, status.CaptureDurationSeconds)
+	require.NotNil(t, status.CaptureUntil, "设置时长后服务端必须算出截止时间")
+	require.False(t, status.CaptureExpired)
+}
+
+// 限时语义：只有总开关由关到开、明确更改时长、或显式 renew 才重新计时。
+func TestRequestTraceCaptureDurationOnlyRenewsOnExplicitAction(t *testing.T) {
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+
+	first := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration1Hour),
+	})
+	require.NotNil(t, first.CaptureUntil)
+	firstUntil := *first.CaptureUntil
+
+	// 普通保存：即使再次提交 Enabled=true（已在采集），也不得续期。
+	ordinary := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{})
+	require.NotNil(t, ordinary.CaptureUntil)
+	require.True(t, ordinary.CaptureUntil.Equal(firstUntil), "普通保存不得隐式续期")
+
+	// 明确更改时长 → 按当前时间重算。
+	changed := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration1Day),
+	})
+	require.NotNil(t, changed.CaptureUntil)
+	require.True(t, changed.CaptureUntil.After(firstUntil), "明确改时长必须重算截止")
+
+	// 显式 renew 但时长不变 → 也重算。
+	renewed := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{RenewCaptureWindow: true})
+	require.True(t, renewed.CaptureUntil.After(*changed.CaptureUntil), "显式 renew 必须重算截止")
+
+	// 切换为持续 → 清除截止。
+	always := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureDurationSeconds: requestTraceInt64Ptr(0),
+	})
+	require.Nil(t, always.CaptureUntil, "切换为持续必须清除截止")
+}
+
+// 已到期的窗口在普通保存时不得重新开始：只有开启／改时长／renew 才允许。
+func TestRequestTraceExpiredWindowIsNotRestartedByOrdinarySave(t *testing.T) {
+	ctx := context.Background()
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+
+	enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration15Min),
+	})
+	// 直接把存档里的截止时间改到过去，模拟窗口已到期。
+	past := time.Now().UTC().Add(-time.Minute)
+	raw := repo.values[SettingKeyRequestTrace]
+	require.Contains(t, raw, `"capture_until"`)
+	stored, err := svc.readRequestTraceSettings(ctx)
+	require.NoError(t, err)
+	stored.CaptureUntil = &past
+	encoded, err := json.Marshal(stored)
+	require.NoError(t, err)
+	repo.values[SettingKeyRequestTrace] = string(encoded)
+	svc.invalidateRequestTraceGate()
+
+	gate := svc.RequestTraceGate(ctx)
+	require.False(t, gate.CaptureAllowed, "已到期的窗口必须停止采集")
+	require.True(t, gate.Expired)
+
+	status := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{})
+	require.True(t, status.CaptureExpired, "普通保存不得让到期窗口重新开始")
+	require.False(t, status.CaptureAllowed)
+	require.NotNil(t, status.CaptureUntil)
+	require.True(t, status.CaptureUntil.Equal(past), "普通保存必须保留既有（已到期）截止")
+}
+
+// 截止时间只由服务端计算：客户端提交的 input 里没有该字段，状态回显的是服务端值。
+func TestRequestTraceCaptureUntilIsServerComputed(t *testing.T) {
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+	before := time.Now().UTC()
+	status := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration1Hour),
+	})
+	require.NotNil(t, status.CaptureUntil)
+	require.False(t, status.CaptureUntil.Before(before), "截止必须不早于服务端当前时间")
+	require.WithinDuration(t, before.Add(time.Hour), *status.CaptureUntil, time.Minute)
+}
+
+// 缓存路径也必须复核截止：一个在截止前写入的短 TTL 缓存不得把窗口"续"过停采时刻。
+func TestRequestTraceGateRechecksDeadlineOnCachedPath(t *testing.T) {
+	ctx := context.Background()
+	until := time.Now().UTC().Add(60 * time.Millisecond)
+	ack, err := json.Marshal(RequestTraceRiskAcknowledgement{
+		Version: RequestTraceRiskAcknowledgementVersion, Phrase: RequestTraceRiskAcknowledgementPhraseEN,
+		AdminUserID: 7, AcceptedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	settings, err := json.Marshal(RequestTraceSettings{
+		Enabled: true, RiskAcknowledged: true,
+		CaptureBody: true, CaptureHTTP200: true, SampleRateHTTP200: 100, SampleRateOther: 100,
+		BodyMaxBytes: RequestTraceBodyLimit, CaptureDurationSeconds: requestTraceCaptureDuration15Min,
+		CaptureUntil: &until, AllGroups: true, ModelScope: RequestTraceScopeAll, PlatformScope: RequestTraceScopeAll,
+	})
+	require.NoError(t, err)
+	repo := &traceSettingRepoStub{values: map[string]string{
+		SettingKeyRequestTrace:                    string(settings),
+		SettingKeyRequestTraceRiskAcknowledgement: string(ack),
+	}}
+	svc := newSupportedTraceSettingService(repo)
+
+	require.True(t, svc.RequestTraceGate(ctx).CaptureAllowed, "截止前应允许采集")
+	time.Sleep(90 * time.Millisecond)
+	gate := svc.RequestTraceGate(ctx) // 仍命中 5 秒缓存
+	require.False(t, gate.CaptureAllowed, "命中缓存也必须复核截止时间")
+	require.True(t, gate.Expired)
+}
+
+// 采样：0% 全跳过、100% 全保留，按客户端最终状态分成两类，且按 Trace ID 稳定。
+func TestRequestTraceSamplingIsStableAndStatusAware(t *testing.T) {
+	traceID := strings.Repeat("a", 32)
+
+	all := RequestTraceSettings{SampleRateHTTP200: 100, SampleRateOther: 100}
+	require.True(t, all.ShouldSampleTrace(traceID, 200))
+	require.True(t, all.ShouldSampleTrace(traceID, 201))
+
+	none := RequestTraceSettings{SampleRateHTTP200: 0, SampleRateOther: 0}
+	require.False(t, none.ShouldSampleTrace(traceID, 200))
+	require.False(t, none.ShouldSampleTrace(traceID, 500))
+
+	// 两类独立：200 全丢、非 200 全留；201／204 属于非 200。
+	mixed := RequestTraceSettings{SampleRateHTTP200: 0, SampleRateOther: 100}
+	require.False(t, mixed.ShouldSampleTrace(traceID, 200))
+	require.True(t, mixed.ShouldSampleTrace(traceID, 201))
+	require.True(t, mixed.ShouldSampleTrace(traceID, 204))
+	require.True(t, mixed.ShouldSampleTrace(traceID, 404))
+
+	// 稳定：同一 ID 反复判定结果一致。
+	half := RequestTraceSettings{SampleRateHTTP200: 50, SampleRateOther: 50}
+	decision := half.ShouldSampleTrace(traceID, 200)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, decision, half.ShouldSampleTrace(traceID, 200))
+	}
+
+	// 50% 在大量 ID 上既非全留也非全丢。
+	var kept int
+	for i := 0; i < 500; i++ {
+		if half.ShouldSampleTrace(strconv.Itoa(i), 500) {
+			kept++
+		}
+	}
+	require.Positive(t, kept)
+	require.Less(t, kept, 500)
+}
+
+// 存档里的非法采样率／体积值必须收敛到最保守的一端，绝不因为解析失败而放宽。
+func TestRequestTraceNormalizeClampsInvalidCaptureFieldsDown(t *testing.T) {
+	normalized := NormalizeRequestTraceSettings(RequestTraceSettings{
+		SampleRateHTTP200: 500, SampleRateOther: -3, BodyMaxBytes: 999,
+		CaptureDurationSeconds: 7777,
+	})
+	require.Zero(t, normalized.SampleRateHTTP200)
+	require.Zero(t, normalized.SampleRateOther)
+	require.EqualValues(t, requestTraceBodyMaxBytes64KiB, normalized.BodyMaxBytes,
+		"无法识别的体积上限必须收敛到最小有限值，绝不放宽到 1 MiB")
+	require.EqualValues(t, requestTraceCaptureDuration15Min, normalized.CaptureDurationSeconds,
+		"无法识别的时长必须收敛到最小有限窗口，不得落回 0=持续")
+}
+
+// 有限时长却没有截止时间的畸形存档不得"永不过期"：gate 必须 fail-closed，且状态回显为已到期。
+func TestRequestTraceFiniteDurationWithoutDeadlineFailsClosed(t *testing.T) {
+	now := time.Now().UTC()
+	finiteWithoutDeadline := RequestTraceSettings{
+		Enabled: true, RiskAcknowledged: true,
+		CaptureBody: true, CaptureHTTP200: true,
+		SampleRateHTTP200: 100, SampleRateOther: 100, BodyMaxBytes: RequestTraceBodyLimit,
+		CaptureDurationSeconds: requestTraceCaptureDuration1Hour, CaptureUntil: nil,
+		AllGroups: true, ModelScope: RequestTraceScopeAll, PlatformScope: RequestTraceScopeAll,
+	}
+	require.True(t, finiteWithoutDeadline.CaptureWindowExpired(now),
+		"有限时长缺截止时间必须视为已到期")
+
+	// 持续（duration<=0）没有截止时间属正常，不能被视为已到期。
+	continuous := finiteWithoutDeadline
+	continuous.CaptureDurationSeconds = requestTraceCaptureDurationAlways
+	require.False(t, continuous.CaptureWindowExpired(now), "持续配置不得被判为到期")
+}
+
+// 存档里的非法时长不得把已有截止时间抹掉、变成"持续"：收敛到最小有限窗口并保留
+// CaptureUntil，由它继续负责到期停采（fail-closed）。
+func TestRequestTraceInvalidStoredDurationKeepsDeadline(t *testing.T) {
+	ctx := context.Background()
+	past := time.Now().UTC().Add(-time.Minute)
+	raw, err := json.Marshal(map[string]any{
+		"enabled": true, "risk_acknowledged": true,
+		"capture_body": true, "capture_http_200": true,
+		"sample_rate_http_200": 100, "sample_rate_other": 100,
+		"body_max_bytes":           RequestTraceBodyLimit,
+		"capture_duration_seconds": 7777,
+		"capture_until":            past,
+		"all_groups":               true,
+		"model_scope":              "all",
+		"platform_scope":           "all",
+	})
+	require.NoError(t, err)
+	ack, err := json.Marshal(RequestTraceRiskAcknowledgement{
+		Version: RequestTraceRiskAcknowledgementVersion, Phrase: RequestTraceRiskAcknowledgementPhraseEN,
+		AdminUserID: 7, AcceptedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	repo := &traceSettingRepoStub{values: map[string]string{
+		SettingKeyRequestTrace:                    string(raw),
+		SettingKeyRequestTraceRiskAcknowledgement: string(ack),
+	}}
+	svc := newSupportedTraceSettingService(repo)
+
+	stored, err := svc.readRequestTraceSettings(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, requestTraceCaptureDuration15Min, stored.CaptureDurationSeconds)
+	require.NotNil(t, stored.CaptureUntil, "非法时长不得抹掉既有截止时间")
+	require.True(t, stored.CaptureUntil.Equal(past))
+
+	gate := svc.RequestTraceGate(ctx)
+	require.False(t, gate.CaptureAllowed, "已到期的窗口必须 fail-closed")
+	require.True(t, gate.Expired)
+}
+
+// renew 在关闭状态下必须被拒绝：不能记下一个"待生效"的窗口，也不能开始倒计时。
+func TestRequestTraceRenewRejectedWhileDisabled(t *testing.T) {
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+	_, err := svc.UpdateRequestTraceOperatorSettings(context.Background(), RequestTraceOperatorUpdateInput{
+		Enabled: false, RenewCaptureWindow: true,
+	})
+	require.ErrorIs(t, err, ErrRequestTraceRenewRequiresEnabled)
+	require.NotContains(t, repo.values, SettingKeyRequestTrace, "被拒绝的续期不得落库")
+}
+
+// 关闭采集时清除截止时间：关闭状态下不显示、也不倒计时；重新开启会重新计时。
+func TestRequestTraceDisableClearsDeadline(t *testing.T) {
+	ctx := context.Background()
+	repo := &traceSettingRepoStub{values: map[string]string{}}
+	svc := newSupportedTraceSettingService(repo)
+
+	enabled := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{
+		CaptureDurationSeconds: requestTraceInt64Ptr(requestTraceCaptureDuration1Hour),
+	})
+	require.NotNil(t, enabled.CaptureUntil)
+
+	disabled, err := svc.UpdateRequestTraceOperatorSettings(ctx, RequestTraceOperatorUpdateInput{Enabled: false})
+	require.NoError(t, err)
+	require.Nil(t, disabled.CaptureUntil, "关闭时必须清除截止时间")
+	require.False(t, disabled.CaptureExpired)
+
+	stored, err := svc.readRequestTraceSettings(ctx)
+	require.NoError(t, err)
+	require.Nil(t, stored.CaptureUntil)
+
+	// 重新开启按当前时间重新计时，而不是恢复关闭前的窗口。
+	reenabled := enableTraceSettings(t, svc, RequestTraceOperatorUpdateInput{})
+	require.NotNil(t, reenabled.CaptureUntil)
+	require.WithinDuration(t, time.Now().UTC().Add(time.Hour), *reenabled.CaptureUntil, time.Minute)
+}
+
+// 既有设置读失败时必须 fail-closed：返回不可用且一个字节都不写，绝不回落到"全采"缺省。
+func TestRequestTraceUpdateFailsClosedWhenStoredSettingsUnreadable(t *testing.T) {
+	repo := &failingTraceSettingRepo{&traceSettingRepoStub{values: map[string]string{}}}
+	svc := NewSettingService(repo, &config.Config{})
+	svc.SetRequestTraceSupportProbe(&traceSupportProbeStub{
+		support: PlaintextCaptureSupport{Supported: true, Reason: PlaintextCaptureSupportReasonSupported},
+	})
+	for _, tc := range []struct {
+		name  string
+		input RequestTraceOperatorUpdateInput
+	}{
+		{"enable", RequestTraceOperatorUpdateInput{Enabled: true, AdminUserID: 7, Phrase: RequestTraceRiskAcknowledgementPhraseEN}},
+		{"emergency disable", RequestTraceOperatorUpdateInput{Enabled: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.UpdateRequestTraceOperatorSettings(context.Background(), tc.input)
+			require.ErrorIs(t, err, ErrRequestTraceSettingsUnavailable)
+			require.Empty(t, repo.values["request_trace_settings"], "读失败时不得写入任何设置")
+		})
+	}
 }

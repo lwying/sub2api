@@ -76,6 +76,32 @@ func newRequestTraceSelectedPlatformScopeHandler(t *testing.T, group *service.Gr
 	}
 }
 
+// requestTraceGateFromLegacyScope 用读取侧缺省补齐手工构造的范围：这些夹具只关心
+// 分组/模型/平台范围，新采集内容字段按缺省（正文开启、200 开启、两类 100%、1 MiB），
+// 避免零值被读成"正文关闭 + 0% 采样"而让夹具意外丢掉全部 Trace。
+func requestTraceGateFromLegacyScope(scope service.RequestTraceSettings) service.RequestTraceGate {
+	scope.Enabled = true
+	scope.RiskAcknowledged = true
+	scope.CaptureBody = true
+	scope.CaptureHTTP200 = true
+	if scope.SampleRateHTTP200 == 0 {
+		scope.SampleRateHTTP200 = 100
+	}
+	if scope.SampleRateOther == 0 {
+		scope.SampleRateOther = 100
+	}
+	if scope.BodyMaxBytes == 0 {
+		scope.BodyMaxBytes = service.RequestTraceBodyLimit
+	}
+	if scope.ModelScope == "" {
+		scope.ModelScope = service.RequestTraceScopeAll
+	}
+	if scope.PlatformScope == "" {
+		scope.PlatformScope = service.RequestTraceScopeAll
+	}
+	return service.RequestTraceGate{CaptureAllowed: true, Scope: scope}
+}
+
 // serveChatCompletionsOrResponsesWithScope 复刻生产中间件链：Trace 采集（带显式采集
 // 范围）-> 鉴权注入 -> Trace 绑定 -> 真实入口。
 func serveSelectedPlatformScopeRequest(
@@ -90,10 +116,7 @@ func serveSelectedPlatformScopeRequest(
 	t.Helper()
 
 	gate := func(context.Context) service.RequestTraceGate {
-		resolved := scope
-		resolved.Enabled = true
-		resolved.RiskAcknowledged = true
-		return service.RequestTraceGate{CaptureAllowed: true, Scope: resolved}
+		return requestTraceGateFromLegacyScope(scope)
 	}
 
 	repo := &finalizingRequestTraceRepoStub{finalized: make(chan service.RequestTraceCaptureState, 1)}

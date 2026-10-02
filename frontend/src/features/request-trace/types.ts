@@ -77,6 +77,7 @@ export const requestTraceStageReasons = [
   "metadata_observed",
   "retained",
   "body_not_observed",
+  "capture_body_disabled",
   "auth_rejected_body_not_observed",
   "attempt_not_observed",
   "wire_observed",
@@ -1003,6 +1004,14 @@ export type TraceDeploymentReason =
 export interface RequestTraceOperatorStatus {
   enabled: boolean;
   capture_allowed: boolean;
+  capture_body: boolean;
+  capture_http_200: boolean;
+  sample_rate_http_200: number;
+  sample_rate_other: number;
+  body_max_bytes: number;
+  capture_duration_seconds: number;
+  capture_until: string | null;
+  capture_expired: boolean;
   risk_acknowledged: boolean;
   risk_version: string;
   risk_phrase_en: string;
@@ -1054,6 +1063,13 @@ export type RequestTraceOperatorUpdateInput = {
   enabled: boolean;
   language: TraceAckLanguage;
   phrase: string;
+  capture_body?: boolean;
+  capture_http_200?: boolean;
+  sample_rate_http_200?: number;
+  sample_rate_other?: number;
+  body_max_bytes?: number;
+  capture_duration_seconds?: number;
+  renew_capture_window?: boolean;
 } & (
   | { scope_provided?: false }
   | ({ scope_provided: true } & RequestTraceScopeInput)
@@ -1115,6 +1131,40 @@ function scopeGroupIDs(value: unknown, allGroups: boolean): number[] {
   });
 }
 
+function captureOptionBoolean(value: unknown, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean")
+    throw new Error("Trace capture option is unavailable");
+  return value;
+}
+
+function captureOptionNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  allowed?: number[],
+): number {
+  if (value === undefined) return fallback;
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < min ||
+    (value as number) > max ||
+    (allowed && !allowed.includes(value as number))
+  ) {
+    throw new Error("Trace capture option is unavailable");
+  }
+  return value as number;
+}
+
+function captureOptionDeadline(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw new Error("Trace capture deadline is unavailable");
+  }
+  return value;
+}
+
 export function normalizeRequestTraceOperatorStatus(
   raw: unknown,
 ): RequestTraceOperatorStatus {
@@ -1156,6 +1206,36 @@ export function normalizeRequestTraceOperatorStatus(
   const status: RequestTraceOperatorStatus = {
     enabled: source.enabled,
     capture_allowed: source.capture_allowed,
+    capture_body: captureOptionBoolean(source.capture_body, true),
+    capture_http_200: captureOptionBoolean(source.capture_http_200, true),
+    sample_rate_http_200: captureOptionNumber(
+      source.sample_rate_http_200,
+      100,
+      0,
+      100,
+    ),
+    sample_rate_other: captureOptionNumber(
+      source.sample_rate_other,
+      100,
+      0,
+      100,
+    ),
+    body_max_bytes: captureOptionNumber(
+      source.body_max_bytes,
+      1048576,
+      65536,
+      1048576,
+      [65536, 262144, 1048576],
+    ),
+    capture_duration_seconds: captureOptionNumber(
+      source.capture_duration_seconds,
+      0,
+      0,
+      86400,
+      [0, 900, 3600, 86400],
+    ),
+    capture_until: captureOptionDeadline(source.capture_until),
+    capture_expired: captureOptionBoolean(source.capture_expired, false),
     risk_acknowledged: source.risk_acknowledged === true,
     risk_version: source.risk_version,
     risk_phrase_en: source.risk_phrase_en,
@@ -1233,6 +1313,19 @@ export interface RequestTraceExportFilter {
  * exporting a subset of what was checked.
  */
 export const requestTraceExportMaxSelectedTraces = 2000;
+
+export interface RequestTraceDeletePreview {
+  matched_count: number;
+  snapshot_max_id: number;
+  filter_hash: string;
+  confirmation_token: string;
+  expires_at: string;
+}
+
+export interface RequestTraceDeleteResult {
+  deleted_count: number;
+  completed: boolean;
+}
 
 /** The server's own bound on shards per task (`service.requestTraceExportMaxShards`). */
 export const requestTraceExportMaxShards = 1000;

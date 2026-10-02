@@ -846,6 +846,13 @@ func ProvideRequestTraceExportWorker(svc *RequestTraceExportService) *RequestTra
 	return NewRequestTraceExportWorker(svc, RequestTraceExportWorkerOptions{})
 }
 
+// ProvideRequestTraceDeleteService 组装手动清理用例：窄删除仓储 + 项目已有的
+// SecretEncryptor（AES-256-GCM）用于绑定确认令牌。它只删除 Trace 信封／阶段与
+// 链路断言，不触碰 usage／计费，也不使用任何独立的持久令牌存储。
+func ProvideRequestTraceDeleteService(repo RequestTraceDeleteRepository, encryptor SecretEncryptor) *RequestTraceDeleteService {
+	return NewRequestTraceDeleteService(repo, encryptor)
+}
+
 // ProvideRequestTraceOpsStatusService assembles the value-free operational view.
 // backlog may be nil on a deployment without the probe: the status then reports
 // reachability as unknown rather than as healthy.
@@ -952,6 +959,7 @@ var ProviderSet = wire.NewSet(
 	NewOpenAIGatewayService,
 	ProvideRequestTraceCaptureQueue,
 	ProvideRequestTraceExportService,
+	ProvideRequestTraceDeleteService, // 手动清理：勾选／筛选删除，窄写接缝
 	ProvideRequestTraceExportWorker,
 	ProvideRequestTraceGatewayLinker,
 	ProvideRequestTraceOpsStatusService, // 无敏感值运维状态：采集队列／写入失败与未关联清理积压

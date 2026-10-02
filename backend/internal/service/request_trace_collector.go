@@ -77,10 +77,22 @@ type RequestTraceCollector struct {
 	order []*requestTraceBodySlot
 	slots map[RequestTraceBodyKey]*requestTraceBodySlot
 	used  int
+	// bodyLimit 是单阶段正文留存上限。默认硬上限 RequestTraceBodyLimit；可选实例预算
+	// 只能把它调低，永远不能调高，也不改变总预算与下游预留。
+	bodyLimit int
 }
 
-func NewRequestTraceCollector() *RequestTraceCollector {
-	return &RequestTraceCollector{slots: make(map[RequestTraceBodyKey]*requestTraceBodySlot)}
+// NewRequestTraceCollector 可选地接受一个单阶段正文预算。旧的无参调用行为不变；
+// 传入值只允许调低硬上限（<=0 或 >= 硬上限都保持 1 MiB），绝不绕过 queue／数据库保护。
+func NewRequestTraceCollector(bodyBudget ...int64) *RequestTraceCollector {
+	collector := &RequestTraceCollector{
+		slots:     make(map[RequestTraceBodyKey]*requestTraceBodySlot),
+		bodyLimit: RequestTraceBodyLimit,
+	}
+	if len(bodyBudget) > 0 && bodyBudget[0] > 0 && bodyBudget[0] < RequestTraceBodyLimit {
+		collector.bodyLimit = int(bodyBudget[0])
+	}
+	return collector
 }
 
 func (c *RequestTraceCollector) startLocked(key RequestTraceBodyKey, contentType string, stream bool) *requestTraceBodySlot {
@@ -124,7 +136,7 @@ func (c *RequestTraceCollector) availableLocked(key RequestTraceBodyKey, usedByS
 	if key.Stage != "client_response" {
 		available -= requestTraceLaterStageReserve
 	}
-	if stageRoom := RequestTraceBodyLimit - usedByStage; available > stageRoom {
+	if stageRoom := c.bodyLimit - usedByStage; available > stageRoom {
 		available = stageRoom
 	}
 	if available < 0 {
@@ -267,7 +279,7 @@ func (c *RequestTraceCollector) appendSSELocked(slot *requestTraceBodySlot, chun
 		event := slot.ssePending
 		c.used -= len(event)
 		slot.ssePending = nil
-		if len(event) > RequestTraceBodyLimit {
+		if len(event) > c.bodyLimit {
 			slot.budgetExceeded = true
 			slot.sseDropped++
 			continue
@@ -358,8 +370,8 @@ func (c *RequestTraceCollector) FinishStage(key RequestTraceBodyKey, complete bo
 			result.RedactionUnverified = len(slot.buf) > 0
 		}
 	}
-	if !slot.stream && len(result.Payload) > RequestTraceBodyLimit {
-		result.Payload = result.Payload[:RequestTraceBodyLimit]
+	if !slot.stream && len(result.Payload) > c.bodyLimit {
+		result.Payload = result.Payload[:c.bodyLimit]
 		result.RedactionUnverified = true
 		slot.budgetExceeded = true
 	}
@@ -403,8 +415,8 @@ func (c *RequestTraceCollector) FinishStage(key RequestTraceBodyKey, complete bo
 		result.State = "stored"
 		result.Reason = "retained"
 	}
-	if len(result.Payload) > RequestTraceBodyLimit {
-		result.Payload = result.Payload[:RequestTraceBodyLimit]
+	if len(result.Payload) > c.bodyLimit {
+		result.Payload = result.Payload[:c.bodyLimit]
 		result.State = "truncated"
 		result.Reason = "truncated_unverified"
 		result.RedactionUnverified = true

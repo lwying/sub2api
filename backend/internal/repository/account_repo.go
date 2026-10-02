@@ -1244,6 +1244,39 @@ func (r *accountRepository) ListAllWithFilters(ctx context.Context, platform, ac
 	return r.accountsToService(ctx, accounts)
 }
 
+// ListModelMappingSourceKeys 只读取账号模型映射的源名称，不加载账号凭据。
+// JSONB 键在数据库内提取；排除已删除账号及非字符串映射，与既有映射读取口径一致。
+func (r *accountRepository) ListModelMappingSourceKeys(ctx context.Context) ([]string, error) {
+	if r == nil || r.sql == nil {
+		return nil, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT DISTINCT kv.k
+		FROM accounts a
+		CROSS JOIN LATERAL jsonb_each(
+			CASE WHEN jsonb_typeof(a.credentials -> 'model_mapping') = 'object'
+				THEN a.credentials -> 'model_mapping'
+				ELSE '{}'::jsonb END
+		) AS kv(k, v)
+		WHERE a.deleted_at IS NULL
+		  AND jsonb_typeof(kv.v) = 'string'
+		ORDER BY kv.k
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, rows.Err()
+}
+
 func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]service.Account, error) {
 	if r == nil || r.client == nil {
 		return []service.Account{}, nil

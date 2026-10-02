@@ -20,6 +20,16 @@ type requestTraceSettingsRequest struct {
 	Language string `json:"language"`
 	Phrase   string `json:"phrase"`
 
+	// 采集内容／限时字段全部指针可选：缺字段（nil）保留既有值，显式 false／0 必须
+	// 能与"未提交"区分开。capture_until 不接受客户端提交，由服务端计算。
+	CaptureBody            *bool  `json:"capture_body"`
+	CaptureHTTP200         *bool  `json:"capture_http_200"`
+	SampleRateHTTP200      *int   `json:"sample_rate_http_200"`
+	SampleRateOther        *int   `json:"sample_rate_other"`
+	BodyMaxBytes           *int64 `json:"body_max_bytes"`
+	CaptureDurationSeconds *int64 `json:"capture_duration_seconds"`
+	RenewCaptureWindow     bool   `json:"renew_capture_window"`
+
 	// 采集范围：未提交（scope_provided 为 false）时保留既有范围，避免开关动作顺手清空范围。
 	ScopeProvided bool     `json:"scope_provided"`
 	AllGroups     bool     `json:"all_groups"`
@@ -163,6 +173,14 @@ func (h *SettingHandler) UpdateRequestTraceOperatorSettings(c *gin.Context) {
 	status, err := h.settingService.UpdateRequestTraceOperatorSettings(c.Request.Context(), service.RequestTraceOperatorUpdateInput{
 		Enabled: req.Enabled, Language: req.Language, Phrase: req.Phrase, AdminUserID: adminUserID,
 		IPAddress: ip.GetClientIP(c), UserAgent: strings.TrimSpace(c.GetHeader("User-Agent")),
+
+		CaptureBody:            req.CaptureBody,
+		CaptureHTTP200:         req.CaptureHTTP200,
+		SampleRateHTTP200:      req.SampleRateHTTP200,
+		SampleRateOther:        req.SampleRateOther,
+		BodyMaxBytes:           req.BodyMaxBytes,
+		CaptureDurationSeconds: req.CaptureDurationSeconds,
+		RenewCaptureWindow:     req.RenewCaptureWindow,
 
 		ScopeProvided: req.ScopeProvided,
 		AllGroups:     req.AllGroups,

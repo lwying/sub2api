@@ -270,8 +270,21 @@ func ProvideHandlers(
 	}
 }
 
-func ProvideRequestTraceHandler(repo service.RequestTraceRepository) *admin.RequestTraceHandler {
-	return admin.NewRequestTraceHandler(repo)
+// ProvideGroupHandler constructs the admin group handler. The channel repository
+// is an optional read-only seam used to aggregate Trace model candidate source
+// keys; omitting it (nil reader) leaves every other group capability unchanged.
+func ProvideGroupHandler(
+	adminService service.AdminService,
+	dashboardService *service.DashboardService,
+	groupCapacityService *service.GroupCapacityService,
+	cfg *config.Config,
+	channelRepo service.ChannelRepository,
+) *admin.GroupHandler {
+	return admin.NewGroupHandlerWithConfigAndChannelReader(adminService, dashboardService, groupCapacityService, cfg, channelRepo)
+}
+
+func ProvideRequestTraceHandler(repo service.RequestTraceRepository, deleteService *service.RequestTraceDeleteService) *admin.RequestTraceHandler {
+	return admin.NewRequestTraceHandler(repo, deleteService)
 }
 
 func ProvideRequestTraceExportHandler(svc *service.RequestTraceExportService) *admin.RequestTraceExportHandler {
@@ -333,7 +346,7 @@ var ProviderSet = wire.NewSet(
 	// Admin handlers
 	admin.NewDashboardHandler,
 	admin.NewUserHandler,
-	admin.NewGroupHandlerWithConfig,
+	ProvideGroupHandler,
 	admin.ProvideAccountHandler,
 	admin.NewAnnouncementHandler,
 	admin.NewDataManagementHandler,

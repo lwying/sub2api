@@ -106,6 +106,7 @@ var ProviderSet = wire.NewSet(
 	NewRequestTraceSupportProbe,
 	NewRequestTraceRepository,
 	NewRequestTraceUsageLinker,
+	NewRequestTraceDeleteRepository, // 手动清理写路径：窄删除接口，与读侧分开
 	NewRequestTraceExportRepository,
 	NewRequestTraceExportSource,
 	NewRequestTraceBacklogRepository, // 无敏感值运维状态：有界统计未关联清理积压

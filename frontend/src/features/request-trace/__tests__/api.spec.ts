@@ -65,6 +65,37 @@ describe("Trace operator settings API", () => {
     );
   });
 
+  it("sends explicit false and zero capture options without changing the scope", async () => {
+    client.put.mockResolvedValue({ data: status });
+    await updateOperatorSettings({
+      enabled: false,
+      language: "zh",
+      phrase: "",
+      capture_body: false,
+      capture_http_200: false,
+      sample_rate_http_200: 0,
+      sample_rate_other: 50,
+      body_max_bytes: 65536,
+      capture_duration_seconds: 900,
+    });
+    expect(client.put).toHaveBeenCalledWith(
+      "/admin/settings/request-trace",
+      {
+        enabled: false,
+        language: "zh",
+        phrase: "",
+        scope_provided: false,
+        capture_body: false,
+        capture_http_200: false,
+        sample_rate_http_200: 0,
+        sample_rate_other: 50,
+        body_max_bytes: 65536,
+        capture_duration_seconds: 900,
+      },
+      expect.any(Object),
+    );
+  });
+
   it("sends the whole scope, and only when the operator actually provided one", async () => {
     client.put.mockResolvedValue({ data: status });
     await updateOperatorSettings({

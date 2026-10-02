@@ -78,10 +78,7 @@ func serveChatCompletionsWithScope(
 	t.Helper()
 
 	gate := func(context.Context) service.RequestTraceGate {
-		resolved := scope
-		resolved.Enabled = true
-		resolved.RiskAcknowledged = true
-		return service.RequestTraceGate{CaptureAllowed: true, Scope: resolved}
+		return requestTraceGateFromLegacyScope(scope)
 	}
 
 	repo := &finalizingRequestTraceRepoStub{finalized: make(chan service.RequestTraceCaptureState, 1)}

@@ -633,6 +633,52 @@ func TestTraceCollectorDoesNotPermitUnboundedUniqueAttemptMetadata(t *testing.T)
 	require.LessOrEqual(t, len(snapshots), RequestTraceStageCountLimit)
 }
 
+// 可选实例预算只能调低单阶段上限：正文超过该预算时截断并标记，绝不绕过 1 MiB 硬上限。
+func TestTraceCollectorOptionalBudgetLowersStageLimit(t *testing.T) {
+	const budget = 64 << 10
+	trace := NewRequestTraceCollector(budget)
+	key := RequestTraceBodyKey{Stage: "client_response", View: "downstream"}
+	trace.StartStage(key, "application/json", false)
+	trace.AppendStage(key, []byte(`{"content":"`+strings.Repeat("a", budget+8192)+`"}`))
+	trace.FinishStage(key, true)
+	snapshots := trace.Snapshots()
+	require.Len(t, snapshots, 1)
+	require.LessOrEqual(t, len(snapshots[0].Payload), budget,
+		"实例预算必须把单阶段留存压到预算以内")
+	require.LessOrEqual(t, trace.MemoryBytes(), budget)
+	require.Equal(t, "truncated", snapshots[0].State)
+}
+
+// 传入不小于硬上限的预算不得把上限调高；0／负数表示未指定，保持硬上限。
+func TestTraceCollectorBudgetNeverRaisesHardStageLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		budget int64
+	}{
+		{"larger than hard limit", RequestTraceTotalBodyLimit},
+		{"zero means unset", 0},
+		{"negative means unset", -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			trace := NewRequestTraceCollector(tc.budget)
+			require.Equal(t, RequestTraceBodyLimit, trace.bodyLimit)
+			key := RequestTraceBodyKey{Stage: "client_entry", View: "decoded"}
+			long := []byte(`{"content":"` + strings.Repeat("a", RequestTraceBodyLimit-16) + `"}`)
+			trace.StartStage(key, "application/json", false)
+			trace.AppendStage(key, long)
+			trace.FinishStage(key, true)
+			require.LessOrEqual(t, trace.MemoryBytes(), RequestTraceBodyLimit)
+			require.LessOrEqual(t, trace.MemoryBytes(), RequestTraceTotalBodyLimit)
+		})
+	}
+}
+
+// 旧的无参构造行为不变：仍按 1 MiB 单阶段硬上限留存。
+func TestTraceCollectorDefaultConstructorKeepsHardStageLimit(t *testing.T) {
+	trace := NewRequestTraceCollector()
+	require.Equal(t, RequestTraceBodyLimit, trace.bodyLimit)
+}
+
 func TestTraceCollectorCapsRetainedBytesAfterJSONReencoding(t *testing.T) {
 	trace := NewRequestTraceCollector()
 	key := RequestTraceBodyKey{Stage: "wire_request", AttemptIndex: 1, View: "wire"}

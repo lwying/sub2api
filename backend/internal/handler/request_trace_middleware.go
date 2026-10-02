@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
@@ -40,15 +41,39 @@ func RequestTraceGateForCapture(allowed bool) service.RequestTraceGate {
 	if !allowed {
 		return service.RequestTraceGate{}
 	}
+	// 新 helper 默认全采：正文开启、HTTP 200 全留、两类采样 100%、体积上限为硬上限。
+	// 缺了这些，零值会被读成"正文关闭 + 0% 采样"，与"开关打开"的语义相反。
 	return service.RequestTraceGate{
 		CaptureAllowed: true,
 		Scope: service.RequestTraceSettings{
 			Enabled: true, RiskAcknowledged: true,
-			AllGroups:     true,
-			ModelScope:    service.RequestTraceScopeAll,
-			PlatformScope: service.RequestTraceScopeAll,
+			CaptureBody:       true,
+			CaptureHTTP200:    true,
+			SampleRateHTTP200: 100,
+			SampleRateOther:   100,
+			BodyMaxBytes:      service.RequestTraceBodyLimit,
+			AllGroups:         true,
+			ModelScope:        service.RequestTraceScopeAll,
+			PlatformScope:     service.RequestTraceScopeAll,
 		},
 	}
+}
+
+// requestTraceBodyCaptureAllowed 从入口快照读出正文采集开关。通用 Trace middleware
+// 没有门控快照时保持既有默认：采集正文。
+func requestTraceBodyCaptureAllowed(ctx context.Context) bool {
+	if gate, ok := requestTraceGateSnapshot(ctx); ok {
+		return gate.Scope.CaptureBody
+	}
+	return true
+}
+
+// requestTraceBodyMaxBytes 从入口快照读出单阶段正文上限；缺失或非法时落到硬上限。
+func requestTraceBodyMaxBytes(ctx context.Context) int64 {
+	if gate, ok := requestTraceGateSnapshot(ctx); ok && gate.Scope.BodyMaxBytes > 0 {
+		return gate.Scope.BodyMaxBytes
+	}
+	return service.RequestTraceBodyLimit
 }
 
 func RequestTraceID(ctx context.Context) string {
@@ -139,20 +164,18 @@ func RequestTraceCaptureMiddleware(resolveGate func(context.Context) service.Req
 				stages = flow.finish(id, authenticated)
 			}
 		}
-		if authenticated && len(stages) > 0 {
-			stored := false
-			for _, stage := range stages {
-				if stage.State == service.RequestTraceStored {
-					stored = true
-				}
-				if stage.State == service.RequestTraceUnsupported || stage.State == service.RequestTraceWriteFailed || stage.State == service.RequestTraceTruncated || stage.State == service.RequestTraceUnverified || (stage.State == service.RequestTraceNotObserved && stage.Reason != "wire_observed" && stage.Reason != "metadata_observed" && stage.Stage != service.RequestTraceDecisionStage) {
-					stored = false
-					break
-				}
-			}
-			if stored {
-				trace.CaptureState = service.RequestTraceStored
-			}
+		if authenticated && len(stages) > 0 && requestTraceStoredState(stages, requestTraceGate.Scope.CaptureBody) {
+			trace.CaptureState = service.RequestTraceStored
+		}
+		// 采集门控与范围已通过；接着按客户端**最终**状态执行 HTTP 200 总开关：
+		// 只跳过恰好 200 的整条 Trace，不扩大为所有 2xx（201／204 属于非 200）。
+		// 判断发生在入队前，被跳过的请求不入队、不落库。
+		if !requestTraceGate.Scope.CaptureHTTP200 && trace.ClientStatus == http.StatusOK {
+			return
+		}
+		// 再按 Trace ID 的稳定哈希与最终状态分类采样：0% 全跳过、100% 全保留。
+		if !requestTraceGate.Scope.ShouldSampleTrace(id, trace.ClientStatus) {
+			return
 		}
 		queue.Enqueue(trace, stages)
 	})
@@ -160,6 +183,33 @@ func RequestTraceCaptureMiddleware(resolveGate func(context.Context) service.Req
 
 func requestTraceRoute(method, path string) (service.RequestTraceRouteFamily, string, bool) {
 	return ClassifyRequestTraceRoute(method, path)
+}
+
+// requestTraceStoredState 判定一次已认证的采集是否达到"应采内容已存储"的完整状态。
+//
+// 判据是"没有真实缺口"，而不是"存在某个 stored 阶段"：
+//   - 正文开启：需要一个真正 stored 的正文阶段来证明留存成功。
+//   - 正文关闭：四路正文都不产生阶段，"仅元信息"本身就是完整的应采形态，因此默认成立，
+//     但没有正文阶段之后也不能凭空当作 stored——任何一次字节被截断（truncated /
+//     redaction_unverified / write_failed）或链路异常（unsupported，例如 bedrock/vertex
+//     这类阶段外协议，或 transport_error 等非预期未采原因）都会把它翻回 false。
+//
+// 顺序无关：无论缺口阶段出现在 stored 阶段之前还是之后，都必须失败关闭。
+func requestTraceStoredState(stages []service.RequestTraceStage, bodyCaptureEnabled bool) bool {
+	stored := !bodyCaptureEnabled
+	for _, stage := range stages {
+		if stage.State == service.RequestTraceStored {
+			stored = true
+		}
+		if stage.State == service.RequestTraceUnsupported || stage.State == service.RequestTraceWriteFailed ||
+			stage.State == service.RequestTraceTruncated || stage.State == service.RequestTraceUnverified ||
+			(stage.State == service.RequestTraceNotObserved && stage.Reason != "wire_observed" &&
+				stage.Reason != "metadata_observed" && stage.Reason != "capture_body_disabled" &&
+				stage.Stage != service.RequestTraceDecisionStage) {
+			return false
+		}
+	}
+	return stored
 }
 
 // markRequestTraceSelectedPlatform 记录一次实际选中的上游账号平台，
@@ -234,7 +284,8 @@ func RequestTraceMiddleware(enabled func(*gin.Context) bool, finished func(*gin.
 		id := strings.ReplaceAll(uuid.NewString(), "-", "")
 		ctx := service.WithRequestTraceID(c.Request.Context(), id)
 		c.Request = c.Request.WithContext(context.WithValue(ctx, requestTraceIDContextKey{}, id))
-		flow := newRequestTraceFlow()
+		// 入口快照在这一刻冻结采集内容开关与体积上限，供整个请求生命周期使用。
+		flow := newRequestTraceFlowWithCapture(requestTraceBodyCaptureAllowed(ctx), requestTraceBodyMaxBytes(ctx))
 		flow.inboundFacts(c.Request.Method, c.Request.URL, c.Request.Header)
 		if _, endpoint, supported := requestTraceRoute(c.Request.Method, c.Request.URL.Path); supported && endpoint != "" {
 			flow.recordDecision(0, "route_selected", service.RequestTraceDecisionFacts{
@@ -275,7 +326,12 @@ func BindRequestTraceAfterAuth() gin.HandlerFunc {
 			if _, authenticated := middleware.GetAPIKeyFromContext(c); authenticated {
 				if value, exists := c.Get("request_trace_flow"); exists {
 					if flow, ok := value.(*requestTraceFlow); ok {
-						ctx := httputil.WithInboundBodyObserver(c.Request.Context(), flow.inboundBody)
+						ctx := c.Request.Context()
+						// 正文关闭时连入站正文观察都不安装：既不留存字节，也不让观察回调
+						// 有机会在鉴权后读取正文。尝试 observer 与身份判定继续保留（只产元信息）。
+						if flow.bodyCaptureEnabled() {
+							ctx = httputil.WithInboundBodyObserver(ctx, flow.inboundBody)
+						}
 						ctx = httpattempt.WithTraceObserver(ctx, flow.traceObserver())
 						ctx = service.WithRequestTraceIdentityVerdictObserver(ctx, flow.identityVerdict)
 						c.Request = c.Request.WithContext(ctx)

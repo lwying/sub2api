@@ -363,6 +363,43 @@ func (r *channelRepository) ListAll(ctx context.Context) ([]service.Channel, err
 	return channels, nil
 }
 
+// ListModelMappingSourceKeys 在数据库内提取各平台的渠道映射源名称，
+// 不加载完整渠道及定价数据，复用现有 platform → {src → dst} 结构。
+func (r *channelRepository) ListModelMappingSourceKeys(ctx context.Context) ([]string, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT src.sk
+		FROM channels c
+		CROSS JOIN LATERAL jsonb_each(
+			CASE WHEN jsonb_typeof(c.model_mapping) = 'object'
+				THEN c.model_mapping
+				ELSE '{}'::jsonb END
+		) AS platform(pk, pv)
+		CROSS JOIN LATERAL jsonb_each(
+			CASE WHEN jsonb_typeof(platform.pv) = 'object'
+				THEN platform.pv
+				ELSE '{}'::jsonb END
+		) AS src(sk, sv)
+		WHERE jsonb_typeof(src.sv) = 'string'
+		ORDER BY src.sk
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, rows.Err()
+}
+
 // --- 批量加载辅助方法 ---
 
 // batchLoadGroupIDs 批量加载多个渠道的分组 ID

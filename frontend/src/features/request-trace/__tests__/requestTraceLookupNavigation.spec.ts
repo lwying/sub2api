@@ -14,7 +14,17 @@ vi.mock("../api", () => ({
   getTrace: mocks.getTrace,
   getTraceExportRisk: mocks.getTraceExportRisk,
   createTraceExport: vi.fn(),
+  getOperatorSettings: vi.fn().mockResolvedValue(null),
+  listTraceExports: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+  getTraceModelCandidates: vi.fn().mockResolvedValue([]),
+  previewTraceDelete: vi.fn(),
+  deleteSelectedTraces: vi.fn(),
+  deleteTracesByFilter: vi.fn(),
 }));
+vi.mock("@/api/admin/groups", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/admin/groups")>();
+  return { ...actual, getAllIncludingInactive: vi.fn().mockResolvedValue([]) };
+});
 vi.mock("vue-router", () => ({
   useRoute: () => mocks.route,
   useRouter: () => ({ replace: mocks.replace }),
@@ -54,6 +64,9 @@ function mountView() {
         RequestTraceDetailDrawer: {
           template: '<div data-testid="trace-detail-stub" />',
         },
+        RequestTraceOperatorSettings: true,
+        RequestTraceSettingsDialog: true,
+        RequestTraceOpsStatusPanel: true,
         RequestTraceExportDrawer: {
           template: '<div data-testid="request-trace-export-drawer-stub" />',
         },

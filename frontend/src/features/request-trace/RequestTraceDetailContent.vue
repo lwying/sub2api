@@ -15,6 +15,18 @@
     {{ t("admin.requestTrace.detail.loadFailed") }}
   </div>
   <div v-else-if="detail" data-testid="trace-detail" class="space-y-5 text-sm">
+    <div
+      v-if="metadataOnly"
+      data-testid="trace-metadata-only"
+      class="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 dark:border-primary-800 dark:bg-primary-900/20"
+    >
+      <p class="font-medium text-primary-800 dark:text-primary-200">
+        {{ t("admin.requestTrace.detail.metadataOnly") }}
+      </p>
+      <p class="mt-1 text-xs text-primary-700 dark:text-primary-300">
+        {{ t("admin.requestTrace.detail.captureBodyDisabledNote") }}
+      </p>
+    </div>
     <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
       <dt>{{ t("admin.requestTrace.list.traceId") }}</dt>
       <dd data-testid="trace-detail-id" class="break-all font-mono">
@@ -87,7 +99,11 @@
         }}</span>
       </div>
       <p
-        v-if="stage.state === 'not_observed' && isBodyStage(stage.stage)"
+        v-if="
+          stage.state === 'not_observed' &&
+          isBodyStage(stage.stage) &&
+          stage.reason !== 'capture_body_disabled'
+        "
         data-testid="trace-stage-not-observed"
         class="mt-2 text-sm text-amber-700 dark:text-amber-300"
       >
@@ -383,6 +399,12 @@ import type { RequestTraceDetail } from "./types";
 const props = defineProps<{ show: boolean; traceId: string | null }>();
 const { t } = useI18n();
 const detail = ref<RequestTraceDetail | null>(null);
+const metadataOnly = computed(
+  () =>
+    detail.value?.stages.some(
+      (stage) => stage.reason === "capture_body_disabled",
+    ) ?? false,
+);
 const loading = ref(false);
 const failed = ref(false);
 let revision = 0;

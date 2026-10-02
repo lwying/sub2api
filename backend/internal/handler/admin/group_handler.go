@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -20,12 +21,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TraceModelCandidateChannelReader is the minimal read-only channel seam the
+// Trace model candidate endpoint needs. It is a narrow interface so the handler
+// can hold an optional dependency and every existing constructor call keeps
+// working; only ListAll is read, and only ModelMapping source keys are used.
+type TraceModelCandidateChannelReader interface {
+	ListAll(ctx context.Context) ([]service.Channel, error)
+}
+
+// traceModelChannelSourceKeyReader is the source-only channel read: it extracts
+// distinct model-mapping source keys in the database without loading full
+// channel rows (pricing, stats rules, …). Asserted at runtime so the reader can
+// fall back to ListAll for older implementations.
+type traceModelChannelSourceKeyReader interface {
+	ListModelMappingSourceKeys(ctx context.Context) ([]string, error)
+}
+
 // GroupHandler handles admin group management
 type GroupHandler struct {
 	adminService         service.AdminService
 	dashboardService     *service.DashboardService
 	groupCapacityService *service.GroupCapacityService
 	cfg                  *config.Config
+	// traceModelChannelReader is optional: when absent the Trace model candidate
+	// directory simply omits channel mapping source keys.
+	traceModelChannelReader TraceModelCandidateChannelReader
 }
 
 // GetLiveCapability 返回当前服务端是否具备生成 Live attestation 的运行环境。
@@ -96,11 +116,19 @@ func NewGroupHandler(adminService service.AdminService, dashboardService *servic
 }
 
 func NewGroupHandlerWithConfig(adminService service.AdminService, dashboardService *service.DashboardService, groupCapacityService *service.GroupCapacityService, cfg *config.Config) *GroupHandler {
+	return NewGroupHandlerWithConfigAndChannelReader(adminService, dashboardService, groupCapacityService, cfg, nil)
+}
+
+// NewGroupHandlerWithConfigAndChannelReader is the optional-dependency variant
+// used by the Wire provider to supply the read-only channel seam for the Trace
+// model candidate directory. Passing nil keeps the previous behavior.
+func NewGroupHandlerWithConfigAndChannelReader(adminService service.AdminService, dashboardService *service.DashboardService, groupCapacityService *service.GroupCapacityService, cfg *config.Config, channelReader TraceModelCandidateChannelReader) *GroupHandler {
 	return &GroupHandler{
-		adminService:         adminService,
-		dashboardService:     dashboardService,
-		groupCapacityService: groupCapacityService,
-		cfg:                  cfg,
+		adminService:            adminService,
+		dashboardService:        dashboardService,
+		groupCapacityService:    groupCapacityService,
+		cfg:                     cfg,
+		traceModelChannelReader: channelReader,
 	}
 }
 
@@ -630,6 +658,68 @@ func (h *GroupHandler) GetGroupModelAllowlistCandidates(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"models": models})
+}
+
+// errRequestTraceModelCandidatesUnavailable is returned when the admin service in
+// the current build does not expose the read-only candidate aggregation. The
+// endpoint is additive and must never be emulated with a partial directory.
+var errRequestTraceModelCandidatesUnavailable = infraerrors.New(
+	http.StatusNotImplemented,
+	"REQUEST_TRACE_MODEL_CANDIDATES_UNAVAILABLE",
+	"request trace model candidates are not available",
+)
+
+// GetRequestTraceModelCandidates returns the global model-name directory used by
+// the Trace capture scope and record filters. It aggregates existing read
+// capabilities only and returns model names with no credentials.
+// GET /api/v1/admin/settings/request-trace/model-candidates
+func (h *GroupHandler) GetRequestTraceModelCandidates(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	provider, ok := h.adminService.(service.RequestTraceModelCandidateProvider)
+	if !ok {
+		response.ErrorFrom(c, errRequestTraceModelCandidatesUnavailable)
+		return
+	}
+	channelModelKeys, err := h.traceModelChannelMappingSourceKeys(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	models, err := provider.GetRequestTraceModelCandidates(c.Request.Context(), channelModelKeys)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if models == nil {
+		models = []string{}
+	}
+	response.Success(c, gin.H{"models": models})
+}
+
+// traceModelChannelMappingSourceKeys reads the channel model mapping source keys
+// (never targets) from the optional read-only channel seam.
+func (h *GroupHandler) traceModelChannelMappingSourceKeys(ctx context.Context) ([]string, error) {
+	if h == nil || h.traceModelChannelReader == nil {
+		return nil, nil
+	}
+	// Prefer the source-only DB aggregation so full channel rows never enter the
+	// process; fall back to the full list for older implementations.
+	if reader, ok := h.traceModelChannelReader.(traceModelChannelSourceKeyReader); ok {
+		return reader.ListModelMappingSourceKeys(ctx)
+	}
+	channels, err := h.traceModelChannelReader.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0)
+	for i := range channels {
+		for _, platformMapping := range channels[i].ModelMapping {
+			for source := range platformMapping {
+				keys = append(keys, source)
+			}
+		}
+	}
+	return keys, nil
 }
 
 // Create handles creating a new group

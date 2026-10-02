@@ -25,475 +25,604 @@
             data-testid="request-trace-settings-open"
             @click="settingsOpen = true"
           >
-            {{ t("admin.requestTrace.list.settings") }}
+            {{ t("admin.requestTrace.export.settings.title") }}
           </button>
         </div>
       </header>
-      <div
-        class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
+      <nav
+        class="tabs w-fit"
+        role="tablist"
+        :aria-label="t('admin.requestTrace.title')"
       >
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.traceId") }}</span>
-            <input
-              v-model.trim="filters.trace_id"
-              data-testid="request-trace-id-filter"
-              class="input w-full font-mono"
-              maxlength="32"
-              autocomplete="off"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.keyword") }}</span>
-            <input
-              v-model.trim="filters.q"
-              data-testid="request-trace-keyword"
-              class="input w-full"
-              maxlength="128"
-              autocomplete="off"
-              :title="t('admin.requestTrace.list.keywordHint')"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.routeFamily") }}</span>
-            <select v-model="filters.route_family" class="input w-full">
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="messages">
-                {{ t("admin.requestTrace.list.messages") }}
-              </option>
-              <option value="chat_completions">
-                {{ t("admin.requestTrace.list.chat_completions") }}
-              </option>
-              <option value="responses">
-                {{ t("admin.requestTrace.list.responses") }}
-              </option>
-            </select>
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.status") }}</span>
-            <input
-              v-model="filters.client_status"
-              class="input w-full"
-              type="number"
-              min="0"
-              max="599"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.usageLinked") }}</span>
-            <select v-model="filters.usage_linked" class="input w-full">
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="true">
-                {{ t("admin.requestTrace.list.linked") }}
-              </option>
-              <option value="false">
-                {{ t("admin.requestTrace.list.unlinked") }}
-              </option>
-            </select>
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.usageLogId") }}</span>
-            <input
-              v-model.trim="filters.usage_log_id"
-              data-testid="request-trace-usage-filter"
-              class="input w-full font-mono"
-              inputmode="numeric"
-              autocomplete="off"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.accountId") }}</span>
-            <input
-              v-model.trim="filters.account_id"
-              data-testid="request-trace-account-filter"
-              class="input w-full font-mono"
-              inputmode="numeric"
-              autocomplete="off"
-            />
-          </label>
-          <!--
+        <button
+          id="trace-records-tab"
+          type="button"
+          role="tab"
+          class="tab"
+          :class="{ 'tab-active': activeTab === 'records' }"
+          :aria-selected="activeTab === 'records'"
+          aria-controls="trace-records-panel"
+          data-testid="request-trace-tab-records"
+          @click="activeTab = 'records'"
+        >
+          {{ t("admin.requestTrace.tabs.records") }}
+        </button>
+        <button
+          id="trace-config-tab"
+          type="button"
+          role="tab"
+          class="tab"
+          :class="{ 'tab-active': activeTab === 'config' }"
+          :aria-selected="activeTab === 'config'"
+          aria-controls="trace-config-panel"
+          data-testid="request-trace-tab-config"
+          @click="activeTab = 'config'"
+        >
+          {{ t("admin.requestTrace.tabs.config") }}
+        </button>
+      </nav>
+      <section
+        id="trace-config-panel"
+        v-show="activeTab === 'config'"
+        role="tabpanel"
+        aria-labelledby="trace-config-tab"
+      >
+        <RequestTraceOperatorSettings
+          :status="captureStatus"
+          :loading="captureStatusLoading"
+          :groups="groups"
+          :model-candidates="modelCandidates"
+          :options-loading="optionsLoading"
+          :options-error="optionsError"
+          @retry-options="loadOptions"
+          @retry-status="loadCaptureStatus"
+          @updated="captureStatus = $event"
+        />
+      </section>
+      <section
+        id="trace-records-panel"
+        v-show="activeTab === 'records'"
+        role="tabpanel"
+        aria-labelledby="trace-records-tab"
+        data-testid="request-trace-records-panel"
+        class="space-y-5"
+      >
+        <div
+          class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
+        >
+          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.traceId") }}</span>
+              <input
+                v-model.trim="filters.trace_id"
+                data-testid="request-trace-id-filter"
+                class="input w-full font-mono"
+                maxlength="32"
+                autocomplete="off"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.keyword") }}</span>
+              <input
+                v-model.trim="filters.q"
+                data-testid="request-trace-keyword"
+                class="input w-full"
+                maxlength="128"
+                autocomplete="off"
+                :title="t('admin.requestTrace.list.keywordHint')"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.routeFamily") }}</span>
+              <select v-model="filters.route_family" class="input w-full">
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="messages">
+                  {{ t("admin.requestTrace.list.messages") }}
+                </option>
+                <option value="chat_completions">
+                  {{ t("admin.requestTrace.list.chat_completions") }}
+                </option>
+                <option value="responses">
+                  {{ t("admin.requestTrace.list.responses") }}
+                </option>
+              </select>
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.status") }}</span>
+              <input
+                v-model="filters.client_status"
+                class="input w-full"
+                type="number"
+                min="0"
+                max="599"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.usageLinked") }}</span>
+              <select v-model="filters.usage_linked" class="input w-full">
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="true">
+                  {{ t("admin.requestTrace.list.linked") }}
+                </option>
+                <option value="false">
+                  {{ t("admin.requestTrace.list.unlinked") }}
+                </option>
+              </select>
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.usageLogId") }}</span>
+              <input
+                v-model.trim="filters.usage_log_id"
+                data-testid="request-trace-usage-filter"
+                class="input w-full font-mono"
+                inputmode="numeric"
+                autocomplete="off"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.accountId") }}</span>
+              <input
+                v-model.trim="filters.account_id"
+                data-testid="request-trace-account-filter"
+                class="input w-full font-mono"
+                inputmode="numeric"
+                autocomplete="off"
+              />
+            </label>
+            <!--
             The three request-time facts below are each queried as one concrete
             value **or** as "not observed", never both: a request whose fact was
             never determined is not equal to any value, so the other option would
             silently change the question.
           -->
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.group") }}</span>
-            <select
-              v-model="filters.group_mode"
-              data-testid="request-trace-group-filter-mode"
-              class="input w-full"
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.group") }}</span>
+              <select
+                v-model="filters.group_mode"
+                data-testid="request-trace-group-filter-mode"
+                class="input w-full"
+              >
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="id">
+                  {{ t("admin.requestTrace.list.specificValue") }}
+                </option>
+                <option value="unknown">
+                  {{ t("admin.requestTrace.list.unknownValue") }}
+                </option>
+              </select>
+            </label>
+            <label
+              v-if="filters.group_mode === 'id'"
+              class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
             >
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="id">
-                {{ t("admin.requestTrace.list.specificValue") }}
-              </option>
-              <option value="unknown">
-                {{ t("admin.requestTrace.list.unknownValue") }}
-              </option>
-            </select>
-          </label>
-          <label
-            v-if="filters.group_mode === 'id'"
-            class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
-          >
-            <span>{{ t("admin.requestTrace.list.groupId") }}</span>
-            <input
-              v-model.trim="filters.group_id"
-              data-testid="request-trace-group-filter"
-              class="input w-full font-mono"
-              inputmode="numeric"
-              autocomplete="off"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.requestedModel") }}</span>
-            <select
-              v-model="filters.model_mode"
-              data-testid="request-trace-model-filter-mode"
-              class="input w-full"
+              <span>{{ t("admin.requestTrace.list.groupId") }}</span>
+              <Select
+                v-model="filters.group_id"
+                data-testid="request-trace-group-filter"
+                :options="groupOptions"
+                :searchable="true"
+                :loading="optionsLoading"
+                :placeholder="
+                  t('admin.requestTrace.list.filterPlaceholder.group')
+                "
+                :aria-label="t('admin.requestTrace.list.group')"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.requestedModel") }}</span>
+              <select
+                v-model="filters.model_mode"
+                data-testid="request-trace-model-filter-mode"
+                class="input w-full"
+              >
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="value">
+                  {{ t("admin.requestTrace.list.specificValue") }}
+                </option>
+                <option value="unknown">
+                  {{ t("admin.requestTrace.list.unknownValue") }}
+                </option>
+              </select>
+            </label>
+            <label
+              v-if="filters.model_mode === 'value'"
+              class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
             >
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="value">
-                {{ t("admin.requestTrace.list.specificValue") }}
-              </option>
-              <option value="unknown">
-                {{ t("admin.requestTrace.list.unknownValue") }}
-              </option>
-            </select>
-          </label>
-          <label
-            v-if="filters.model_mode === 'value'"
-            class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
-          >
-            <span>{{ t("admin.requestTrace.list.modelName") }}</span>
-            <input
-              v-model.trim="filters.requested_model"
-              data-testid="request-trace-model-filter"
-              class="input w-full font-mono"
-              maxlength="128"
-              autocomplete="off"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.platform") }}</span>
-            <select
-              v-model="filters.platform_mode"
-              data-testid="request-trace-platform-filter-mode"
-              class="input w-full"
+              <span>{{ t("admin.requestTrace.list.modelName") }}</span>
+              <Select
+                v-model="filters.requested_model"
+                data-testid="request-trace-model-filter"
+                :options="modelOptions"
+                :searchable="true"
+                :loading="optionsLoading"
+                :placeholder="
+                  t('admin.requestTrace.list.filterPlaceholder.model')
+                "
+                :aria-label="t('admin.requestTrace.list.requestedModel')"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.platform") }}</span>
+              <select
+                v-model="filters.platform_mode"
+                data-testid="request-trace-platform-filter-mode"
+                class="input w-full"
+              >
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="value">
+                  {{ t("admin.requestTrace.list.specificValue") }}
+                </option>
+                <option value="unknown">
+                  {{ t("admin.requestTrace.list.unknownValue") }}
+                </option>
+              </select>
+            </label>
+            <label
+              v-if="filters.platform_mode === 'value'"
+              class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
             >
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="value">
-                {{ t("admin.requestTrace.list.specificValue") }}
-              </option>
-              <option value="unknown">
-                {{ t("admin.requestTrace.list.unknownValue") }}
-              </option>
-            </select>
-          </label>
-          <label
-            v-if="filters.platform_mode === 'value'"
-            class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
-          >
-            <span>{{ t("admin.requestTrace.list.platformName") }}</span>
-            <input
-              v-model.trim="filters.platform_name"
-              data-testid="request-trace-platform-filter"
-              class="input w-full font-mono"
-              maxlength="128"
-              autocomplete="off"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.user") }}</span>
-            <select
-              v-model="filters.user_mode"
-              data-testid="request-trace-user-mode"
-              class="input w-full"
+              <span>{{ t("admin.requestTrace.list.platformName") }}</span>
+              <Select
+                v-model="filters.platform_name"
+                data-testid="request-trace-platform-filter"
+                :options="platformOptions"
+                :searchable="true"
+                :placeholder="
+                  t('admin.requestTrace.list.filterPlaceholder.platform')
+                "
+                :aria-label="t('admin.requestTrace.list.platform')"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.user") }}</span>
+              <select
+                v-model="filters.user_mode"
+                data-testid="request-trace-user-mode"
+                class="input w-full"
+              >
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="id">
+                  {{ t("admin.requestTrace.list.specificValue") }}
+                </option>
+                <option value="unknown">
+                  {{ t("admin.requestTrace.list.unknownValue") }}
+                </option>
+              </select>
+            </label>
+            <label
+              v-if="filters.user_mode === 'id'"
+              class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
             >
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="id">
-                {{ t("admin.requestTrace.list.specificValue") }}
-              </option>
-              <option value="unknown">
-                {{ t("admin.requestTrace.list.unknownValue") }}
-              </option>
-            </select>
-          </label>
-          <label
-            v-if="filters.user_mode === 'id'"
-            class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
-          >
-            <span>{{ t("admin.requestTrace.list.userId") }}</span>
-            <input
-              v-model.trim="filters.user_id"
-              class="input w-full font-mono"
-              data-testid="request-trace-user-id"
-              inputmode="numeric"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.apiKey") }}</span>
-            <select
-              v-model="filters.api_key_mode"
-              data-testid="request-trace-key-mode"
-              class="input w-full"
+              <span>{{ t("admin.requestTrace.list.userId") }}</span>
+              <input
+                v-model.trim="filters.user_id"
+                class="input w-full font-mono"
+                data-testid="request-trace-user-id"
+                inputmode="numeric"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.apiKey") }}</span>
+              <select
+                v-model="filters.api_key_mode"
+                data-testid="request-trace-key-mode"
+                class="input w-full"
+              >
+                <option value="">{{ t("admin.requestTrace.list.any") }}</option>
+                <option value="id">
+                  {{ t("admin.requestTrace.list.specificValue") }}
+                </option>
+                <option value="unknown">
+                  {{ t("admin.requestTrace.list.unknownValue") }}
+                </option>
+              </select>
+            </label>
+            <label
+              v-if="filters.api_key_mode === 'id'"
+              class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
             >
-              <option value="">{{ t("admin.requestTrace.list.any") }}</option>
-              <option value="id">
-                {{ t("admin.requestTrace.list.specificValue") }}
-              </option>
-              <option value="unknown">
-                {{ t("admin.requestTrace.list.unknownValue") }}
-              </option>
-            </select>
-          </label>
-          <label
-            v-if="filters.api_key_mode === 'id'"
-            class="space-y-1 text-xs text-gray-600 dark:text-dark-300"
+              <span>{{ t("admin.requestTrace.list.apiKeyId") }}</span>
+              <input
+                v-model.trim="filters.api_key_id"
+                class="input w-full font-mono"
+                data-testid="request-trace-key-id"
+                inputmode="numeric"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.from") }}</span>
+              <input
+                v-model="filters.created_from"
+                class="input w-full"
+                type="datetime-local"
+              />
+            </label>
+            <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
+              <span>{{ t("admin.requestTrace.list.to") }}</span>
+              <input
+                v-model="filters.created_to"
+                class="input w-full"
+                type="datetime-local"
+              />
+            </label>
+          </div>
+          <p
+            v-if="optionsLoading"
+            role="status"
+            class="mt-3 text-xs text-gray-500 dark:text-dark-300"
           >
-            <span>{{ t("admin.requestTrace.list.apiKeyId") }}</span>
-            <input
-              v-model.trim="filters.api_key_id"
-              class="input w-full font-mono"
-              data-testid="request-trace-key-id"
-              inputmode="numeric"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.from") }}</span>
-            <input
-              v-model="filters.created_from"
-              class="input w-full"
-              type="datetime-local"
-            />
-          </label>
-          <label class="space-y-1 text-xs text-gray-600 dark:text-dark-300">
-            <span>{{ t("admin.requestTrace.list.to") }}</span>
-            <input
-              v-model="filters.created_to"
-              class="input w-full"
-              type="datetime-local"
-            />
-          </label>
-        </div>
-        <div class="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            class="btn btn-primary"
-            data-testid="request-trace-search"
-            @click="search"
+            {{ t("admin.requestTrace.list.candidates.loading") }}
+          </p>
+          <p
+            v-else-if="optionsError"
+            role="alert"
+            class="mt-3 text-xs text-amber-700 dark:text-amber-300"
           >
-            {{ t("admin.requestTrace.list.search") }}
-          </button>
-          <!--
+            {{ optionsError }}
+            <button
+              type="button"
+              class="underline underline-offset-2"
+              @click="loadOptions"
+            >
+              {{ t("admin.requestTrace.list.candidates.retry") }}
+            </button>
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              class="btn btn-primary"
+              data-testid="request-trace-search"
+              @click="search"
+            >
+              {{ t("admin.requestTrace.list.search") }}
+            </button>
+            <!--
             The export actions sit beside the query, because they export the
             query: there is no second filter form to fill in, and no way to
             export a scope that was never executed.
           -->
-          <button
-            type="button"
-            class="btn btn-secondary"
-            data-testid="request-trace-export-selected"
-            :disabled="
-              creating ||
-              selectionOverBound ||
-              selectedCount === 0 ||
-              exportBlocked
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-testid="request-trace-export-selected"
+              :disabled="
+                creating ||
+                selectionOverBound ||
+                selectedCount === 0 ||
+                exportBlocked
+              "
+              @click="exportSelected"
+            >
+              {{
+                creating
+                  ? t("admin.requestTrace.export.action.creating")
+                  : t("admin.requestTrace.export.action.selected", {
+                      count: selectedCount,
+                    })
+              }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-testid="request-trace-export-all"
+              :disabled="creating || exportBlocked"
+              @click="exportAll"
+            >
+              {{
+                creating
+                  ? t("admin.requestTrace.export.action.creating")
+                  : t("admin.requestTrace.export.action.all")
+              }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary text-red-700 dark:text-red-300"
+              data-testid="request-trace-delete-selected"
+              :disabled="
+                deleting ||
+                cleanupPreviewing ||
+                selectionOverBound ||
+                selectedCount === 0
+              "
+              @click="prepareSelectedCleanup"
+            >
+              {{ t("admin.requestTrace.list.cleanupActions.selectedAction") }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary text-red-700 dark:text-red-300"
+              data-testid="request-trace-delete-filtered"
+              :disabled="deleting || cleanupPreviewing || !canCleanupFilter"
+              @click="prepareFilterCleanup"
+            >
+              {{ t("admin.requestTrace.list.cleanupActions.filteredAction") }}
+            </button>
+            <span
+              class="text-xs text-gray-500 dark:text-dark-300"
+              data-testid="request-trace-export-selection-count"
+            >
+              {{
+                t("admin.requestTrace.export.action.selectionCount", {
+                  count: selectedCount,
+                })
+              }}
+            </span>
+            <button
+              v-if="selectedCount > 0"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-testid="request-trace-export-clear-selection"
+              @click="clearSelection"
+            >
+              {{ t("admin.requestTrace.export.action.clearSelection") }}
+            </button>
+          </div>
+          <p
+            v-if="cleanupMessage"
+            role="status"
+            data-testid="request-trace-cleanup-feedback"
+            class="mt-3 text-sm"
+            :class="
+              cleanupFailed
+                ? 'text-red-700 dark:text-red-300'
+                : 'text-primary-700 dark:text-primary-300'
             "
-            @click="exportSelected"
           >
-            {{
-              creating
-                ? t("admin.requestTrace.export.action.creating")
-                : t("admin.requestTrace.export.action.selected", {
-                    count: selectedCount,
-                  })
-            }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            data-testid="request-trace-export-all"
-            :disabled="creating || exportBlocked"
-            @click="exportAll"
-          >
-            {{
-              creating
-                ? t("admin.requestTrace.export.action.creating")
-                : t("admin.requestTrace.export.action.all")
-            }}
-          </button>
-          <span
-            class="text-xs text-gray-500 dark:text-dark-300"
-            data-testid="request-trace-export-selection-count"
-          >
-            {{
-              t("admin.requestTrace.export.action.selectionCount", {
-                count: selectedCount,
-              })
-            }}
-          </span>
-          <button
-            v-if="selectedCount > 0"
-            type="button"
-            class="btn btn-secondary btn-sm"
-            data-testid="request-trace-export-clear-selection"
-            @click="clearSelection"
-          >
-            {{ t("admin.requestTrace.export.action.clearSelection") }}
-          </button>
-        </div>
-        <!--
+            {{ cleanupMessage }}
+          </p>
+          <!--
           The scope line states the filter set the export will carry: the last one
           that actually ran. Edits made in the form since then are not a scope
           until a query succeeds, and the note below says so out loud.
         -->
-        <p
-          class="mt-3 text-xs text-gray-600 dark:text-dark-300"
-          data-testid="request-trace-export-scope"
-        >
-          {{ t("admin.requestTrace.export.scope.heading") }}:
-          {{ executedScopeSummary }}
-        </p>
-        <p
-          v-if="draftDiffers"
-          class="mt-1 text-xs text-amber-700 dark:text-amber-300"
-          data-testid="request-trace-export-draft-note"
-        >
-          {{ t("admin.requestTrace.export.scope.draftPending") }}
-        </p>
-        <p
-          v-if="selectionOverBound"
-          class="mt-1 text-xs text-amber-700 dark:text-amber-300"
-          data-testid="request-trace-export-selection-over-bound"
-        >
-          {{
-            t("admin.requestTrace.export.action.overBound", {
-              count: selectedCount,
-              max: maxSelectedTraces,
-            })
-          }}
-        </p>
-        <p
-          v-if="riskAcknowledged === false"
-          class="mt-1 text-xs text-amber-700 dark:text-amber-300"
-          data-testid="request-trace-export-risk-note"
-        >
-          {{ t("admin.requestTrace.export.action.riskRequired") }}
-          <button
-            type="button"
-            class="underline"
-            data-testid="request-trace-export-risk-link"
-            @click="settingsOpen = true"
+          <p
+            class="mt-3 text-xs text-gray-600 dark:text-dark-300"
+            data-testid="request-trace-export-scope"
           >
-            {{ t("admin.requestTrace.export.action.riskLink") }}
-          </button>
-          <button
-            type="button"
-            class="ml-2 underline"
-            data-testid="request-trace-export-risk-recheck"
-            @click="loadExportRisk"
+            {{ t("admin.requestTrace.export.scope.heading") }}:
+            {{ executedScopeSummary }}
+          </p>
+          <p
+            v-if="draftDiffers"
+            class="mt-1 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="request-trace-export-draft-note"
           >
-            {{ t("admin.requestTrace.export.action.riskRecheck") }}
-          </button>
-        </p>
-        <p
-          v-if="refusal"
-          role="alert"
-          class="mt-1 text-xs text-red-700 dark:text-red-300"
-          data-testid="request-trace-export-refusal"
-        >
-          {{ t(`admin.requestTrace.export.refusal.${refusal}`) }}
-        </p>
-        <!--
+            {{ t("admin.requestTrace.export.scope.draftPending") }}
+          </p>
+          <p
+            v-if="selectionOverBound"
+            class="mt-1 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="request-trace-export-selection-over-bound"
+          >
+            {{
+              t("admin.requestTrace.export.action.overBound", {
+                count: selectedCount,
+                max: maxSelectedTraces,
+              })
+            }}
+          </p>
+          <p
+            v-if="riskAcknowledged === false"
+            class="mt-1 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="request-trace-export-risk-note"
+          >
+            {{ t("admin.requestTrace.export.action.riskRequired") }}
+            <button
+              type="button"
+              class="underline"
+              data-testid="request-trace-export-risk-link"
+              @click="settingsOpen = true"
+            >
+              {{ t("admin.requestTrace.export.action.riskLink") }}
+            </button>
+            <button
+              type="button"
+              class="ml-2 underline"
+              data-testid="request-trace-export-risk-recheck"
+              @click="loadExportRisk"
+            >
+              {{ t("admin.requestTrace.export.action.riskRecheck") }}
+            </button>
+          </p>
+          <p
+            v-if="refusal"
+            role="alert"
+            class="mt-1 text-xs text-red-700 dark:text-red-300"
+            data-testid="request-trace-export-refusal"
+          >
+            {{ t(`admin.requestTrace.export.refusal.${refusal}`) }}
+          </p>
+          <!--
           The task handle must outlive the page, not the tab. This affordance asks
           the server for the export tasks **this admin login session** created, so
           leaving or refreshing the page still finds them; nothing is kept in the
           browser, no id is cached, and another session asks and gets nothing.
         -->
-        <div class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-700">
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            data-testid="request-trace-export-recall-toggle"
-            @click="toggleRecall"
-          >
-            {{ t("admin.requestTrace.export.task.title") }}
-            <!--
+          <div class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-700">
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-testid="request-trace-export-recall-toggle"
+              @click="toggleRecall"
+            >
+              {{ t("admin.requestTrace.export.task.title") }}
+              <!--
               The count is how many tasks are **loaded**, not how many exist: one
               page is bounded, so while the server still offers a next page the
               number is prefixed with a plus sign. A bare "20" would read as
               "you have twenty tasks" and hide the rest.
             -->
-            <span
-              v-if="recallTasks.length"
-              class="ml-1"
-              data-testid="request-trace-export-recall-count"
-              >{{ recallTasks.length }}{{ recallCursor ? "+" : "" }}</span
-            >
-          </button>
-          <template v-if="recallOpen">
-            <p
-              v-if="recallLoading"
-              role="status"
-              class="mt-2 text-xs text-gray-500 dark:text-dark-300"
-              data-testid="request-trace-export-recall-loading"
-            >
-              {{ t("admin.requestTrace.export.task.loading") }}
-            </p>
-            <template v-else-if="recallFailed">
+              <span
+                v-if="recallTasks.length"
+                class="ml-1"
+                data-testid="request-trace-export-recall-count"
+                >{{ recallTasks.length }}{{ recallCursor ? "+" : "" }}</span
+              >
+            </button>
+            <template v-if="recallOpen">
               <p
-                role="alert"
-                class="mt-2 text-xs text-amber-700 dark:text-amber-300"
-                data-testid="request-trace-export-recall-failed"
+                v-if="recallLoading"
+                role="status"
+                class="mt-2 text-xs text-gray-500 dark:text-dark-300"
+                data-testid="request-trace-export-recall-loading"
               >
-                {{
-                  t(
-                    `admin.requestTrace.export.refusal.${recallRefusal ?? "unavailable"}`,
-                  )
-                }}
+                {{ t("admin.requestTrace.export.task.loading") }}
               </p>
-              <button
-                type="button"
-                class="mt-2 btn btn-secondary btn-sm"
-                data-testid="request-trace-export-recall-retry"
-                @click="loadRecall"
-              >
-                {{ t("admin.requestTrace.export.task.retry") }}
-              </button>
-            </template>
-            <template v-else-if="recallTasks.length">
-              <ul
-                class="mt-2 space-y-1"
-                data-testid="request-trace-export-recall-list"
-              >
-                <li v-for="recalled in recallTasks" :key="recalled.id">
-                  <button
-                    type="button"
-                    class="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-100 dark:hover:bg-dark-800"
-                    :data-testid="`request-trace-export-recall-task-${recalled.id}`"
-                    @click="openExportTask(recalled.id)"
-                  >
-                    <span class="font-mono">{{ recalled.id.slice(0, 8) }}</span>
-                    <span class="ml-2">{{
-                      t(recallStateKey(recallState(recalled)))
-                    }}</span>
-                    <span class="ml-2 text-gray-500 dark:text-dark-300"
-                      >{{ t("admin.requestTrace.export.progress.created") }}:
-                      {{ formatRecallDate(recalled.created_at) }}</span
+              <template v-else-if="recallFailed">
+                <p
+                  role="alert"
+                  class="mt-2 text-xs text-amber-700 dark:text-amber-300"
+                  data-testid="request-trace-export-recall-failed"
+                >
+                  {{
+                    t(
+                      `admin.requestTrace.export.refusal.${recallRefusal ?? "unavailable"}`,
+                    )
+                  }}
+                </p>
+                <button
+                  type="button"
+                  class="mt-2 btn btn-secondary btn-sm"
+                  data-testid="request-trace-export-recall-retry"
+                  @click="loadRecall"
+                >
+                  {{ t("admin.requestTrace.export.task.retry") }}
+                </button>
+              </template>
+              <template v-else-if="recallTasks.length">
+                <ul
+                  class="mt-2 space-y-1"
+                  data-testid="request-trace-export-recall-list"
+                >
+                  <li v-for="recalled in recallTasks" :key="recalled.id">
+                    <button
+                      type="button"
+                      class="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-100 dark:hover:bg-dark-800"
+                      :data-testid="`request-trace-export-recall-task-${recalled.id}`"
+                      @click="openExportTask(recalled.id)"
                     >
-                    <span
-                      v-if="recalled.download_until"
-                      class="ml-2 text-gray-500 dark:text-dark-300"
-                      >{{
-                        t("admin.requestTrace.export.progress.downloadUntil")
-                      }}: {{ formatRecallDate(recalled.download_until) }}</span
-                    >
-                  </button>
-                </li>
-              </ul>
-              <!--
+                      <span class="font-mono">{{
+                        recalled.id.slice(0, 8)
+                      }}</span>
+                      <span class="ml-2">{{
+                        t(recallStateKey(recallState(recalled)))
+                      }}</span>
+                      <span class="ml-2 text-gray-500 dark:text-dark-300"
+                        >{{ t("admin.requestTrace.export.progress.created") }}:
+                        {{ formatRecallDate(recalled.created_at) }}</span
+                      >
+                      <span
+                        v-if="recalled.download_until"
+                        class="ml-2 text-gray-500 dark:text-dark-300"
+                        >{{
+                          t("admin.requestTrace.export.progress.downloadUntil")
+                        }}:
+                        {{ formatRecallDate(recalled.download_until) }}</span
+                      >
+                    </button>
+                  </li>
+                </ul>
+                <!--
                 A page holds a bounded number of tasks, so "one page" is not
                 "all of them": the server hands out an opaque token for the page
                 after this one, and it is the only way the oldest task stays
@@ -501,308 +630,352 @@
                 straight back, so a row deleted in the meantime cannot make the
                 walk repeat or skip.
               -->
-              <button
-                v-if="recallCursor"
-                type="button"
-                class="mt-2 btn btn-secondary btn-sm"
-                data-testid="request-trace-export-recall-more"
-                :disabled="recallMoreLoading"
-                @click="loadMoreRecall"
-              >
-                {{ t("admin.requestTrace.export.task.loadMore") }}
-              </button>
-              <!--
+                <button
+                  v-if="recallCursor"
+                  type="button"
+                  class="mt-2 btn btn-secondary btn-sm"
+                  data-testid="request-trace-export-recall-more"
+                  :disabled="recallMoreLoading"
+                  @click="loadMoreRecall"
+                >
+                  {{ t("admin.requestTrace.export.task.loadMore") }}
+                </button>
+                <!--
                 A failed next page is not a refusal and not "no tasks": the rows
                 already listed stay exactly as they are, and the token is kept so
                 the same page can be asked for again.
               -->
+                <p
+                  v-if="recallMoreFailed"
+                  role="alert"
+                  class="mt-1 text-xs text-amber-700 dark:text-amber-300"
+                  data-testid="request-trace-export-recall-more-failed"
+                >
+                  {{ t("admin.requestTrace.export.task.loadMoreFailed") }}
+                </p>
+              </template>
               <p
-                v-if="recallMoreFailed"
-                role="alert"
-                class="mt-1 text-xs text-amber-700 dark:text-amber-300"
-                data-testid="request-trace-export-recall-more-failed"
+                v-else
+                class="mt-2 text-xs text-gray-500 dark:text-dark-300"
+                data-testid="request-trace-export-recall-empty"
               >
-                {{ t("admin.requestTrace.export.task.loadMoreFailed") }}
+                {{ t("admin.requestTrace.export.task.absent") }}
               </p>
             </template>
-            <p
-              v-else
-              class="mt-2 text-xs text-gray-500 dark:text-dark-300"
-              data-testid="request-trace-export-recall-empty"
-            >
-              {{ t("admin.requestTrace.export.task.absent") }}
-            </p>
-          </template>
-        </div>
-      </div>
-      <p
-        v-if="captureStatus && !captureStatus.capture_allowed"
-        class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
-        data-testid="request-trace-capture-disabled"
-      >
-        {{ t("admin.requestTrace.list.captureDisabled") }}
-      </p>
-      <p
-        v-else-if="captureStatus === null"
-        class="text-xs text-gray-500 dark:text-dark-300"
-        data-testid="request-trace-capture-unknown"
-      >
-        {{ t("admin.requestTrace.list.captureUnknown") }}
-      </p>
-      <section
-        v-if="queryStats"
-        class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
-        data-testid="request-trace-query-stats"
-      >
-        <div class="mb-3 flex items-baseline justify-between gap-3">
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
-            {{ t("admin.requestTrace.list.queryStats") }}
-          </h2>
-          <span class="text-xs text-gray-500 dark:text-dark-300">{{
-            executedScopeSummary
-          }}</span>
-        </div>
-        <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
-            <span class="block text-xs text-gray-500">{{
-              t("admin.requestTrace.list.statsTotal")
-            }}</span
-            ><strong class="text-xl">{{ queryStats.matched_total }}</strong>
-          </div>
-          <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
-            <span class="block text-xs text-gray-500">{{
-              t("admin.requestTrace.list.statsStatus")
-            }}</span
-            ><span class="block"
-              >2xx {{ queryStats.status["2xx"] }} · 3xx
-              {{ queryStats.status["3xx"] }} · 4xx
-              {{ queryStats.status["4xx"] }} · 5xx
-              {{ queryStats.status["5xx"] }} ·
-              {{ t("admin.requestTrace.list.statsOther") }}
-              {{ queryStats.status.other }}</span
-            >
-          </div>
-          <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
-            <span class="block text-xs text-gray-500">{{
-              t("admin.requestTrace.list.statsCapture")
-            }}</span
-            ><span class="block"
-              >{{ captureStateLabel(t, "stored") }}
-              {{ queryStats.capture.stored }} ·
-              {{ captureStateLabel(t, "partial") }}
-              {{ queryStats.capture.partial }} ·
-              {{ captureStateLabel(t, "not_observed") }}
-              {{ queryStats.capture.not_observed }} ·
-              {{ captureStateLabel(t, "write_failed") }}
-              {{ queryStats.capture.write_failed }}</span
-            >
-          </div>
-          <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
-            <span class="block text-xs text-gray-500">{{
-              t("admin.requestTrace.list.statsUsage")
-            }}</span
-            ><span class="block"
-              >{{ t("admin.requestTrace.list.linked") }}
-              {{ queryStats.usage.linked }} ·
-              {{ t("admin.requestTrace.list.unlinked") }}
-              {{ queryStats.usage.unlinked }}</span
-            >
           </div>
         </div>
-      </section>
-      <p
-        v-if="filterError"
-        role="alert"
-        class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/20"
-        data-testid="request-trace-filter-error"
-      >
-        {{ t("admin.requestTrace.list.invalidFilter") }}
-      </p>
-      <p
-        v-if="failed"
-        role="alert"
-        class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/20"
-        data-testid="request-trace-error"
-      >
-        {{ t("admin.requestTrace.list.failed") }}
-      </p>
-      <p
-        v-else-if="loading && !rows.length"
-        role="status"
-        class="py-8 text-center text-sm"
-        data-testid="request-trace-loading"
-      >
-        {{ t("admin.requestTrace.list.loading") }}
-      </p>
-      <p
-        v-else-if="!rows.length"
-        role="status"
-        class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-dark-700 dark:bg-dark-900"
-        data-testid="request-trace-empty"
-      >
-        {{ t("admin.requestTrace.list.empty") }}
-      </p>
-      <template v-else>
-        <div
-          class="overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700"
+        <p
+          v-if="captureStatus && !captureStatus.capture_allowed"
+          class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
+          data-testid="request-trace-capture-disabled"
         >
-          <table
-            class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700"
-          >
-            <thead
-              class="bg-gray-50 text-left text-xs text-gray-500 dark:bg-dark-900"
-            >
-              <tr>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.select") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.createdAt") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.traceId") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.route") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.user") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.apiKey") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.group") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.requestedModel") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.status") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.state") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.cleanup") }}
-                </th>
-                <th class="px-3 py-3">
-                  {{ t("admin.requestTrace.list.usage") }}
-                </th>
-              </tr>
-            </thead>
-            <tbody
-              class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-800"
-            >
-              <tr
-                v-for="row in rows"
-                :key="row.trace_id"
-                data-testid="request-trace-row"
-                class="cursor-pointer transition-colors hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:hover:bg-dark-700"
-                tabindex="0"
-                :aria-label="`${t('admin.requestTrace.detail.title')} ${row.trace_id}`"
-                @click="openDetail(row.trace_id)"
-                @keydown.enter="openDetail(row.trace_id)"
-                @keydown.space.prevent="openDetail(row.trace_id)"
+          {{ t("admin.requestTrace.list.captureDisabled") }}
+        </p>
+        <p
+          v-else-if="captureStatus === null"
+          class="text-xs text-gray-500 dark:text-dark-300"
+          data-testid="request-trace-capture-unknown"
+        >
+          {{ t("admin.requestTrace.list.captureUnknown") }}
+        </p>
+        <section
+          v-if="queryStats"
+          class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
+          data-testid="request-trace-query-stats"
+        >
+          <div class="mb-3 flex items-baseline justify-between gap-3">
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
+              {{ t("admin.requestTrace.list.queryStats") }}
+            </h2>
+            <span class="text-xs text-gray-500 dark:text-dark-300">{{
+              executedScopeSummary
+            }}</span>
+          </div>
+          <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
+              <span class="block text-xs text-gray-500">{{
+                t("admin.requestTrace.list.statsTotal")
+              }}</span
+              ><strong class="text-xl">{{ queryStats.matched_total }}</strong>
+            </div>
+            <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
+              <span class="block text-xs text-gray-500">{{
+                t("admin.requestTrace.list.statsStatus")
+              }}</span
+              ><span class="block"
+                >2xx {{ queryStats.status["2xx"] }} · 3xx
+                {{ queryStats.status["3xx"] }} · 4xx
+                {{ queryStats.status["4xx"] }} · 5xx
+                {{ queryStats.status["5xx"] }} ·
+                {{ t("admin.requestTrace.list.statsOther") }}
+                {{ queryStats.status.other }}</span
               >
-                <!--
+            </div>
+            <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
+              <span class="block text-xs text-gray-500">{{
+                t("admin.requestTrace.list.statsCapture")
+              }}</span
+              ><span class="block"
+                >{{ captureStateLabel(t, "stored") }}
+                {{ queryStats.capture.stored }} ·
+                {{ captureStateLabel(t, "partial") }}
+                {{ queryStats.capture.partial }} ·
+                {{ captureStateLabel(t, "not_observed") }}
+                {{ queryStats.capture.not_observed }} ·
+                {{ captureStateLabel(t, "write_failed") }}
+                {{ queryStats.capture.write_failed }}</span
+              >
+            </div>
+            <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-900">
+              <span class="block text-xs text-gray-500">{{
+                t("admin.requestTrace.list.statsUsage")
+              }}</span
+              ><span class="block"
+                >{{ t("admin.requestTrace.list.linked") }}
+                {{ queryStats.usage.linked }} ·
+                {{ t("admin.requestTrace.list.unlinked") }}
+                {{ queryStats.usage.unlinked }}</span
+              >
+            </div>
+          </div>
+        </section>
+        <p
+          v-if="filterError"
+          role="alert"
+          class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/20"
+          data-testid="request-trace-filter-error"
+        >
+          {{ t("admin.requestTrace.list.invalidFilter") }}
+        </p>
+        <p
+          v-if="failed"
+          role="alert"
+          class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/20"
+          data-testid="request-trace-error"
+        >
+          {{ t("admin.requestTrace.list.failed") }}
+        </p>
+        <p
+          v-else-if="loading && !rows.length"
+          role="status"
+          class="py-8 text-center text-sm"
+          data-testid="request-trace-loading"
+        >
+          {{ t("admin.requestTrace.list.loading") }}
+        </p>
+        <p
+          v-else-if="!rows.length"
+          role="status"
+          class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-dark-700 dark:bg-dark-900"
+          data-testid="request-trace-empty"
+        >
+          {{ t("admin.requestTrace.list.empty") }}
+        </p>
+        <template v-else>
+          <div
+            class="overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700"
+          >
+            <table
+              class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700"
+            >
+              <thead
+                class="bg-gray-50 text-left text-xs text-gray-500 dark:bg-dark-900"
+              >
+                <tr>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.select") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.createdAt") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.traceId") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.route") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.user") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.apiKey") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.group") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.requestedModel") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.status") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.state") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.cleanup") }}
+                  </th>
+                  <th class="px-3 py-3">
+                    {{ t("admin.requestTrace.list.usage") }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody
+                class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-800"
+              >
+                <tr
+                  v-for="row in rows"
+                  :key="row.trace_id"
+                  data-testid="request-trace-row"
+                  class="cursor-pointer transition-colors hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:hover:bg-dark-700"
+                  tabindex="0"
+                  :aria-label="`${t('admin.requestTrace.detail.title')} ${row.trace_id}`"
+                  @click="openDetail(row.trace_id)"
+                  @keydown.enter="openDetail(row.trace_id)"
+                  @keydown.space.prevent="openDetail(row.trace_id)"
+                >
+                  <!--
                   Selection is by Trace ID, not by row position, so a checked row
                   stays checked when the same query is paged through.
                 -->
-                <td class="px-3 py-3">
-                  <input
-                    type="checkbox"
-                    :checked="isSelected(row.trace_id)"
-                    :data-testid="`request-trace-select-${row.trace_id}`"
-                    :aria-label="t('admin.requestTrace.list.select')"
-                    @click.stop
-                    @keydown.stop
-                    @change.stop="toggleSelected(row.trace_id)"
-                  />
-                </td>
-                <td class="whitespace-nowrap px-3 py-3 text-xs">
-                  {{ formatDate(row.created_at) }}
-                </td>
-                <td class="px-3 py-3 font-mono text-xs">{{ row.trace_id }}</td>
-                <td class="px-3 py-3 text-xs">{{ row.inbound_endpoint }}</td>
-                <td class="px-3 py-3 text-xs" data-testid="request-trace-user">
-                  {{ identityLabel(row.user_id, row.user_email) }}
-                </td>
-                <td class="px-3 py-3 text-xs" data-testid="request-trace-key">
-                  {{ identityLabel(row.api_key_id, row.api_key_name) }}
-                </td>
-                <!-- Request-time facts. Absent means not observed; it is never a blank cell or a guess. -->
-                <td
-                  class="px-3 py-3 font-mono text-xs"
-                  data-testid="request-trace-row-group"
-                >
-                  {{
-                    row.group_id == null
-                      ? t("admin.requestTrace.list.unknownValue")
-                      : `#${row.group_id}`
-                  }}
-                </td>
-                <td
-                  class="px-3 py-3 font-mono text-xs"
-                  data-testid="request-trace-row-model"
-                >
-                  {{
-                    row.requested_model
-                      ? row.requested_model
-                      : t("admin.requestTrace.list.unknownValue")
-                  }}
-                </td>
-                <td class="px-3 py-3 font-mono">
-                  {{ row.client_status || "—" }}
-                </td>
-                <td
-                  class="px-3 py-3 text-xs"
-                  data-testid="request-trace-capture-state"
-                >
-                  {{ captureStateLabel(t, row.capture_state) }}
-                </td>
-                <td
-                  class="max-w-xs px-3 py-3 text-xs"
-                  data-testid="request-trace-cleanup-rule"
-                >
-                  {{
-                    row.usage_log_id
-                      ? t("admin.requestTrace.list.followsUsage")
-                      : row.cleanup_after
-                        ? t("admin.requestTrace.list.plannedCleanup", {
-                            date: formatDate(row.cleanup_after),
-                          })
-                        : "—"
-                  }}
-                </td>
-                <td class="px-3 py-3 font-mono text-xs">
-                  {{
-                    row.usage_log_id
-                      ? `#${row.usage_log_id}`
-                      : t("admin.requestTrace.list.usageAbsent")
-                  }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          :total="total"
-          :page="page"
-          :page-size="pageSize"
-          @update:page="load"
-          @update:page-size="changePageSize"
+                  <td class="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      :checked="isSelected(row.trace_id)"
+                      :data-testid="`request-trace-select-${row.trace_id}`"
+                      :aria-label="t('admin.requestTrace.list.select')"
+                      @click.stop
+                      @keydown.stop
+                      @change.stop="toggleSelected(row.trace_id)"
+                    />
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-3 text-xs">
+                    {{ formatDate(row.created_at) }}
+                  </td>
+                  <td class="px-3 py-3 font-mono text-xs">
+                    {{ row.trace_id }}
+                  </td>
+                  <td class="px-3 py-3 text-xs">{{ row.inbound_endpoint }}</td>
+                  <td
+                    class="px-3 py-3 text-xs"
+                    data-testid="request-trace-user"
+                  >
+                    {{ identityLabel(row.user_id, row.user_email) }}
+                  </td>
+                  <td class="px-3 py-3 text-xs" data-testid="request-trace-key">
+                    {{ identityLabel(row.api_key_id, row.api_key_name) }}
+                  </td>
+                  <!-- Request-time facts. Absent means not observed; it is never a blank cell or a guess. -->
+                  <td
+                    class="px-3 py-3 font-mono text-xs"
+                    data-testid="request-trace-row-group"
+                  >
+                    {{
+                      row.group_id == null
+                        ? t("admin.requestTrace.list.unknownValue")
+                        : `#${row.group_id}`
+                    }}
+                  </td>
+                  <td
+                    class="px-3 py-3 font-mono text-xs"
+                    data-testid="request-trace-row-model"
+                  >
+                    {{
+                      row.requested_model
+                        ? row.requested_model
+                        : t("admin.requestTrace.list.unknownValue")
+                    }}
+                  </td>
+                  <td class="px-3 py-3 font-mono">
+                    {{ row.client_status || "—" }}
+                  </td>
+                  <td
+                    class="px-3 py-3 text-xs"
+                    data-testid="request-trace-capture-state"
+                  >
+                    {{ captureStateLabel(t, row.capture_state) }}
+                  </td>
+                  <td
+                    class="max-w-xs px-3 py-3 text-xs"
+                    data-testid="request-trace-cleanup-rule"
+                  >
+                    {{
+                      row.usage_log_id
+                        ? t("admin.requestTrace.list.followsUsage")
+                        : row.cleanup_after
+                          ? t("admin.requestTrace.list.plannedCleanup", {
+                              date: formatDate(row.cleanup_after),
+                            })
+                          : "—"
+                    }}
+                  </td>
+                  <td class="px-3 py-3 font-mono text-xs">
+                    {{
+                      row.usage_log_id
+                        ? `#${row.usage_log_id}`
+                        : t("admin.requestTrace.list.usageAbsent")
+                    }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            :total="total"
+            :page="page"
+            :page-size="pageSize"
+            @update:page="load"
+            @update:page-size="changePageSize"
+          />
+        </template>
+        <RequestTraceDetailDrawer
+          :show="detailOpen"
+          :trace-id="selectedID"
+          @update:show="onDetailVisibility"
         />
-      </template>
-      <RequestTraceDetailDrawer
-        :show="detailOpen"
-        :trace-id="selectedID"
-        @update:show="onDetailVisibility"
-      />
-      <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
-        {{ t("admin.requestTrace.list.runtimeStats") }}
-      </h2>
-      <RequestTraceOpsStatusPanel />
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
+          {{ t("admin.requestTrace.list.runtimeStats") }}
+        </h2>
+        <RequestTraceOpsStatusPanel />
+      </section>
+      <ConfirmDialog
+        :show="cleanupOpen"
+        :title="
+          t(
+            cleanupMode === 'selected'
+              ? 'admin.requestTrace.list.cleanupActions.selectedTitle'
+              : 'admin.requestTrace.list.cleanupActions.previewTitle',
+          )
+        "
+        :message="cleanupConfirmationMessage"
+        :confirm-text="
+          t(
+            deleting
+              ? 'admin.requestTrace.list.cleanupActions.deleting'
+              : 'admin.requestTrace.list.cleanupActions.confirm',
+          )
+        "
+        :cancel-text="t('admin.requestTrace.list.cleanupActions.cancel')"
+        danger
+        @confirm="confirmCleanup"
+        @cancel="closeCleanup"
+      >
+        <p
+          v-if="cleanupMode === 'filter'"
+          class="text-xs text-gray-600 dark:text-dark-300"
+        >
+          {{ cleanupScopeSummary }}
+        </p>
+        <p class="text-xs text-gray-500 dark:text-dark-400">
+          {{ t("admin.requestTrace.list.cleanupActions.immutableNote") }}
+        </p>
+        <p
+          v-if="cleanupMode === 'filter'"
+          class="text-xs text-gray-500 dark:text-dark-400"
+        >
+          {{ t("admin.requestTrace.list.cleanupActions.snapshotNote") }}
+        </p>
+      </ConfirmDialog>
       <RequestTraceSettingsDialog
         :show="settingsOpen"
         @update:show="onSettingsVisibility"
@@ -822,6 +995,12 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import Pagination from "@/components/common/Pagination.vue";
+import Select from "@/components/common/Select.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import { getAllIncludingInactive } from "@/api/admin/groups";
+import { CONCRETE_PLATFORM_OPTIONS } from "@/constants/platforms";
+import type { AdminGroup } from "@/types";
+import RequestTraceOperatorSettings from "./RequestTraceOperatorSettings.vue";
 import RequestTraceDetailDrawer from "./RequestTraceDetailDrawer.vue";
 import RequestTraceExportDrawer from "./RequestTraceExportDrawer.vue";
 import RequestTraceOpsStatusPanel from "./RequestTraceOpsStatusPanel.vue";
@@ -830,6 +1009,10 @@ import {
   TraceExportRefusedError,
   createTraceExport,
   getOperatorSettings,
+  getTraceModelCandidates,
+  previewTraceDelete,
+  deleteSelectedTraces,
+  deleteTracesByFilter,
   getTraceExportRisk,
   listTraceExports,
   listTraces,
@@ -847,6 +1030,7 @@ import {
   type RequestTraceSummary,
   type RequestTraceQueryStats,
   type RequestTraceOperatorStatus,
+  type RequestTraceDeletePreview,
 } from "./types";
 
 const { t } = useI18n();
@@ -858,7 +1042,59 @@ const pageSize = ref(20);
 const total = ref(0);
 const queryStats = ref<RequestTraceQueryStats | null>(null);
 const captureStatus = ref<RequestTraceOperatorStatus | null>(null);
+const captureStatusLoading = ref(true);
 const settingsOpen = ref(false);
+const activeTab = ref<"records" | "config">("records");
+const groups = ref<AdminGroup[]>([]);
+const modelCandidates = ref<string[]>([]);
+const optionsLoading = ref(false);
+const optionsError = ref("");
+let optionsRevision = 0;
+const groupOptions = computed(() => {
+  const options = new Map(
+    groups.value.map((group) => [
+      String(group.id),
+      { value: String(group.id), label: `${group.name} (${group.platform})` },
+    ]),
+  );
+  for (const id of [
+    ...rows.value.map((row) => row.group_id),
+    ...(captureStatus.value?.group_ids ?? []),
+    Number(filters.group_id),
+  ]) {
+    if (id && !options.has(String(id)))
+      options.set(String(id), { value: String(id), label: `#${id}` });
+  }
+  return [...options.values()];
+});
+const modelOptions = computed(() =>
+  [
+    ...new Set(
+      [
+        ...modelCandidates.value,
+        ...rows.value.map((row) => row.requested_model ?? ""),
+        ...(captureStatus.value?.models ?? []),
+        filters.requested_model,
+      ].filter(Boolean),
+    ),
+  ].map((value) => ({ value, label: value })),
+);
+const platformOptions = computed(() => {
+  const options = new Map<string, { value: string; label: string }>(
+    CONCRETE_PLATFORM_OPTIONS.map((option) => [
+      option.value as string,
+      { value: option.value, label: option.label },
+    ]),
+  );
+  for (const value of [
+    ...rows.value.flatMap((row) => row.observed_platforms ?? []),
+    ...(captureStatus.value?.platforms ?? []),
+    filters.platform_name,
+  ].filter(Boolean)) {
+    if (!options.has(value)) options.set(value, { value, label: value });
+  }
+  return [...options.values()];
+});
 const failed = ref(false);
 const filterError = ref(false);
 const loading = ref(false);
@@ -895,6 +1131,36 @@ const filters = reactive({
  * load succeeds — a form edit, or a query that failed, is not a scope.
  */
 const executedFilters = ref<Partial<RequestTraceListParams>>({});
+const queryHasRun = ref(false);
+const cleanupOpen = ref(false);
+const cleanupMode = ref<"selected" | "filter">("selected");
+const cleanupIDs = ref<string[]>([]);
+const cleanupFilter = ref<RequestTraceExportFilter>({});
+const cleanupPreview = ref<RequestTraceDeletePreview | null>(null);
+const cleanupPreviewing = ref(false);
+const deleting = ref(false);
+const cleanupMessage = ref("");
+const cleanupFailed = ref(false);
+let cleanupRevision = 0;
+const canCleanupFilter = computed(
+  () =>
+    queryHasRun.value &&
+    !failed.value &&
+    !loading.value &&
+    Object.keys(executedFilters.value).length > 0,
+);
+const cleanupScopeSummary = computed(() =>
+  exportScopeSummary(t, cleanupFilter.value),
+);
+const cleanupConfirmationMessage = computed(() =>
+  cleanupMode.value === "selected"
+    ? t("admin.requestTrace.list.cleanupActions.selectedMessage", {
+        count: cleanupIDs.value.length,
+      })
+    : t("admin.requestTrace.list.cleanupActions.previewCount", {
+        count: cleanupPreview.value?.matched_count ?? 0,
+      }),
+);
 let queryFilters: Partial<RequestTraceListParams> = {};
 /** A newly searched query drops the old cross-page selection, but only once it succeeds. */
 let pendingSelectionReset = false;
@@ -1153,11 +1419,34 @@ function identityLabel(id: number | null, name: string | null): string {
   return name ? `${name} (#${id})` : `#${id}`;
 }
 
+async function loadOptions() {
+  const current = ++optionsRevision;
+  optionsLoading.value = true;
+  optionsError.value = "";
+  try {
+    const [loadedGroups, loadedModels] = await Promise.all([
+      getAllIncludingInactive(),
+      getTraceModelCandidates(),
+    ]);
+    if (current !== optionsRevision) return;
+    groups.value = loadedGroups;
+    modelCandidates.value = loadedModels;
+  } catch {
+    if (current === optionsRevision)
+      optionsError.value = t("admin.requestTrace.list.candidates.error");
+  } finally {
+    if (current === optionsRevision) optionsLoading.value = false;
+  }
+}
+
 async function loadCaptureStatus() {
+  captureStatusLoading.value = true;
   try {
     captureStatus.value = await getOperatorSettings();
   } catch {
     captureStatus.value = null;
+  } finally {
+    captureStatusLoading.value = false;
   }
 }
 
@@ -1403,6 +1692,122 @@ function toggleSelected(traceID: string) {
   selectedIDs.value = [...current, traceID];
 }
 
+function prepareSelectedCleanup() {
+  if (
+    deleting.value ||
+    cleanupPreviewing.value ||
+    !selectedCount.value ||
+    selectionOverBound.value
+  )
+    return;
+  cleanupMode.value = "selected";
+  cleanupIDs.value = [...selectedIDs.value];
+  cleanupMessage.value = "";
+  cleanupOpen.value = true;
+}
+
+async function prepareFilterCleanup() {
+  if (deleting.value || cleanupPreviewing.value || !canCleanupFilter.value)
+    return;
+  const current = ++cleanupRevision;
+  const filter = { ...executedFilters.value } as RequestTraceExportFilter;
+  cleanupPreviewing.value = true;
+  cleanupMessage.value = "";
+  cleanupFailed.value = false;
+  try {
+    const preview = await previewTraceDelete(filter);
+    if (current !== cleanupRevision) return;
+    if (!preview.matched_count) {
+      cleanupMessage.value = t(
+        "admin.requestTrace.list.cleanupActions.noMatches",
+      );
+      return;
+    }
+    cleanupFilter.value = filter;
+    cleanupPreview.value = preview;
+    cleanupMode.value = "filter";
+    cleanupOpen.value = true;
+  } catch {
+    if (current !== cleanupRevision) return;
+    cleanupFailed.value = true;
+    cleanupMessage.value = t(
+      "admin.requestTrace.list.cleanupActions.previewFailed",
+    );
+  } finally {
+    if (current === cleanupRevision) cleanupPreviewing.value = false;
+  }
+}
+
+function closeCleanup() {
+  if (deleting.value) return;
+  cleanupOpen.value = false;
+  cleanupPreview.value = null;
+  cleanupRevision += 1;
+  cleanupPreviewing.value = false;
+}
+
+async function confirmCleanup() {
+  if (deleting.value || !cleanupOpen.value) return;
+  if (cleanupMode.value === "filter") {
+    const preview = cleanupPreview.value;
+    if (!preview || Date.parse(preview.expires_at) <= Date.now()) {
+      closeCleanup();
+      cleanupFailed.value = true;
+      cleanupMessage.value = t(
+        "admin.requestTrace.list.cleanupActions.previewExpired",
+      );
+      return;
+    }
+    if (
+      JSON.stringify(sortKeys(cleanupFilter.value)) !==
+      JSON.stringify(sortKeys(executedFilters.value))
+    ) {
+      closeCleanup();
+      cleanupFailed.value = true;
+      cleanupMessage.value = t(
+        "admin.requestTrace.list.cleanupActions.filterChanged",
+      );
+      return;
+    }
+  }
+  deleting.value = true;
+  cleanupFailed.value = false;
+  try {
+    const result =
+      cleanupMode.value === "selected"
+        ? await deleteSelectedTraces(cleanupIDs.value)
+        : await deleteTracesByFilter(
+            cleanupFilter.value,
+            cleanupPreview.value!,
+          );
+    cleanupFailed.value = !result.completed;
+    cleanupMessage.value = t(
+      result.completed
+        ? "admin.requestTrace.list.cleanupActions.deleted"
+        : "admin.requestTrace.list.cleanupActions.partial",
+      { count: result.deleted_count },
+    );
+    if (result.completed) {
+      if (cleanupMode.value === "selected")
+        selectedIDs.value = selectedIDs.value.filter(
+          (id) => !cleanupIDs.value.includes(id),
+        );
+      else selectedIDs.value = [];
+    }
+    cleanupOpen.value = false;
+    cleanupPreview.value = null;
+    await load(page.value);
+  } catch {
+    cleanupFailed.value = true;
+    cleanupMessage.value = t("admin.requestTrace.list.cleanupActions.failed");
+    cleanupOpen.value = false;
+    cleanupPreview.value = null;
+    await load(page.value);
+  } finally {
+    deleting.value = false;
+  }
+}
+
 function clearSelection() {
   selectedIDs.value = [];
   refusal.value = null;
@@ -1513,7 +1918,14 @@ async function load(nextPage: number) {
     pageSize.value = result.page_size;
     // Only a query that ran is a scope, and only then does it clear the old
     // selection: a failed search leaves both the rows and the checks alone.
+    if (
+      JSON.stringify(sortKeys(executedFilters.value)) !==
+      JSON.stringify(sortKeys(queryFilters))
+    ) {
+      closeCleanup();
+    }
     executedFilters.value = { ...queryFilters };
+    queryHasRun.value = true;
     if (pendingSelectionReset) {
       pendingSelectionReset = false;
       selectedIDs.value = [];
@@ -1540,6 +1952,7 @@ onMounted(() => {
   }
   void loadExportRisk();
   void loadCaptureStatus();
+  void loadOptions();
   // Ask once on arrival: the handle may have been left behind on a previous
   // visit, and being able to see it again is the point of the recall entry.
   void loadRecall();
@@ -1547,6 +1960,8 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   revision += 1;
+  optionsRevision += 1;
+  cleanupRevision += 1;
   controller?.abort();
   createController?.abort();
   recallController?.abort();

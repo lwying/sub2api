@@ -2,14 +2,31 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+)
+
+// 采集内容开关与限时契约的封闭取值。写入侧只接受这些值，读取侧把无法识别的
+// 存档值收敛到最保守的一端，绝不因为解析失败而放宽一次限制或悄悄开始采集。
+const (
+	requestTraceSampleRateMax = 100
+
+	requestTraceBodyMaxBytes64KiB  = 64 << 10
+	requestTraceBodyMaxBytes256KiB = 256 << 10
+
+	requestTraceCaptureDuration15Min  = 900
+	requestTraceCaptureDuration1Hour  = 3600
+	requestTraceCaptureDuration1Day   = 86400
+	requestTraceCaptureDurationAlways = 0
 )
 
 const (
@@ -34,11 +51,40 @@ var (
 	ErrRequestTraceScopeListEmpty         = infraerrors.BadRequest("REQUEST_TRACE_SCOPE_LIST_EMPTY", "a selected request trace capture scope requires at least one value")
 	ErrRequestTraceScopeEntryInvalid      = infraerrors.BadRequest("REQUEST_TRACE_SCOPE_ENTRY_INVALID", "request trace capture scope values must not be blank")
 	ErrRequestTraceGroupScopeEntryInvalid = infraerrors.BadRequest("REQUEST_TRACE_GROUP_SCOPE_ENTRY_INVALID", "request trace group scope requires positive group ids")
+
+	// 采集内容／限时**提交**侧的校验错误。非法值必须显式报错，不能被静默解释成
+	// "更宽采集"（例如把未知采样率当成 100%、把非法体积上限当成 1 MiB 并落库）。
+	ErrRequestTraceSampleRateInvalid      = infraerrors.BadRequest("REQUEST_TRACE_SAMPLE_RATE_INVALID", "request trace sample rates must be between 0 and 100")
+	ErrRequestTraceBodyMaxBytesInvalid    = infraerrors.BadRequest("REQUEST_TRACE_BODY_MAX_BYTES_INVALID", "request trace body size limit must be 64 KiB, 256 KiB or 1 MiB")
+	ErrRequestTraceCaptureDurationInvalid = infraerrors.BadRequest("REQUEST_TRACE_CAPTURE_DURATION_INVALID", "request trace capture duration must be continuous, 900, 3600 or 86400 seconds")
+	// renew 只有在采集开启时才有意义：关闭状态下的"续期"是个自相矛盾的请求，
+	// 必须显式拒绝，而不是记下一个即将生效的窗口或悄悄开始倒计时。
+	ErrRequestTraceRenewRequiresEnabled = infraerrors.BadRequest("REQUEST_TRACE_RENEW_REQUIRES_ENABLED", "renew_capture_window requires request trace capture to be enabled")
 )
 
 type RequestTraceSettings struct {
 	Enabled          bool `json:"enabled"`
 	RiskAcknowledged bool `json:"risk_acknowledged"`
+
+	// 采集内容：capture_body 关闭时四路正文都不留存，只保留链路元信息；
+	// capture_http_200 关闭时只跳过客户端最终状态码为 200 的整条 Trace。
+	// 两者都不能用 omitempty：显式关闭（false）必须能被存下并回显。
+	CaptureBody    bool `json:"capture_body"`
+	CaptureHTTP200 bool `json:"capture_http_200"`
+
+	// 采样率按客户端最终状态分两类，各自独立；0% 全跳过、100% 全保留。
+	// 同样不能用 omitempty：0% 是有效设置，不是"缺字段"。
+	SampleRateHTTP200 int `json:"sample_rate_http_200"`
+	SampleRateOther   int `json:"sample_rate_other"`
+
+	// BodyMaxBytes 是单阶段正文留存上限，只允许调低（64 KiB／256 KiB／1 MiB）。
+	BodyMaxBytes int64 `json:"body_max_bytes"`
+
+	// 限时采集：0 表示持续，其余为秒数；CaptureUntil 由服务端按当前时间计算，
+	// 绝不接受客户端任意截止时间。普通保存不重算，只有开启／明确改时长／显式
+	// renew 才重新计时。
+	CaptureDurationSeconds int64      `json:"capture_duration_seconds"`
+	CaptureUntil           *time.Time `json:"capture_until"`
 
 	// 采集范围：只决定后续请求是否进入采集，不追溯改变已存 Trace。
 	// 分组按下游 API Key 所属分组匹配；模型按**客户端请求的**模型匹配（不是出站映射结果）；
@@ -86,6 +132,17 @@ type RequestTraceOperatorStatus struct {
 	PlaintextCaptureSupported     bool                                 `json:"plaintext_capture_supported"`
 	PlaintextCaptureSupportReason string                               `json:"plaintext_capture_support_reason"`
 
+	// 采集内容与限时：与开关同一条记录，管理端据此回显当前生效条件。
+	// CaptureExpired 是**只读**状态：配置的 Enabled 与实际是否仍在采集分开表达。
+	CaptureBody            bool       `json:"capture_body"`
+	CaptureHTTP200         bool       `json:"capture_http_200"`
+	SampleRateHTTP200      int        `json:"sample_rate_http_200"`
+	SampleRateOther        int        `json:"sample_rate_other"`
+	BodyMaxBytes           int64      `json:"body_max_bytes"`
+	CaptureDurationSeconds int64      `json:"capture_duration_seconds"`
+	CaptureUntil           *time.Time `json:"capture_until"`
+	CaptureExpired         bool       `json:"capture_expired"`
+
 	// 采集范围：管理端据此回显当前生效条件（与开关同一条记录）。
 	AllGroups     bool     `json:"all_groups"`
 	GroupIDs      []int64  `json:"group_ids"`
@@ -99,6 +156,17 @@ type RequestTraceOperatorStatus struct {
 // Read-time normalization uses nil for an "all" scope, which would otherwise
 // marshal as null and make the operator panel reject an otherwise valid status.
 func requestTraceScopeStatus(status *RequestTraceOperatorStatus, stored RequestTraceSettings) {
+	status.CaptureBody = stored.CaptureBody
+	status.CaptureHTTP200 = stored.CaptureHTTP200
+	status.SampleRateHTTP200 = stored.SampleRateHTTP200
+	status.SampleRateOther = stored.SampleRateOther
+	status.BodyMaxBytes = stored.BodyMaxBytes
+	status.CaptureDurationSeconds = stored.CaptureDurationSeconds
+	status.CaptureUntil = cloneRequestTraceTime(stored.CaptureUntil)
+	// 到期是只读派生状态：即使 Enabled 仍为真，窗口结束也把 CaptureExpired 置真、
+	// 并让 CaptureAllowed 为假，界面才能把"配置开启"与"实际已停止采集"分开展示。
+	// 开关本就关闭时不把配置标成"已到期"。
+	status.CaptureExpired = stored.Enabled && stored.CaptureWindowExpired(time.Now().UTC())
 	status.AllGroups = stored.AllGroups
 	status.GroupIDs = append([]int64{}, stored.GroupIDs...)
 	status.ModelScope = stored.ModelScope
@@ -107,8 +175,29 @@ func requestTraceScopeStatus(status *RequestTraceOperatorStatus, stored RequestT
 	status.Platforms = append([]string{}, stored.Platforms...)
 }
 
+// cloneRequestTraceTime 复制一个可空时间，避免状态／快照与存档共享同一个指针。
+func cloneRequestTraceTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 type RequestTraceOperatorUpdateInput struct {
 	Enabled bool
+
+	// 采集内容／限时字段一律指针可选：nil 表示"本次不提交该字段，保留既有值"，
+	// 旧客户端只改开关或范围时不得把新设置重置成零值。显式关闭（false）与 0%
+	// 必须能通过 *bool／*int 与 nil 区分开。
+	CaptureBody            *bool
+	CaptureHTTP200         *bool
+	SampleRateHTTP200      *int
+	SampleRateOther        *int
+	BodyMaxBytes           *int64
+	CaptureDurationSeconds *int64
+	// RenewCaptureWindow 是显式的"重新计时"动作；普通保存绝不隐式续期。
+	RenewCaptureWindow bool
 
 	// ScopeProvided 为真时按本次提交替换采集范围；否则保留既有范围。
 	ScopeProvided bool
@@ -146,8 +235,49 @@ type RequestTraceScopeFacts struct {
 
 type RequestTraceGate struct {
 	CaptureAllowed bool
-	// Scope 是本次求值用的采集范围；调用方在请求结束时用它复核实际观察到的事实。
+	// Expired 只在 CaptureAllowed 因服务端截止时间已过而为 false 时为真，
+	// 用于把"配置仍开启但窗口已到期"与"从未开启"区分开。
+	Expired bool
+	// Scope 是本次求值用的采集范围与采集内容设置；调用方在请求结束时用它复核实际观察到的事实。
 	Scope RequestTraceSettings
+}
+
+// CaptureWindowExpired 报告配置的限时采集窗口是否已经结束。
+// 无截止时间（持续）永不到期；已到期的窗口即使 Enabled 仍为真也必须停止采集。
+//
+// 有限时长却缺少截止时间是畸形存档（写入侧总会同时算出 CaptureUntil）：把它当作
+// 已到期，而不是因为 CaptureUntil 为空就"永不过期"，否则一次坏值会让明文采集在
+// 无人察觉的情况下一直开着。持续（duration<=0）仍然没有截止时间，不受此分支影响。
+func (s RequestTraceSettings) CaptureWindowExpired(now time.Time) bool {
+	if s.CaptureDurationSeconds > 0 && s.CaptureUntil == nil {
+		return true
+	}
+	return s.CaptureUntil != nil && !now.Before(*s.CaptureUntil)
+}
+
+// ShouldSampleTrace 按 Trace ID 的稳定哈希与客户端最终状态决定这条 Trace 是否入库。
+//
+// 分类只看"客户端最终状态是否恰好为 200"：201／204 属于非 200，不偷换成 2xx。
+// 采样发生在门控与范围之后、异步入队之前，只降低入库量，不改变请求过程。
+func (s RequestTraceSettings) ShouldSampleTrace(traceID string, clientStatus int) bool {
+	rate := s.SampleRateOther
+	if clientStatus == http.StatusOK {
+		rate = s.SampleRateHTTP200
+	}
+	if rate >= requestTraceSampleRateMax {
+		return true
+	}
+	if rate <= 0 {
+		return false
+	}
+	return requestTraceSampleBucket(traceID) < rate
+}
+
+// requestTraceSampleBucket 把 Trace ID 稳定映射到 [0,100) 的桶。
+// 同一 Trace ID 在任何实例、任何时间都落同一个桶，保证采样结论稳定可复现。
+func requestTraceSampleBucket(traceID string) int {
+	sum := sha256.Sum256([]byte(traceID))
+	return int(binary.BigEndian.Uint64(sum[:8]) % requestTraceSampleRateMax)
 }
 
 // InGroupScope 报告分组是否落在采集范围内。
@@ -237,6 +367,7 @@ func gatewayMockModelListContains(values []string, target string) bool {
 // NormalizeRequestTraceSettings 归一化范围字段：过滤类型落回封闭取值，
 // 列表去空白去重；模型/平台列表不做大小写改写，比较时再归一。
 func NormalizeRequestTraceSettings(settings RequestTraceSettings) RequestTraceSettings {
+	settings = normalizeRequestTraceCaptureSettings(settings)
 	settings.ModelScope = normalizeRequestTraceScope(settings.ModelScope)
 	settings.PlatformScope = normalizeRequestTraceScope(settings.PlatformScope)
 	if settings.ModelScope == RequestTraceScopeAll {
@@ -252,6 +383,38 @@ func NormalizeRequestTraceSettings(settings RequestTraceSettings) RequestTraceSe
 	settings.GroupIDs = normalizeRequestTraceGroupIDs(settings.GroupIDs)
 	if settings.AllGroups {
 		settings.GroupIDs = nil
+	}
+	return settings
+}
+
+// normalizeRequestTraceCaptureSettings 收敛采集内容／限时字段的存档值。
+//
+// 这些字段的缺省是在解码前预置的，因此缺失键已经拿到缺省。这里只处理"键存在但值
+// 不可识别"的存档：采样率、体积上限与时长都落到最保守的一端，绝不因为解析失败而
+// 放宽一次限制（体积上限若落回 1 MiB 反而会保留比操作者配置更多的明文）。
+// 时长的坏值收敛到最小的有限窗口（15 分钟），不落回 0=持续。
+func normalizeRequestTraceCaptureSettings(settings RequestTraceSettings) RequestTraceSettings {
+	if settings.SampleRateHTTP200 < 0 || settings.SampleRateHTTP200 > requestTraceSampleRateMax {
+		settings.SampleRateHTTP200 = 0
+	}
+	if settings.SampleRateOther < 0 || settings.SampleRateOther > requestTraceSampleRateMax {
+		settings.SampleRateOther = 0
+	}
+	switch settings.BodyMaxBytes {
+	case requestTraceBodyMaxBytes64KiB, requestTraceBodyMaxBytes256KiB, RequestTraceBodyLimit:
+	default:
+		// 无法识别的体积上限收敛到最小有限值，而不是 1 MiB 硬上限：缺键的旧存档
+		// 在解码前已拿到 1 MiB 缺省，只有"键存在但值非法"才会走到这里。
+		settings.BodyMaxBytes = requestTraceBodyMaxBytes64KiB
+	}
+	switch settings.CaptureDurationSeconds {
+	case requestTraceCaptureDurationAlways, requestTraceCaptureDuration15Min,
+		requestTraceCaptureDuration1Hour, requestTraceCaptureDuration1Day:
+	default:
+		// 无法识别的时长收敛到最小的有限窗口（15 分钟），绝不落回 0=持续：
+		// 那会把一次坏值悄悄解释成"永不过期"，并让 UI 的"持续"与实际截止时间
+		// 互相矛盾。已有的 CaptureUntil 原样保留，由它继续负责到期停采。
+		settings.CaptureDurationSeconds = requestTraceCaptureDuration15Min
 	}
 	return settings
 }
@@ -348,6 +511,54 @@ func validateRequestTraceScopeSubmission(input RequestTraceOperatorUpdateInput) 
 	return nil
 }
 
+// validateRequestTraceCaptureSubmission 校验**本次提交**的采集内容／限时字段，
+// 只在保存接缝上调用。nil（未提交）一律放行并保留既有值；任何非 nil 的非法值都必须
+// 显式报错，且一个字节都不写——绝不能把非法值静默落回成更宽的缺省。
+//
+// capture_until 不在提交侧出现：它由服务端按当前时间计算，客户端无法任意指定截止。
+func validateRequestTraceCaptureSubmission(input RequestTraceOperatorUpdateInput) error {
+	if input.RenewCaptureWindow && !input.Enabled {
+		return ErrRequestTraceRenewRequiresEnabled
+	}
+	for _, rate := range []*int{input.SampleRateHTTP200, input.SampleRateOther} {
+		if rate != nil && (*rate < 0 || *rate > requestTraceSampleRateMax) {
+			return ErrRequestTraceSampleRateInvalid
+		}
+	}
+	if input.BodyMaxBytes != nil {
+		switch *input.BodyMaxBytes {
+		case requestTraceBodyMaxBytes64KiB, requestTraceBodyMaxBytes256KiB, RequestTraceBodyLimit:
+		default:
+			return ErrRequestTraceBodyMaxBytesInvalid
+		}
+	}
+	if input.CaptureDurationSeconds != nil {
+		switch *input.CaptureDurationSeconds {
+		case requestTraceCaptureDurationAlways, requestTraceCaptureDuration15Min,
+			requestTraceCaptureDuration1Hour, requestTraceCaptureDuration1Day:
+		default:
+			return ErrRequestTraceCaptureDurationInvalid
+		}
+	}
+	return nil
+}
+
+// resolveRequestTraceCaptureUntil 计算保存后的服务端截止时间。
+//
+// 只有三种情况重新计时：总开关由关到开、明确更改了时长、或请求显式 renew。
+// 其余普通保存（包括已到期的窗口）一律保留既有截止，绝不允许"保存即续期"。
+// 持续（duration<=0）永远没有截止时间。
+func resolveRequestTraceCaptureUntil(previous, next RequestTraceSettings, renew bool, now time.Time) *time.Time {
+	if next.CaptureDurationSeconds <= 0 {
+		return nil
+	}
+	if renew {
+		until := now.Add(time.Duration(next.CaptureDurationSeconds) * time.Second).UTC()
+		return &until
+	}
+	return cloneRequestTraceTime(previous.CaptureUntil)
+}
+
 // requestTraceSubmittedScope 收敛提交的过滤类型，取值口径与读取侧归一化一致
 // （大小写与首尾空白不参与判定），但**未知取值拒绝**而不是落回 all：
 // 落回 all 等于把一次限制静默放宽成采集全部。
@@ -432,9 +643,16 @@ func (s *SettingService) requestTraceSupport(ctx context.Context) PlaintextCaptu
 // 才覆盖它。这同样保证显式的 `all_groups:false`（含配空列表的无效历史值）原样保留。
 func defaultRequestTraceSettings() RequestTraceSettings {
 	return RequestTraceSettings{
-		AllGroups:     true,
-		ModelScope:    RequestTraceScopeAll,
-		PlatformScope: RequestTraceScopeAll,
+		// 新旧两个采集内容开关缺省均为开启；缺字段保持持续开启、两类 100%、1 MiB。
+		CaptureBody:            true,
+		CaptureHTTP200:         true,
+		SampleRateHTTP200:      requestTraceSampleRateMax,
+		SampleRateOther:        requestTraceSampleRateMax,
+		BodyMaxBytes:           RequestTraceBodyLimit,
+		CaptureDurationSeconds: requestTraceCaptureDurationAlways,
+		AllGroups:              true,
+		ModelScope:             RequestTraceScopeAll,
+		PlatformScope:          RequestTraceScopeAll,
 	}
 }
 
@@ -499,7 +717,8 @@ func (s *SettingService) RequestTraceGate(ctx context.Context) RequestTraceGate 
 	current := s.requestTraceGateVersion.Load()
 	if cached, ok := s.requestTraceGateCache.Load().(*cachedRequestTraceGate); ok && cached != nil &&
 		cached.version == current && time.Now().Before(cached.expiresAt) {
-		return cached.gate
+		// 命中缓存也必须复核截止时间：缓存 TTL 不得跨越停采时刻。
+		return applyRequestTraceCaptureWindow(cached.gate)
 	}
 	value, _, _ := s.requestTraceGateSF.Do("request_trace_gate", func() (any, error) {
 		version := s.requestTraceGateVersion.Load()
@@ -525,9 +744,20 @@ func (s *SettingService) RequestTraceGate(ctx context.Context) RequestTraceGate 
 	})
 	if cached, ok := value.(cachedRequestTraceGate); ok && cached.version == s.requestTraceGateVersion.Load() &&
 		time.Now().Before(cached.expiresAt) {
-		return cached.gate
+		return applyRequestTraceCaptureWindow(cached.gate)
 	}
 	return RequestTraceGate{}
+}
+
+// applyRequestTraceCaptureWindow 在**每一次**门控返回时复核服务端截止时间，
+// 包括命中缓存的那一条路径：否则一个在截止前写入的 5 秒缓存会把窗口"续"过停采时刻，
+// 让到期后的请求仍被采集。到期只把结论降为不采集并标记 Expired，不改动存档。
+func applyRequestTraceCaptureWindow(gate RequestTraceGate) RequestTraceGate {
+	if gate.CaptureAllowed && gate.Scope.CaptureWindowExpired(time.Now().UTC()) {
+		gate.CaptureAllowed = false
+		gate.Expired = true
+	}
+	return gate
 }
 
 // invalidateRequestTraceGate 让下一次门控重新求值。写入设置后立即调用。
@@ -546,9 +776,9 @@ func (s *SettingService) requestTraceGateUncached(ctx context.Context) RequestTr
 	if err != nil || ack == nil || !ack.CoversCurrentStatement() {
 		return RequestTraceGate{}
 	}
-	// 范围随门控一起冻结：一次逻辑请求内的所有判断都使用同一份范围快照，
-	// 避免执行中修改配置导致同一条请求前后结论不一致。
-	return RequestTraceGate{CaptureAllowed: s.requestTraceSupport(ctx).Supported, Scope: stored}
+	// 范围与采集内容随门控一起冻结：一次逻辑请求内的所有判断都使用同一份快照，
+	// 避免执行中修改配置导致同一条请求前后结论不一致。截止时间在求值时即复核。
+	return applyRequestTraceCaptureWindow(RequestTraceGate{CaptureAllowed: s.requestTraceSupport(ctx).Supported, Scope: stored})
 }
 
 func (s *SettingService) GetRequestTraceOperatorStatus(ctx context.Context) (RequestTraceOperatorStatus, error) {
@@ -575,7 +805,7 @@ func (s *SettingService) GetRequestTraceOperatorStatus(ctx context.Context) (Req
 	support := s.requestTraceSupport(ctx)
 	status.PlaintextCaptureSupported = support.Supported
 	status.PlaintextCaptureSupportReason = support.Reason
-	status.CaptureAllowed = stored.Enabled && stored.RiskAcknowledged && status.RiskAcknowledgementCurrent && support.Supported
+	status.CaptureAllowed = stored.Enabled && stored.RiskAcknowledged && status.RiskAcknowledgementCurrent && support.Supported && !status.CaptureExpired
 	return status, nil
 }
 
@@ -587,17 +817,37 @@ func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context,
 	if err := validateRequestTraceScopeSubmission(input); err != nil {
 		return RequestTraceOperatorStatus{}, err
 	}
+	// 采样率／体积上限／时长只接受封闭取值；非法提交必须在写入前整体拒绝。
+	if err := validateRequestTraceCaptureSubmission(input); err != nil {
+		return RequestTraceOperatorStatus{}, err
+	}
 	updates := map[string]string{}
 	// 范围与开关同存一条记录：未提交范围字段时保留既有范围，避免关闭/开启动作顺手清空范围。
-	previous, _ := s.readRequestTraceSettings(ctx)
+	// 采集内容／限时同理：nil 表示未提交，保留既有值。
+	//
+	// 既有设置读失败时必须 fail-closed：绝不能回落到"全采／持续"的缺省再落库——那会把一次
+	// 读取故障变成放宽范围、打开正文或重置采样率。因此这里直接返回不可用、一个字节都不写。
+	// 紧急关闭在设置表可写时同样依赖这次读取；若连既有设置都读不出来，写回一份"关闭但丢了
+	// 原有范围限制"的记录比拒绝更危险，所以宁可不写。
+	previous, err := s.readRequestTraceSettings(ctx)
+	if err != nil {
+		return RequestTraceOperatorStatus{}, ErrRequestTraceSettingsUnavailable
+	}
 	stored := RequestTraceSettings{
-		Enabled:       input.Enabled,
-		AllGroups:     previous.AllGroups,
-		GroupIDs:      previous.GroupIDs,
-		ModelScope:    previous.ModelScope,
-		Models:        previous.Models,
-		PlatformScope: previous.PlatformScope,
-		Platforms:     previous.Platforms,
+		Enabled:                input.Enabled,
+		CaptureBody:            previous.CaptureBody,
+		CaptureHTTP200:         previous.CaptureHTTP200,
+		SampleRateHTTP200:      previous.SampleRateHTTP200,
+		SampleRateOther:        previous.SampleRateOther,
+		BodyMaxBytes:           previous.BodyMaxBytes,
+		CaptureDurationSeconds: previous.CaptureDurationSeconds,
+		CaptureUntil:           cloneRequestTraceTime(previous.CaptureUntil),
+		AllGroups:              previous.AllGroups,
+		GroupIDs:               previous.GroupIDs,
+		ModelScope:             previous.ModelScope,
+		Models:                 previous.Models,
+		PlatformScope:          previous.PlatformScope,
+		Platforms:              previous.Platforms,
 	}
 	if input.ScopeProvided {
 		stored.AllGroups = input.AllGroups
@@ -606,6 +856,36 @@ func (s *SettingService) UpdateRequestTraceOperatorSettings(ctx context.Context,
 		stored.Models = input.Models
 		stored.PlatformScope = input.PlatformScope
 		stored.Platforms = input.Platforms
+	}
+	if input.CaptureBody != nil {
+		stored.CaptureBody = *input.CaptureBody
+	}
+	if input.CaptureHTTP200 != nil {
+		stored.CaptureHTTP200 = *input.CaptureHTTP200
+	}
+	if input.SampleRateHTTP200 != nil {
+		stored.SampleRateHTTP200 = *input.SampleRateHTTP200
+	}
+	if input.SampleRateOther != nil {
+		stored.SampleRateOther = *input.SampleRateOther
+	}
+	if input.BodyMaxBytes != nil {
+		stored.BodyMaxBytes = *input.BodyMaxBytes
+	}
+	if input.CaptureDurationSeconds != nil {
+		stored.CaptureDurationSeconds = *input.CaptureDurationSeconds
+	}
+	// 只有总开关由关到开、明确更改时长、或显式 renew 才重新计时；普通保存保留既有截止
+	// （即使已到期也不重新开始）。
+	renew := input.RenewCaptureWindow || (!previous.Enabled && input.Enabled)
+	if input.CaptureDurationSeconds != nil && *input.CaptureDurationSeconds != previous.CaptureDurationSeconds {
+		renew = true
+	}
+	stored.CaptureUntil = resolveRequestTraceCaptureUntil(previous, stored, renew, time.Now().UTC())
+	if !input.Enabled {
+		// 关闭时不留截止时间，也不在关闭状态下倒计时：UI 不会显示一个"正在走的窗口"，
+		// 重新开启会按那时的服务器时间重新计时。
+		stored.CaptureUntil = nil
 	}
 	stored = NormalizeRequestTraceSettings(stored)
 	if input.Enabled {

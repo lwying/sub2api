@@ -16,7 +16,10 @@ import (
 )
 
 type requestTraceFlow struct {
-	collector             *service.RequestTraceCollector
+	collector *service.RequestTraceCollector
+	// captureBody 来自入口快照：关闭时四路正文都不创建 slot／payload，只保留
+	// 尝试元信息与生命周期时间。它在构造后不再改变，无需加锁。
+	captureBody           bool
 	mu                    sync.Mutex
 	attempts              []requestTraceAttemptFacts
 	hijacked              bool
@@ -50,8 +53,23 @@ type requestTraceDecisionEvent struct {
 	facts        service.RequestTraceDecisionFacts
 }
 
+// newRequestTraceFlow 是测试与只关心默认行为的调用方用的构造：正文采集开启、硬上限。
 func newRequestTraceFlow() *requestTraceFlow {
-	return &requestTraceFlow{collector: service.NewRequestTraceCollector()}
+	return newRequestTraceFlowWithCapture(true, service.RequestTraceBodyLimit)
+}
+
+// newRequestTraceFlowWithCapture 按入口快照冻结正文开关与单阶段体积上限。
+func newRequestTraceFlowWithCapture(captureBody bool, bodyMaxBytes int64) *requestTraceFlow {
+	return &requestTraceFlow{
+		collector:   service.NewRequestTraceCollector(bodyMaxBytes),
+		captureBody: captureBody,
+	}
+}
+
+// bodyCaptureEnabled 报告本次逻辑请求是否允许留存正文。入口快照缺失时按默认开启，
+// 与通用 Trace middleware 的既有行为一致。
+func (f *requestTraceFlow) bodyCaptureEnabled() bool {
+	return f != nil && f.captureBody
 }
 
 func (f *requestTraceFlow) inboundFacts(method string, url *url.URL, headers http.Header) {
@@ -215,7 +233,7 @@ func (f *requestTraceFlow) setRejectReason(reason string) {
 }
 
 func (f *requestTraceFlow) inboundBody(ob httputil.InboundBodyObservation) {
-	if f == nil || f.collector == nil {
+	if f == nil || f.collector == nil || !f.captureBody {
 		return
 	}
 	f.collector.CaptureInboundViews(ob.ContentEncoding, ob.RawPrefix, ob.RawBytes, ob.DecodedPrefix,
@@ -245,7 +263,9 @@ func (f *requestTraceFlow) traceObserver() *httpattempt.TraceObserver {
 		f.attempts = append(f.attempts, facts)
 		f.mu.Unlock()
 		key := service.RequestTraceBodyKey{Stage: "wire_request", AttemptIndex: start.Ordinal, View: "wire"}
-		f.collector.StartStage(key, start.Header.Get("Content-Type"), false)
+		if f.captureBody {
+			f.collector.StartStage(key, start.Header.Get("Content-Type"), false)
+		}
 		return &requestTraceAttemptSink{flow: f, index: start.Ordinal, requestKey: key,
 			responseKey: service.RequestTraceBodyKey{Stage: "upstream_response", AttemptIndex: start.Ordinal, View: "received"}}
 	}}
@@ -271,12 +291,17 @@ func (s *requestTraceAttemptSink) RequestBodyChunk(chunk []byte, err error) {
 	if s == nil || s.flow == nil {
 		return
 	}
-	s.flow.collector.AppendStage(s.requestKey, chunk)
+	// EOF 生命周期标记必须保留（它证明请求体确已读完）；只有正文留存本身受开关约束。
+	if s.flow.captureBody {
+		s.flow.collector.AppendStage(s.requestKey, chunk)
+	}
 	if err == io.EOF {
 		s.mu.Lock()
 		s.requestEOF = true
 		s.mu.Unlock()
-		s.flow.collector.FinishStage(s.requestKey, true)
+		if s.flow.captureBody {
+			s.flow.collector.FinishStage(s.requestKey, true)
+		}
 	}
 }
 
@@ -285,7 +310,9 @@ func (s *requestTraceAttemptSink) RequestBodyClosed(error) {
 		s.mu.Lock()
 		complete := s.requestEOF
 		s.mu.Unlock()
-		s.flow.collector.FinishStage(s.requestKey, complete)
+		if s.flow.captureBody {
+			s.flow.collector.FinishStage(s.requestKey, complete)
+		}
 	}
 }
 
@@ -326,12 +353,14 @@ func (s *requestTraceAttemptSink) RoundTripResult(status int, headers http.Heade
 		s.responseEncoded = encoded != "" && !strings.EqualFold(encoded, "identity")
 	}
 	s.mu.Unlock()
-	s.flow.collector.FinishStage(s.requestKey, complete)
-	if status > 0 {
-		encoded := strings.TrimSpace(headers.Get("Content-Encoding"))
-		s.flow.collector.StartStage(s.responseKey, headers.Get("Content-Type"),
-			strings.HasPrefix(strings.ToLower(headers.Get("Content-Type")), "text/event-stream") &&
-				(encoded == "" || strings.EqualFold(encoded, "identity")))
+	if s.flow.captureBody {
+		s.flow.collector.FinishStage(s.requestKey, complete)
+		if status > 0 {
+			encoded := strings.TrimSpace(headers.Get("Content-Encoding"))
+			s.flow.collector.StartStage(s.responseKey, headers.Get("Content-Type"),
+				strings.HasPrefix(strings.ToLower(headers.Get("Content-Type")), "text/event-stream") &&
+					(encoded == "" || strings.EqualFold(encoded, "identity")))
+		}
 	}
 }
 
@@ -348,12 +377,17 @@ func (s *requestTraceAttemptSink) ResponseBodyChunk(chunk []byte, err error) {
 	if !started {
 		return
 	}
-	s.flow.collector.AppendStage(s.responseKey, chunk)
+	if s.flow.captureBody {
+		s.flow.collector.AppendStage(s.responseKey, chunk)
+	}
 	if err == io.EOF {
-		s.flow.collector.FinishStage(s.responseKey, true)
-		if encoded {
-			s.flow.collector.MarkStageEncoding(s.responseKey)
+		if s.flow.captureBody {
+			s.flow.collector.FinishStage(s.responseKey, true)
+			if encoded {
+				s.flow.collector.MarkStageEncoding(s.responseKey)
+			}
 		}
+		// 响应体结束时间与是否留存正文无关：关闭正文也必须记录这个生命周期事实。
 		s.markResponseEnded()
 	}
 }
@@ -366,9 +400,11 @@ func (s *requestTraceAttemptSink) ResponseBodyClosed(error) {
 	started, eof, encoded := s.responseStarted, s.responseEOF, s.responseEncoded
 	s.mu.Unlock()
 	if started {
-		s.flow.collector.FinishStage(s.responseKey, eof)
-		if encoded {
-			s.flow.collector.MarkStageEncoding(s.responseKey)
+		if s.flow.captureBody {
+			s.flow.collector.FinishStage(s.responseKey, eof)
+			if encoded {
+				s.flow.collector.MarkStageEncoding(s.responseKey)
+			}
 		}
 		// A close without EOF is an observed end to the read, not proof of a
 		// complete upstream response. The body stage still records the gap.
@@ -393,7 +429,7 @@ func (s *requestTraceAttemptSink) markResponseEnded() {
 }
 
 func (f *requestTraceFlow) downstreamChunk(chunk []byte, _ int) {
-	if f == nil || f.collector == nil {
+	if f == nil || f.collector == nil || !f.captureBody {
 		return
 	}
 	f.mu.Lock()
@@ -413,7 +449,9 @@ func (f *requestTraceFlow) setClientStream(stream bool) {
 	f.mu.Lock()
 	f.clientStream = true
 	f.mu.Unlock()
-	f.collector.StartStage(service.RequestTraceBodyKey{Stage: "client_response", View: "downstream"}, "text/event-stream", true)
+	if f.captureBody {
+		f.collector.StartStage(service.RequestTraceBodyKey{Stage: "client_response", View: "downstream"}, "text/event-stream", true)
+	}
 }
 
 func (f *requestTraceFlow) setClientWrittenComplete(complete bool) {
@@ -447,12 +485,15 @@ func (f *requestTraceFlow) finish(id string, authenticated bool) []service.Reque
 	inboundFacts := f.clientFacts
 	rejectReason := f.rejectReason
 	clientComplete := f.clientWrittenComplete && !hijacked
+	captureBody := f.captureBody
 	f.mu.Unlock()
-	f.collector.FinishStage(service.RequestTraceBodyKey{Stage: "client_response", View: "downstream"}, clientComplete)
-	for _, fact := range facts {
-		// If the body never reached EOF or Close, EndedAt stays absent rather
-		// than inventing a duration. The body stage reports incomplete_read.
-		f.collector.FinishStage(service.RequestTraceBodyKey{Stage: "upstream_response", AttemptIndex: fact.index, View: "received"}, false)
+	if captureBody {
+		f.collector.FinishStage(service.RequestTraceBodyKey{Stage: "client_response", View: "downstream"}, clientComplete)
+		for _, fact := range facts {
+			// If the body never reached EOF or Close, EndedAt stays absent rather
+			// than inventing a duration. The body stage reports incomplete_read.
+			f.collector.FinishStage(service.RequestTraceBodyKey{Stage: "upstream_response", AttemptIndex: fact.index, View: "received"}, false)
+		}
 	}
 	sort.Slice(facts, func(i, j int) bool { return facts[i].index < facts[j].index })
 	body := f.collector.Snapshots()
@@ -472,7 +513,14 @@ func (f *requestTraceFlow) finish(id string, authenticated bool) []service.Reque
 	if !authenticated {
 		stages = append(stages, service.RequestTraceStage{TraceID: id, Stage: "client_entry", State: service.RequestTraceNotObserved, Reason: "auth_rejected_body_not_observed"})
 	} else if len(body) == 0 {
-		stages = append(stages, service.RequestTraceStage{TraceID: id, Stage: "client_entry", State: service.RequestTraceNotObserved, Reason: "body_not_observed"})
+		// 正文采集关闭是操作者的预期决定，不是"没观察到正文"的缺口。用有界原因码
+		// capture_body_disabled 明确表达"仅元信息"，让已认证、元信息完整且没有真实
+		// 缺口的 Trace 仍可使用既有 stored 状态（不扩 capture_state 闭集）。
+		reason := "body_not_observed"
+		if !captureBody {
+			reason = "capture_body_disabled"
+		}
+		stages = append(stages, service.RequestTraceStage{TraceID: id, Stage: "client_entry", State: service.RequestTraceNotObserved, Reason: reason})
 	}
 	// 一次由本地 mock 应答的逻辑请求本来就不该有上游尝试：它是网关的决定，不是
 	// 采集缺口。只有真正"一次都没发出却没有任何决定解释"的链路才补这个通用缺口。

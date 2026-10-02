@@ -163,6 +163,91 @@ func TestRequestTraceOperatorSettingsAcceptValidScopes(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// 管理端状态必须回显全部新契约字段（snake_case），旧配置缺字段时按缺省回显。
+func TestRequestTraceOperatorSettingsResponseIncludesCaptureFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, repo := newRequestTraceAdminHandler()
+	repo.values[service.SettingKeyRequestTrace] = `{"enabled":true,"risk_acknowledged":true}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings/request-trace", nil)
+	h.GetRequestTraceOperatorSettings(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Data struct {
+			CaptureBody            bool            `json:"capture_body"`
+			CaptureHTTP200         bool            `json:"capture_http_200"`
+			SampleRateHTTP200      int             `json:"sample_rate_http_200"`
+			SampleRateOther        int             `json:"sample_rate_other"`
+			BodyMaxBytes           int64           `json:"body_max_bytes"`
+			CaptureDurationSeconds int64           `json:"capture_duration_seconds"`
+			CaptureUntil           json.RawMessage `json:"capture_until"`
+			CaptureExpired         bool            `json:"capture_expired"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.True(t, response.Data.CaptureBody)
+	require.True(t, response.Data.CaptureHTTP200)
+	require.Equal(t, 100, response.Data.SampleRateHTTP200)
+	require.Equal(t, 100, response.Data.SampleRateOther)
+	require.EqualValues(t, service.RequestTraceBodyLimit, response.Data.BodyMaxBytes)
+	require.Zero(t, response.Data.CaptureDurationSeconds)
+	require.JSONEq(t, `null`, string(response.Data.CaptureUntil), "无截止时应回显 null")
+	require.False(t, response.Data.CaptureExpired)
+}
+
+// PUT 新字段指针可选：显式 false／0 落库，未提交的字段保留既有值；截止时间由服务端计算。
+func TestRequestTraceOperatorSettingsPUTPointerFieldsAndServerDeadline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	phrase := service.RequestTraceRiskAcknowledgementPhraseEN
+	h, repo := newRequestTraceAdminHandler()
+	w := putRequestTraceSettings(t, h, `{"enabled":true,"language":"en","phrase":"`+phrase+`",`+
+		`"capture_body":false,"capture_http_200":false,"sample_rate_http_200":0,"sample_rate_other":0,`+
+		`"body_max_bytes":65536,"capture_duration_seconds":3600}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var stored service.RequestTraceSettings
+	require.NoError(t, json.Unmarshal([]byte(repo.values[service.SettingKeyRequestTrace]), &stored))
+	require.False(t, stored.CaptureBody)
+	require.False(t, stored.CaptureHTTP200)
+	require.Zero(t, stored.SampleRateHTTP200)
+	require.Zero(t, stored.SampleRateOther)
+	require.EqualValues(t, 65536, stored.BodyMaxBytes)
+	require.EqualValues(t, 3600, stored.CaptureDurationSeconds)
+	require.NotNil(t, stored.CaptureUntil, "服务端必须按当前时间算出截止")
+
+	raw := repo.values[service.SettingKeyRequestTrace]
+	require.Contains(t, raw, `"capture_body":false`)
+	require.NotContains(t, raw, `"capture_until":null`, "设置时长后必须有截止时间")
+
+	// 只改总开关，不带新字段：既有新设置必须保留。
+	w = putRequestTraceSettings(t, h, `{"enabled":true,"language":"en","phrase":"`+phrase+`"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal([]byte(repo.values[service.SettingKeyRequestTrace]), &stored))
+	require.False(t, stored.CaptureBody, "未提交 capture_body 时不得重置成缺省")
+	require.Zero(t, stored.SampleRateOther)
+	require.EqualValues(t, 65536, stored.BodyMaxBytes)
+}
+
+// 非法采样率／体积／时长必须以 400 拒绝且不落库。
+func TestRequestTraceOperatorSettingsRejectInvalidCaptureFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	phrase := service.RequestTraceRiskAcknowledgementPhraseEN
+	for _, tc := range []struct{ name, payload string }{
+		{"sample rate above max", `{"enabled":true,"language":"en","phrase":"` + phrase + `","sample_rate_http_200":101}`},
+		{"sample rate below zero", `{"enabled":true,"language":"en","phrase":"` + phrase + `","sample_rate_other":-1}`},
+		{"body size not in closed set", `{"enabled":true,"language":"en","phrase":"` + phrase + `","body_max_bytes":12345}`},
+		{"duration not in closed set", `{"enabled":true,"language":"en","phrase":"` + phrase + `","capture_duration_seconds":120}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, repo := newRequestTraceAdminHandler()
+			w := putRequestTraceSettings(t, h, tc.payload)
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.NotContains(t, repo.values, service.SettingKeyRequestTrace, "非法提交不得落库")
+		})
+	}
+}
+
 func TestRequestTraceSettingsRejectAPIKeyEnableButAllowDisable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewSettingHandler(nil, nil, nil, nil, nil, nil, nil)

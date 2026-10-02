@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   getTrace: vi.fn(),
   createTraceExport: vi.fn(),
   getTraceExportRisk: vi.fn(),
+  getTraceModelCandidates: vi.fn(),
+  previewTraceDelete: vi.fn(),
+  deleteSelectedTraces: vi.fn(),
+  deleteTracesByFilter: vi.fn(),
+  getGroups: vi.fn(),
   route: { query: {} as Record<string, string> },
   replace: vi.fn(() => Promise.resolve()),
 }));
@@ -26,7 +31,19 @@ vi.mock("../api", async (importOriginal) => {
     getTrace: mocks.getTrace,
     createTraceExport: mocks.createTraceExport,
     getTraceExportRisk: mocks.getTraceExportRisk,
+    getOperatorSettings: vi.fn().mockResolvedValue(null),
+    listTraceExports: vi
+      .fn()
+      .mockResolvedValue({ items: [], next_cursor: null }),
+    getTraceModelCandidates: mocks.getTraceModelCandidates,
+    previewTraceDelete: mocks.previewTraceDelete,
+    deleteSelectedTraces: mocks.deleteSelectedTraces,
+    deleteTracesByFilter: mocks.deleteTracesByFilter,
   };
+});
+vi.mock("@/api/admin/groups", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/admin/groups")>();
+  return { ...actual, getAllIncludingInactive: mocks.getGroups };
 });
 // The list reads lookup prefills from the route; an empty query keeps these cases
 // on the plain, unfiltered load path they assert.
@@ -112,7 +129,25 @@ function mountView() {
     global: {
       stubs: {
         AppLayout: { template: "<div><slot /></div>" },
+        RequestTraceSettingsDialog: true,
+        RequestTraceOpsStatusPanel: true,
         Pagination: PaginationStub,
+        ConfirmDialog: {
+          props: ["show", "message"],
+          emits: ["confirm", "cancel"],
+          template:
+            '<div v-if="show" data-testid="request-trace-cleanup-confirm"><p>{{ message }}</p><slot /><button data-testid="confirm-delete" @click="$emit(\'confirm\')" /></div>',
+        },
+        RequestTraceOperatorSettings: {
+          props: ["status"],
+          template: '<div data-testid="operator-stub" />',
+        },
+        Select: {
+          props: ["modelValue", "options"],
+          emits: ["update:modelValue"],
+          template:
+            '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option value=""></option><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
+        },
         RequestTraceDetailDrawer: DetailStub,
         RequestTraceExportDrawer: ExportDrawerStub,
         RouterLink: { template: "<a><slot /></a>" },
@@ -141,6 +176,19 @@ describe("admin Request Trace list", () => {
     mocks.getTrace.mockReset();
     mocks.createTraceExport.mockReset();
     mocks.getTraceExportRisk.mockReset();
+    mocks.getTraceModelCandidates
+      .mockReset()
+      .mockResolvedValue(["claude-sonnet-4-5", "gateway-alias"]);
+    mocks.getGroups
+      .mockReset()
+      .mockResolvedValue([{ id: 7, name: "开发组", platform: "anthropic" }]);
+    mocks.previewTraceDelete.mockReset();
+    mocks.deleteSelectedTraces
+      .mockReset()
+      .mockResolvedValue({ deleted_count: 1, completed: true });
+    mocks.deleteTracesByFilter
+      .mockReset()
+      .mockResolvedValue({ deleted_count: 1, completed: true });
     mocks.replace.mockClear();
     mocks.route = { query: {} };
     mocks.listTraces.mockResolvedValue(page([trace()]));
@@ -274,6 +322,29 @@ describe("admin Request Trace list", () => {
     expect(mocks.listTraces).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps records and capture configuration in separate tabs", async () => {
+    const wrapper = await mountLoaded();
+    expect(
+      wrapper.get('[data-testid="request-trace-records-panel"]').isVisible(),
+    ).toBe(true);
+    await wrapper
+      .get('[data-testid="request-trace-tab-config"]')
+      .trigger("click");
+    expect(
+      wrapper
+        .get('[data-testid="request-trace-records-panel"]')
+        .attributes("style"),
+    ).toContain("display: none");
+    expect(wrapper.get('[data-testid="operator-stub"]').isVisible()).toBe(true);
+    await wrapper
+      .get('[data-testid="request-trace-tab-records"]')
+      .trigger("click");
+    expect(
+      wrapper.get('[data-testid="request-trace-records-panel"]').isVisible(),
+    ).toBe(true);
+    expect(mocks.listTraces).toHaveBeenCalledTimes(1);
+  });
+
   it("filters by one concrete request-time group, model and platform value", async () => {
     const wrapper = await mountLoaded();
     await wrapper
@@ -306,6 +377,54 @@ describe("admin Request Trace list", () => {
       },
       expect.anything(),
     );
+  });
+
+  it("cleans only confirmed selected trace IDs", async () => {
+    const wrapper = await mountLoaded();
+    await wrapper
+      .get(`[data-testid="request-trace-select-${TRACE_ID}"]`)
+      .setValue(true);
+    await wrapper
+      .get('[data-testid="request-trace-delete-selected"]')
+      .trigger("click");
+    expect(mocks.deleteSelectedTraces).not.toHaveBeenCalled();
+    await wrapper
+      .get(
+        '[data-testid="request-trace-cleanup-confirm"] button[data-testid="confirm-delete"]',
+      )
+      .trigger("click");
+    await flushPromises();
+    expect(mocks.deleteSelectedTraces).toHaveBeenCalledWith([TRACE_ID]);
+  });
+
+  it("previews cleanup against executed filters rather than unsaved edits", async () => {
+    mocks.previewTraceDelete.mockResolvedValue({
+      matched_count: 1,
+      snapshot_max_id: 9,
+      filter_hash: "f".repeat(64),
+      confirmation_token: "token",
+      expires_at: new Date(Date.now() + 300000).toISOString(),
+    });
+    const wrapper = await mountLoaded();
+    expect(
+      wrapper
+        .get('[data-testid="request-trace-delete-filtered"]')
+        .attributes("disabled"),
+    ).toBeDefined();
+    await wrapper
+      .get('[data-testid="request-trace-keyword"]')
+      .setValue("original");
+    await wrapper.get('[data-testid="request-trace-search"]').trigger("click");
+    await flushPromises();
+    await wrapper
+      .get('[data-testid="request-trace-keyword"]')
+      .setValue("unsaved");
+    await wrapper
+      .get('[data-testid="request-trace-delete-filtered"]')
+      .trigger("click");
+    await flushPromises();
+    expect(mocks.previewTraceDelete).toHaveBeenCalledWith({ q: "original" });
+    expect(mocks.deleteTracesByFilter).not.toHaveBeenCalled();
   });
 
   it("queries a fact that was never observed instead of any concrete value", async () => {
@@ -408,6 +527,19 @@ describe("admin Request Trace export actions", () => {
     mocks.listTraces.mockReset();
     mocks.createTraceExport.mockReset();
     mocks.getTraceExportRisk.mockReset();
+    mocks.getTraceModelCandidates
+      .mockReset()
+      .mockResolvedValue(["claude-sonnet-4-5", "gateway-alias"]);
+    mocks.getGroups
+      .mockReset()
+      .mockResolvedValue([{ id: 7, name: "开发组", platform: "anthropic" }]);
+    mocks.previewTraceDelete.mockReset();
+    mocks.deleteSelectedTraces
+      .mockReset()
+      .mockResolvedValue({ deleted_count: 1, completed: true });
+    mocks.deleteTracesByFilter
+      .mockReset()
+      .mockResolvedValue({ deleted_count: 1, completed: true });
     mocks.replace.mockClear();
     mocks.route = { query: {} };
     mocks.listTraces.mockResolvedValue(page([trace()]));
