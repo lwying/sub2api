@@ -21,7 +21,7 @@
             'rounded-md px-4 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-dark-800',
             danger
               ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
-              : 'bg-primary-600 hover:bg-primary-700 focus:ring-primary-500'
+              : 'bg-primary-600 hover:bg-primary-700 focus:ring-primary-500',
           ]"
         >
           {{ confirmText }}
@@ -32,40 +32,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import BaseDialog from './BaseDialog.vue'
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import BaseDialog from "./BaseDialog.vue";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 interface Props {
-  show: boolean
-  title: string
-  message: string
-  confirmText?: string
-  cancelText?: string
-  danger?: boolean
+  show: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  danger?: boolean;
 }
 
 interface Emits {
-  (e: 'confirm'): void
-  (e: 'cancel'): void
+  (e: "confirm"): void;
+  (e: "cancel"): void;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  danger: false
-})
+  danger: false,
+});
 
-const confirmText = computed(() => props.confirmText || t('common.confirm'))
-const cancelText = computed(() => props.cancelText || t('common.cancel'))
+const confirmText = computed(() => props.confirmText || t("common.confirm"));
+const cancelText = computed(() => props.cancelText || t("common.cancel"));
 
-const emit = defineEmits<Emits>()
+const emit = defineEmits<Emits>();
 
 const handleConfirm = () => {
-  emit('confirm')
-}
+  emit("confirm");
+};
 
 const handleCancel = () => {
-  emit('cancel')
-}
+  emit("cancel");
+};
 </script>

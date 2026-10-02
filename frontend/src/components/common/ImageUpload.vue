@@ -62,103 +62,118 @@
           {{ resolvedRemoveLabel }}
         </button>
       </div>
-      <p v-if="hint" class="text-xs text-gray-500 dark:text-gray-400">{{ hint }}</p>
+      <p v-if="hint" class="text-xs text-gray-500 dark:text-gray-400">
+        {{ hint }}
+      </p>
       <p v-if="error" class="text-xs text-red-500">{{ error }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue'
-import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
-import { sanitizeSvg } from '@/utils/sanitize'
+import { ref, computed, onBeforeUnmount } from "vue";
+import { useI18n } from "vue-i18n";
+import Icon from "@/components/icons/Icon.vue";
+import { sanitizeSvg } from "@/utils/sanitize";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-const props = withDefaults(defineProps<{
-  modelValue: string
-  mode?: 'image' | 'svg'
-  size?: 'sm' | 'md'
-  uploadLabel?: string
-  removeLabel?: string
-  hint?: string
-  maxSize?: number // bytes
-}>(), {
-  mode: 'image',
-  size: 'md',
-  uploadLabel: '',
-  removeLabel: '',
-  hint: '',
-  maxSize: 300 * 1024,
-})
+const props = withDefaults(
+  defineProps<{
+    modelValue: string;
+    mode?: "image" | "svg";
+    size?: "sm" | "md";
+    uploadLabel?: string;
+    removeLabel?: string;
+    hint?: string;
+    maxSize?: number; // bytes
+  }>(),
+  {
+    mode: "image",
+    size: "md",
+    uploadLabel: "",
+    removeLabel: "",
+    hint: "",
+    maxSize: 300 * 1024,
+  },
+);
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
-}>()
+  "update:modelValue": [value: string];
+}>();
 
-const error = ref('')
-let reader: FileReader | null = null
+const error = ref("");
+let reader: FileReader | null = null;
 
-onBeforeUnmount(() => reader?.abort())
+onBeforeUnmount(() => reader?.abort());
 
 function removeImage() {
-  reader?.abort()
-  emit('update:modelValue', '')
+  reader?.abort();
+  emit("update:modelValue", "");
 }
 
-const resolvedUploadLabel = computed(() => props.uploadLabel || t('common.upload'))
-const resolvedRemoveLabel = computed(() => props.removeLabel || t('common.remove'))
+const resolvedUploadLabel = computed(
+  () => props.uploadLabel || t("common.upload"),
+);
+const resolvedRemoveLabel = computed(
+  () => props.removeLabel || t("common.remove"),
+);
 
-const acceptTypes = computed(() => props.mode === 'svg' ? '.svg' : 'image/*')
+const acceptTypes = computed(() => (props.mode === "svg" ? ".svg" : "image/*"));
 
 const sanitizedValue = computed(() =>
-  props.mode === 'svg' ? sanitizeSvg(props.modelValue ?? '') : ''
-)
+  props.mode === "svg" ? sanitizeSvg(props.modelValue ?? "") : "",
+);
 
-const previewSizeClass = computed(() => props.size === 'sm' ? 'h-14 w-14' : 'h-20 w-20')
-const innerSizeClass = computed(() => props.size === 'sm' ? 'h-7 w-7' : 'h-12 w-12')
-const placeholderSizeClass = computed(() => props.size === 'sm' ? 'h-5 w-5' : 'h-8 w-8')
+const previewSizeClass = computed(() =>
+  props.size === "sm" ? "h-14 w-14" : "h-20 w-20",
+);
+const innerSizeClass = computed(() =>
+  props.size === "sm" ? "h-7 w-7" : "h-12 w-12",
+);
+const placeholderSizeClass = computed(() =>
+  props.size === "sm" ? "h-5 w-5" : "h-8 w-8",
+);
 
 function handleUpload(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  error.value = ''
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  error.value = "";
 
-  if (!file) return
-  reader?.abort()
+  if (!file) return;
+  reader?.abort();
 
   if (props.maxSize && file.size > props.maxSize) {
-    error.value = t('common.fileTooLargeKb', {
+    error.value = t("common.fileTooLargeKb", {
       size: (file.size / 1024).toFixed(1),
-      max: (props.maxSize / 1024).toFixed(0)
-    })
-    input.value = ''
-    return
+      max: (props.maxSize / 1024).toFixed(0),
+    });
+    input.value = "";
+    return;
   }
 
-  reader = new FileReader()
-  if (props.mode === 'svg') {
+  reader = new FileReader();
+  if (props.mode === "svg") {
     reader.onload = (e) => {
-      const text = e.target?.result as string
-      if (text) emit('update:modelValue', text.trim())
-    }
-    reader.readAsText(file)
+      const text = e.target?.result as string;
+      if (text) emit("update:modelValue", text.trim());
+    };
+    reader.readAsText(file);
   } else {
-    if (!file.type.startsWith('image/')) {
-      error.value = t('common.selectImageFile')
-      input.value = ''
-      return
+    if (!file.type.startsWith("image/")) {
+      error.value = t("common.selectImageFile");
+      input.value = "";
+      return;
     }
     reader.onload = (e) => {
-      emit('update:modelValue', e.target?.result as string)
-    }
-    reader.readAsDataURL(file)
+      emit("update:modelValue", e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
   }
 
   reader.onerror = () => {
-    error.value = t('common.fileReadFailed')
-  }
-  input.value = ''
+    error.value = t("common.fileReadFailed");
+  };
+  input.value = "";
 }
 </script>

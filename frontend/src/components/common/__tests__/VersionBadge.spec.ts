@@ -1,45 +1,45 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
+import { describe, expect, it, vi } from "vitest";
 
-import VersionBadge from '../VersionBadge.vue'
-import { performUpdate } from '@/api/admin/system'
+import VersionBadge from "../VersionBadge.vue";
+import { performUpdate } from "@/api/admin/system";
 
 const h = vi.hoisted(() => ({
   state: {
     isAdmin: true,
     hasUpdate: false,
-    buildType: 'release',
-    versionWarning: '',
+    buildType: "release",
+    versionWarning: "",
     versionCheckFailed: false,
     binaryUpdateSupported: true,
-    deploymentType: 'native'
+    deploymentType: "native",
   },
   fetchVersion: vi.fn(),
   clearVersionCache: vi.fn(),
-  getRollbackVersions: vi.fn()
-}))
+  getRollbackVersions: vi.fn(),
+}));
 
-vi.mock('vue-i18n', async () => {
-  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+vi.mock("vue-i18n", async () => {
+  const actual = await vi.importActual<typeof import("vue-i18n")>("vue-i18n");
   return {
     ...actual,
     // 已知 key 直接回显，带参数时附带参数，便于断言命令内容与部署方式文案。
     useI18n: () => ({
       t: (key: string, params?: Record<string, unknown>) =>
         params ? `${key}(${JSON.stringify(params)})` : key,
-      te: () => true
-    })
-  }
-})
+      te: () => true,
+    }),
+  };
+});
 
-vi.mock('@/stores', () => ({
+vi.mock("@/stores", () => ({
   useAuthStore: () => ({ isAdmin: h.state.isAdmin }),
   useAppStore: () => ({
     versionLoading: false,
-    currentVersion: '0.2.6',
-    latestVersion: '0.2.6',
+    currentVersion: "0.2.6",
+    latestVersion: "0.2.6",
     hasUpdate: h.state.hasUpdate,
     releaseInfo: undefined,
     buildType: h.state.buildType,
@@ -48,481 +48,495 @@ vi.mock('@/stores', () => ({
     binaryUpdateSupported: h.state.binaryUpdateSupported,
     deploymentType: h.state.deploymentType,
     fetchVersion: h.fetchVersion,
-    clearVersionCache: h.clearVersionCache
-  })
-}))
+    clearVersionCache: h.clearVersionCache,
+  }),
+}));
 
-vi.mock('@/api/admin/system', () => ({
+vi.mock("@/api/admin/system", () => ({
   performUpdate: vi.fn(),
   restartService: vi.fn(),
   rollback: vi.fn(),
-  getRollbackVersions: h.getRollbackVersions
-}))
+  getRollbackVersions: h.getRollbackVersions,
+}));
 
-vi.mock('@/composables/useClipboard', async () => {
-  const { ref } = await import('vue')
+vi.mock("@/composables/useClipboard", async () => {
+  const { ref } = await import("vue");
   return {
-    useClipboard: () => ({ copied: ref(false), copyToClipboard: vi.fn() })
-  }
-})
+    useClipboard: () => ({ copied: ref(false), copyToClipboard: vi.fn() }),
+  };
+});
 
-const ROLLBACK_VERSION = '0.2.6'
-const FORK_REPO = 'lwying/sub2api'
+const ROLLBACK_VERSION = "0.2.6";
+const FORK_REPO = "lwying/sub2api";
 
 function findButton(wrapper: VueWrapper, label: string) {
-  const button = wrapper.findAll('button').find((item) => item.text().trim() === label)
-  if (!button) throw new Error(`button not found: ${label}`)
-  return button
+  const button = wrapper
+    .findAll("button")
+    .find((item) => item.text().trim() === label);
+  if (!button) throw new Error(`button not found: ${label}`);
+  return button;
 }
 
 // The candidate button carries the version plus its publish date, so it is the
 // button whose text starts with the tag but is not the badge button itself.
 function findVersionCandidate(wrapper: VueWrapper, version: string) {
-  const button = wrapper.findAll('button').find((item) => {
-    const text = item.text().trim()
-    return text.startsWith(`v${version}`) && text !== `v${version}`
-  })
-  if (!button) throw new Error(`version candidate v${version} not found`)
-  return button
+  const button = wrapper.findAll("button").find((item) => {
+    const text = item.text().trim();
+    return text.startsWith(`v${version}`) && text !== `v${version}`;
+  });
+  if (!button) throw new Error(`version candidate v${version} not found`);
+  return button;
 }
 
 // vitest 在 frontend/ 下运行；兼容从仓库根目录启动的情况。
-function readLocale(locale: 'en' | 'zh') {
+function readLocale(locale: "en" | "zh") {
   const candidates = [
     resolve(process.cwd(), `src/i18n/locales/${locale}/misc.ts`),
-    resolve(process.cwd(), `frontend/src/i18n/locales/${locale}/misc.ts`)
-  ]
-  const localePath = candidates.find((candidate) => existsSync(candidate))
-  if (!localePath) throw new Error(`${locale} misc.ts not found in: ${candidates.join(', ')}`)
-  return readFileSync(localePath, 'utf8')
+    resolve(process.cwd(), `frontend/src/i18n/locales/${locale}/misc.ts`),
+  ];
+  const localePath = candidates.find((candidate) => existsSync(candidate));
+  if (!localePath)
+    throw new Error(`${locale} misc.ts not found in: ${candidates.join(", ")}`);
+  return readFileSync(localePath, "utf8");
 }
 
 async function openRollbackPanel(versions: Array<Record<string, string>> = []) {
   h.getRollbackVersions.mockResolvedValue({
     versions: versions.map((item) => ({
       version: item.version,
-      published_at: item.published_at ?? '2026-09-01T00:00:00Z',
-      html_url: item.html_url ?? `https://github.com/${FORK_REPO}/releases/tag/v${item.version}`
-    }))
-  })
-  const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-  await findButton(wrapper, 'v0.2.6').trigger('click')
-  await findButton(wrapper, 'version.rollback').trigger('click')
-  await flushPromises()
-  return wrapper
+      published_at: item.published_at ?? "2026-09-01T00:00:00Z",
+      html_url:
+        item.html_url ??
+        `https://github.com/${FORK_REPO}/releases/tag/v${item.version}`,
+    })),
+  });
+  const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+  await findButton(wrapper, "v0.2.6").trigger("click");
+  await findButton(wrapper, "version.rollback").trigger("click");
+  await flushPromises();
+  return wrapper;
 }
 
 // Opens the rollback panel, selects the candidate version and switches to the
 // requested manual-command tab, then returns the rendered command.
-async function manualCommandFor(wrapper: VueWrapper, tab: 'script' | 'docker') {
-  await findVersionCandidate(wrapper, ROLLBACK_VERSION).trigger('click')
-  if (tab === 'docker') {
-    await findButton(wrapper, 'version.deployDocker').trigger('click')
+async function manualCommandFor(wrapper: VueWrapper, tab: "script" | "docker") {
+  await findVersionCandidate(wrapper, ROLLBACK_VERSION).trigger("click");
+  if (tab === "docker") {
+    await findButton(wrapper, "version.deployDocker").trigger("click");
   }
-  await flushPromises()
-  return wrapper.find('code').text()
+  await flushPromises();
+  return wrapper.find("code").text();
 }
 
-describe('VersionBadge rollback guidance', () => {
-  it('points the script rollback command at the fork release tag', async () => {
-    const wrapper = await openRollbackPanel([{ version: ROLLBACK_VERSION }])
-    const command = await manualCommandFor(wrapper, 'script')
+describe("VersionBadge rollback guidance", () => {
+  it("points the script rollback command at the fork release tag", async () => {
+    const wrapper = await openRollbackPanel([{ version: ROLLBACK_VERSION }]);
+    const command = await manualCommandFor(wrapper, "script");
 
     expect(command).toBe(
-      `curl -sSL https://raw.githubusercontent.com/${FORK_REPO}/v${ROLLBACK_VERSION}/deploy/install.sh | sudo bash -s -- rollback v${ROLLBACK_VERSION}`
-    )
-    expect(command).not.toContain('Wei-Shaw')
-  })
+      `curl -sSL https://raw.githubusercontent.com/${FORK_REPO}/v${ROLLBACK_VERSION}/deploy/install.sh | sudo bash -s -- rollback v${ROLLBACK_VERSION}`,
+    );
+    expect(command).not.toContain("Wei-Shaw");
+  });
 
-  it('keeps the rollback entry reachable while an update is pending', async () => {
-    h.state.hasUpdate = true
-    h.getRollbackVersions.mockResolvedValue({ versions: [] })
+  it("keeps the rollback entry reachable while an update is pending", async () => {
+    h.state.hasUpdate = true;
+    h.getRollbackVersions.mockResolvedValue({ versions: [] });
     try {
-      const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-      await findButton(wrapper, 'v0.2.6').trigger('click')
+      const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+      await findButton(wrapper, "v0.2.6").trigger("click");
 
       // 「有新版本」时仍须能进入回退入口，否则用户无法在升级前回退
-      await findButton(wrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      await findButton(wrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
-      expect(wrapper.text()).toContain('version.noRollbackVersions')
+      expect(wrapper.text()).toContain("version.noRollbackVersions");
     } finally {
-      h.state.hasUpdate = false
+      h.state.hasUpdate = false;
     }
-  })
+  });
 
-  it('never advertises a docker image this build cannot verify', async () => {
-    const wrapper = await openRollbackPanel([{ version: ROLLBACK_VERSION }])
-    const command = await manualCommandFor(wrapper, 'docker')
+  it("never advertises a docker image this build cannot verify", async () => {
+    const wrapper = await openRollbackPanel([{ version: ROLLBACK_VERSION }]);
+    const command = await manualCommandFor(wrapper, "docker");
 
     // 运维方自行发布的镜像标签占位符，而不是本界面编造的镜像
-    expect(command).toContain('version.dockerImagePlaceholder')
+    expect(command).toContain("version.dockerImagePlaceholder");
     // GoReleaser 的 {{ .Version }} 去掉 v 前缀，镜像标签就是 0.2.6，不是 v0.2.6
-    expect(command).toContain(`version.dockerImagePlaceholder:${ROLLBACK_VERSION}`)
-    expect(command).not.toContain(`:v${ROLLBACK_VERSION}`)
-    expect(command).toContain('docker compose up -d')
-    expect(command).toContain('version.dockerOperatorManaged')
+    expect(command).toContain(
+      `version.dockerImagePlaceholder:${ROLLBACK_VERSION}`,
+    );
+    expect(command).not.toContain(`:v${ROLLBACK_VERSION}`);
+    expect(command).toContain("docker compose up -d");
+    expect(command).toContain("version.dockerOperatorManaged");
     // 不得出现上游镜像、被编造的 fork 镜像或任何具体 registry 地址
-    expect(command).not.toMatch(/weishaw|Wei-Shaw/i)
-    expect(command).not.toMatch(/ghcr\.io|docker\.io|registry/)
-    expect(command).not.toMatch(new RegExp(`${FORK_REPO}:`))
+    expect(command).not.toMatch(/weishaw|Wei-Shaw/i);
+    expect(command).not.toMatch(/ghcr\.io|docker\.io|registry/);
+    expect(command).not.toMatch(new RegExp(`${FORK_REPO}:`));
     // docker 路径不应给出脚本安装命令
-    expect(command).not.toContain('install.sh')
-  })
+    expect(command).not.toContain("install.sh");
+  });
 
-  it('warns per deployment method instead of calling in-container replacement an upgrade', async () => {
-    const wrapper = await openRollbackPanel([{ version: ROLLBACK_VERSION }])
-    await findVersionCandidate(wrapper, ROLLBACK_VERSION).trigger('click')
-    await flushPromises()
+  it("warns per deployment method instead of calling in-container replacement an upgrade", async () => {
+    const wrapper = await openRollbackPanel([{ version: ROLLBACK_VERSION }]);
+    await findVersionCandidate(wrapper, ROLLBACK_VERSION).trigger("click");
+    await flushPromises();
 
     // 脚本部署：说明会替换程序并需要重启
-    expect(wrapper.text()).toContain('version.rollbackWarning')
-    expect(wrapper.text()).not.toContain('version.rollbackWarningDocker')
+    expect(wrapper.text()).toContain("version.rollbackWarning");
+    expect(wrapper.text()).not.toContain("version.rollbackWarningDocker");
 
-    await findButton(wrapper, 'version.deployDocker').trigger('click')
-    await flushPromises()
+    await findButton(wrapper, "version.deployDocker").trigger("click");
+    await flushPromises();
 
     // Docker：说明按镜像标签升级，容器内替换不算升级
-    expect(wrapper.text()).toContain('version.rollbackWarningDocker')
-  })
+    expect(wrapper.text()).toContain("version.rollbackWarningDocker");
+  });
 
-  it('keeps the source-build hint and fetches no rollback candidates', async () => {
-    h.state.buildType = 'source'
-    h.state.binaryUpdateSupported = false
-    h.getRollbackVersions.mockClear()
+  it("keeps the source-build hint and fetches no rollback candidates", async () => {
+    h.state.buildType = "source";
+    h.state.binaryUpdateSupported = false;
+    h.getRollbackVersions.mockClear();
     try {
-      const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-      await findButton(wrapper, 'v0.2.6').trigger('click')
-      await findButton(wrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+      await findButton(wrapper, "v0.2.6").trigger("click");
+      await findButton(wrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
-      expect(wrapper.text()).toContain('version.rollbackSourceHint')
-      expect(h.getRollbackVersions).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain("version.rollbackSourceHint");
+      expect(h.getRollbackVersions).not.toHaveBeenCalled();
     } finally {
-      h.state.buildType = 'release'
-      h.state.binaryUpdateSupported = true
+      h.state.buildType = "release";
+      h.state.binaryUpdateSupported = true;
     }
-  })
+  });
 
-  it('renders the plain version for non-admins', () => {
-    h.state.isAdmin = false
+  it("renders the plain version for non-admins", () => {
+    h.state.isAdmin = false;
     try {
-      const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-      expect(wrapper.text()).toBe('v0.2.6')
-      expect(wrapper.findAll('button')).toHaveLength(0)
+      const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+      expect(wrapper.text()).toBe("v0.2.6");
+      expect(wrapper.findAll("button")).toHaveLength(0);
     } finally {
-      h.state.isAdmin = true
+      h.state.isAdmin = true;
     }
-  })
-})
+  });
+});
 
-describe('VersionBadge unknown update state', () => {
+describe("VersionBadge unknown update state", () => {
   async function openBadge() {
-    const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-    await findButton(wrapper, 'v0.2.6').trigger('click')
-    await flushPromises()
-    return wrapper
+    const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+    await findButton(wrapper, "v0.2.6").trigger("click");
+    await flushPromises();
+    return wrapper;
   }
 
-  it('does not claim the latest version when the check reported a warning', async () => {
-    h.state.versionWarning = 'this release ships no binary for this platform'
+  it("does not claim the latest version when the check reported a warning", async () => {
+    h.state.versionWarning = "this release ships no binary for this platform";
     try {
-      const wrapper = await openBadge()
+      const wrapper = await openBadge();
 
       // 后端明确给出 warning（例如只有镜像没有二进制资产）时不得声称已是最新
-      expect(wrapper.text()).not.toContain('version.upToDate')
-      expect(wrapper.text()).toContain('version.checkUnavailable')
+      expect(wrapper.text()).not.toContain("version.upToDate");
+      expect(wrapper.text()).toContain("version.checkUnavailable");
     } finally {
-      h.state.versionWarning = ''
+      h.state.versionWarning = "";
     }
-  })
+  });
 
-  it('does not claim the latest version when the check itself failed', async () => {
-    h.state.versionCheckFailed = true
+  it("does not claim the latest version when the check itself failed", async () => {
+    h.state.versionCheckFailed = true;
     try {
-      const wrapper = await openBadge()
+      const wrapper = await openBadge();
 
-      expect(wrapper.text()).not.toContain('version.upToDate')
-      expect(wrapper.text()).toContain('version.checkUnavailable')
+      expect(wrapper.text()).not.toContain("version.upToDate");
+      expect(wrapper.text()).toContain("version.checkUnavailable");
     } finally {
-      h.state.versionCheckFailed = false
+      h.state.versionCheckFailed = false;
     }
-  })
+  });
 
-  it('still claims the latest version on a normal cached result', async () => {
-    const wrapper = await openBadge()
+  it("still claims the latest version on a normal cached result", async () => {
+    const wrapper = await openBadge();
 
-    expect(wrapper.text()).toContain('version.upToDate')
-    expect(wrapper.text()).not.toContain('version.checkUnavailable')
-  })
-})
+    expect(wrapper.text()).toContain("version.upToDate");
+    expect(wrapper.text()).not.toContain("version.checkUnavailable");
+  });
+});
 
-describe('VersionBadge in-app binary update capability', () => {
+describe("VersionBadge in-app binary update capability", () => {
   async function openBadge() {
-    const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-    await findButton(wrapper, 'v0.2.6').trigger('click')
-    await flushPromises()
-    return wrapper
+    const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+    await findButton(wrapper, "v0.2.6").trigger("click");
+    await flushPromises();
+    return wrapper;
   }
 
-  it('offers the in-app update only when the backend explicitly supports it', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = true
+  it("offers the in-app update only when the backend explicitly supports it", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = true;
     try {
-      const wrapper = await openBadge()
-      expect(wrapper.text()).toContain('version.updateNow')
+      const wrapper = await openBadge();
+      expect(wrapper.text()).toContain("version.updateNow");
     } finally {
-      h.state.hasUpdate = false
+      h.state.hasUpdate = false;
     }
-  })
+  });
 
-  it('does not offer a binary swap on a Docker deployment even when an update exists', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = false
-    h.state.deploymentType = 'docker'
+  it("does not offer a binary swap on a Docker deployment even when an update exists", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = false;
+    h.state.deploymentType = "docker";
     try {
-      const wrapper = await openBadge()
+      const wrapper = await openBadge();
 
       // build_type 仍是 release，但 Docker 不能靠替换容器内程序升级
-      expect(h.state.buildType).toBe('release')
-      expect(wrapper.text()).not.toContain('version.updateNow')
-      expect(wrapper.text()).toContain('version.updateDockerHint')
-      expect(wrapper.text()).not.toContain('version.sourceModeHint')
+      expect(h.state.buildType).toBe("release");
+      expect(wrapper.text()).not.toContain("version.updateNow");
+      expect(wrapper.text()).toContain("version.updateDockerHint");
+      expect(wrapper.text()).not.toContain("version.sourceModeHint");
     } finally {
-      h.state.hasUpdate = false
-      h.state.deploymentType = 'native'
+      h.state.hasUpdate = false;
+      h.state.deploymentType = "native";
     }
-  })
+  });
 
-  it('does not offer a binary swap when the response omits the capability flag', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = false
+  it("does not offer a binary swap when the response omits the capability flag", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = false;
     try {
-      const wrapper = await openBadge()
+      const wrapper = await openBadge();
 
       // 旧后端没有该字段：保守处理，不提供应用内替换
-      expect(wrapper.text()).not.toContain('version.updateNow')
-      expect(wrapper.text()).toContain('version.updateUnsupportedHint')
+      expect(wrapper.text()).not.toContain("version.updateNow");
+      expect(wrapper.text()).toContain("version.updateUnsupportedHint");
     } finally {
-      h.state.hasUpdate = false
+      h.state.hasUpdate = false;
     }
-  })
+  });
 
-  it('does not fetch in-app rollback candidates for a Docker deployment', async () => {
-    h.state.binaryUpdateSupported = false
-    h.state.deploymentType = 'docker'
-    h.getRollbackVersions.mockClear()
+  it("does not fetch in-app rollback candidates for a Docker deployment", async () => {
+    h.state.binaryUpdateSupported = false;
+    h.state.deploymentType = "docker";
+    h.getRollbackVersions.mockClear();
     try {
-      const wrapper = await openBadge()
-      await findButton(wrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      const wrapper = await openBadge();
+      await findButton(wrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
-      expect(wrapper.text()).toContain('version.rollbackDockerHint')
-      expect(wrapper.text()).not.toContain('version.rollbackSourceHint')
-      expect(h.getRollbackVersions).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain("version.rollbackDockerHint");
+      expect(wrapper.text()).not.toContain("version.rollbackSourceHint");
+      expect(h.getRollbackVersions).not.toHaveBeenCalled();
     } finally {
-      h.state.deploymentType = 'native'
-      h.state.binaryUpdateSupported = true
+      h.state.deploymentType = "native";
+      h.state.binaryUpdateSupported = true;
     }
-  })
+  });
 
-  it('reports nothing installed when the backend answers already up to date', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = true
+  it("reports nothing installed when the backend answers already up to date", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = true;
     vi.mocked(performUpdate).mockResolvedValue({
-      message: 'Already up to date',
+      message: "Already up to date",
       need_restart: false,
-      already_up_to_date: true
-    })
+      already_up_to_date: true,
+    });
     try {
-      const wrapper = await openBadge()
-      await findButton(wrapper, 'version.updateNow').trigger('click')
-      await flushPromises()
+      const wrapper = await openBadge();
+      await findButton(wrapper, "version.updateNow").trigger("click");
+      await flushPromises();
 
       // HTTP 200 但没有安装任何东西：不得显示「更新完成」或要求重启
-      expect(wrapper.text()).not.toContain('version.updateComplete')
-      expect(wrapper.text()).not.toContain('version.restartRequired')
-      expect(wrapper.text()).toContain('version.updateNothingToInstall')
+      expect(wrapper.text()).not.toContain("version.updateComplete");
+      expect(wrapper.text()).not.toContain("version.restartRequired");
+      expect(wrapper.text()).toContain("version.updateNothingToInstall");
       // 未安装就不该清空版本缓存，而应重新核对真实状态
-      expect(h.fetchVersion).toHaveBeenCalled()
-      expect(h.clearVersionCache).not.toHaveBeenCalled()
+      expect(h.fetchVersion).toHaveBeenCalled();
+      expect(h.clearVersionCache).not.toHaveBeenCalled();
     } finally {
-      h.state.hasUpdate = false
-      vi.mocked(performUpdate).mockReset()
-      h.fetchVersion.mockClear()
-      h.clearVersionCache.mockClear()
+      h.state.hasUpdate = false;
+      vi.mocked(performUpdate).mockReset();
+      h.fetchVersion.mockClear();
+      h.clearVersionCache.mockClear();
     }
-  })
-})
+  });
+});
 
 // Container deployments report the in-app capability too (binary_update_supported
 // true), so 「立即更新」 exists as on native installs. What differs is ownership of
 // the executable: the swap only touches the container's writable layer and the
 // rollback path stays operator-managed (the backend answers 409).
-describe('VersionBadge docker in-app update with disabled rollback', () => {
+describe("VersionBadge docker in-app update with disabled rollback", () => {
   async function openBadge() {
-    const wrapper = mount(VersionBadge, { props: { version: '0.2.6' } })
-    await findButton(wrapper, 'v0.2.6').trigger('click')
-    await flushPromises()
-    return wrapper
+    const wrapper = mount(VersionBadge, { props: { version: "0.2.6" } });
+    await findButton(wrapper, "v0.2.6").trigger("click");
+    await flushPromises();
+    return wrapper;
   }
 
   function dropdown(wrapper: VueWrapper) {
-    const element = wrapper.find('.z-50')
-    if (!element.exists()) throw new Error('dropdown not rendered')
-    return element
+    const element = wrapper.find(".z-50");
+    if (!element.exists()) throw new Error("dropdown not rendered");
+    return element;
   }
 
-  it('offers the in-app update and states the writable-layer caveat', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = true
-    h.state.deploymentType = 'docker'
+  it("offers the in-app update and states the writable-layer caveat", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = true;
+    h.state.deploymentType = "docker";
     try {
-      const wrapper = await openBadge()
+      const wrapper = await openBadge();
 
-      expect(wrapper.text()).toContain('version.updateNow')
+      expect(wrapper.text()).toContain("version.updateNow");
       // 明确提示：只替换容器可写层内的程序，且镜像标签不变
-      expect(wrapper.text()).toContain('version.updateDockerCaveat')
+      expect(wrapper.text()).toContain("version.updateDockerCaveat");
       // 有应用内更新时不再显示「无法就地替换」的运维提示
-      expect(wrapper.text()).not.toContain('version.updateDockerHint')
-      expect(wrapper.text()).not.toContain('version.updateUnsupportedHint')
-      expect(wrapper.text()).not.toContain('version.sourceModeHint')
+      expect(wrapper.text()).not.toContain("version.updateDockerHint");
+      expect(wrapper.text()).not.toContain("version.updateUnsupportedHint");
+      expect(wrapper.text()).not.toContain("version.sourceModeHint");
     } finally {
-      h.state.hasUpdate = false
-      h.state.deploymentType = 'native'
+      h.state.hasUpdate = false;
+      h.state.deploymentType = "native";
     }
-  })
+  });
 
-  it('runs the update flow from the docker update button', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = true
-    h.state.deploymentType = 'docker'
+  it("runs the update flow from the docker update button", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = true;
+    h.state.deploymentType = "docker";
     vi.mocked(performUpdate).mockResolvedValue({
-      message: 'Update completed',
-      need_restart: true
-    })
+      message: "Update completed",
+      need_restart: true,
+    });
     try {
-      const wrapper = await openBadge()
-      await findButton(wrapper, 'version.updateNow').trigger('click')
-      await flushPromises()
+      const wrapper = await openBadge();
+      await findButton(wrapper, "version.updateNow").trigger("click");
+      await flushPromises();
 
-      expect(vi.mocked(performUpdate)).toHaveBeenCalled()
-      expect(wrapper.text()).toContain('version.updateComplete')
-      expect(wrapper.text()).toContain('version.restartRequired')
+      expect(vi.mocked(performUpdate)).toHaveBeenCalled();
+      expect(wrapper.text()).toContain("version.updateComplete");
+      expect(wrapper.text()).toContain("version.restartRequired");
     } finally {
-      h.state.hasUpdate = false
-      h.state.deploymentType = 'native'
-      vi.mocked(performUpdate).mockReset()
+      h.state.hasUpdate = false;
+      h.state.deploymentType = "native";
+      vi.mocked(performUpdate).mockReset();
     }
-  })
+  });
 
-  it('keeps in-app rollback off and fetches no candidates on docker', async () => {
-    h.state.binaryUpdateSupported = true
-    h.state.deploymentType = 'docker'
-    h.getRollbackVersions.mockClear()
+  it("keeps in-app rollback off and fetches no candidates on docker", async () => {
+    h.state.binaryUpdateSupported = true;
+    h.state.deploymentType = "docker";
+    h.getRollbackVersions.mockClear();
     try {
-      const wrapper = await openBadge()
-      await findButton(wrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      const wrapper = await openBadge();
+      await findButton(wrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
-      expect(wrapper.text()).toContain('version.rollbackDockerHint')
-      expect(wrapper.text()).not.toContain('version.rollbackSourceHint')
+      expect(wrapper.text()).toContain("version.rollbackDockerHint");
+      expect(wrapper.text()).not.toContain("version.rollbackSourceHint");
       // 回退接口对容器部署返回 409，界面不得提供候选版本或确认按钮
-      expect(h.getRollbackVersions).not.toHaveBeenCalled()
-      expect(wrapper.text()).not.toContain('version.rollbackSelectVersion')
-      expect(wrapper.text()).not.toContain('version.manualRollbackCommand')
-      expect(wrapper.text()).not.toContain('version.rollbackConfirm')
+      expect(h.getRollbackVersions).not.toHaveBeenCalled();
+      expect(wrapper.text()).not.toContain("version.rollbackSelectVersion");
+      expect(wrapper.text()).not.toContain("version.manualRollbackCommand");
+      expect(wrapper.text()).not.toContain("version.rollbackConfirm");
     } finally {
-      h.state.deploymentType = 'native'
+      h.state.deploymentType = "native";
     }
-  })
+  });
 
-  it('keeps the dropdown narrow for docker and wide for native', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = true
-    h.getRollbackVersions.mockResolvedValue({ versions: [] })
+  it("keeps the dropdown narrow for docker and wide for native", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = true;
+    h.getRollbackVersions.mockResolvedValue({ versions: [] });
     try {
-      h.state.deploymentType = 'docker'
-      const dockerWrapper = await openBadge()
-      await findButton(dockerWrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      h.state.deploymentType = "docker";
+      const dockerWrapper = await openBadge();
+      await findButton(dockerWrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
       // 没有候选版本列表/命令块，宽面板不适用
-      expect(dropdown(dockerWrapper).classes()).toContain('w-64')
-      expect(dropdown(dockerWrapper).classes()).not.toContain('w-80')
+      expect(dropdown(dockerWrapper).classes()).toContain("w-64");
+      expect(dropdown(dockerWrapper).classes()).not.toContain("w-80");
 
-      h.state.deploymentType = 'native'
-      const nativeWrapper = await openBadge()
-      await findButton(nativeWrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      h.state.deploymentType = "native";
+      const nativeWrapper = await openBadge();
+      await findButton(nativeWrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
-      expect(dropdown(nativeWrapper).classes()).toContain('w-80')
+      expect(dropdown(nativeWrapper).classes()).toContain("w-80");
     } finally {
-      h.state.hasUpdate = false
-      h.state.deploymentType = 'native'
+      h.state.hasUpdate = false;
+      h.state.deploymentType = "native";
     }
-  })
+  });
 
-  it('keeps the in-app update and rollback on a native deployment', async () => {
-    h.state.hasUpdate = true
-    h.state.binaryUpdateSupported = true
-    h.state.deploymentType = 'native'
-    h.getRollbackVersions.mockClear()
+  it("keeps the in-app update and rollback on a native deployment", async () => {
+    h.state.hasUpdate = true;
+    h.state.binaryUpdateSupported = true;
+    h.state.deploymentType = "native";
+    h.getRollbackVersions.mockClear();
     h.getRollbackVersions.mockResolvedValue({
       versions: [
-        { version: '0.2.5', published_at: '2026-08-01T00:00:00Z', html_url: '#' }
-      ]
-    })
+        {
+          version: "0.2.5",
+          published_at: "2026-08-01T00:00:00Z",
+          html_url: "#",
+        },
+      ],
+    });
     try {
-      const wrapper = await openBadge()
+      const wrapper = await openBadge();
 
-      expect(wrapper.text()).toContain('version.updateNow')
-      expect(wrapper.text()).not.toContain('version.updateDockerCaveat')
+      expect(wrapper.text()).toContain("version.updateNow");
+      expect(wrapper.text()).not.toContain("version.updateDockerCaveat");
 
-      await findButton(wrapper, 'version.rollback').trigger('click')
-      await flushPromises()
+      await findButton(wrapper, "version.rollback").trigger("click");
+      await flushPromises();
 
-      expect(h.getRollbackVersions).toHaveBeenCalled()
-      expect(wrapper.text()).toContain('version.rollbackSelectVersion')
-      expect(wrapper.text()).not.toContain('version.rollbackDockerHint')
+      expect(h.getRollbackVersions).toHaveBeenCalled();
+      expect(wrapper.text()).toContain("version.rollbackSelectVersion");
+      expect(wrapper.text()).not.toContain("version.rollbackDockerHint");
     } finally {
-      h.state.hasUpdate = false
+      h.state.hasUpdate = false;
     }
-  })
+  });
 
-  it('states the docker caveat explicitly in both locales', () => {
-    const en = readLocale('en')
-    const zh = readLocale('zh')
+  it("states the docker caveat explicitly in both locales", () => {
+    const en = readLocale("en");
+    const zh = readLocale("zh");
 
-    expect(en).toContain('updateDockerCaveat')
-    expect(zh).toContain('updateDockerCaveat')
+    expect(en).toContain("updateDockerCaveat");
+    expect(zh).toContain("updateDockerCaveat");
     // 可写层替换、镜像标签不变、重启保留但重建回退
-    expect(en).toMatch(/writable layer/i)
-    expect(en).toMatch(/image tag/i)
-    expect(en).toMatch(/restart/i)
-    expect(en).toMatch(/recreat/i)
-    expect(zh).toContain('可写层')
-    expect(zh).toContain('镜像标签')
-    expect(zh).toContain('重启')
-    expect(zh).toMatch(/重新创建/)
-  })
-})
+    expect(en).toMatch(/writable layer/i);
+    expect(en).toMatch(/image tag/i);
+    expect(en).toMatch(/restart/i);
+    expect(en).toMatch(/recreat/i);
+    expect(zh).toContain("可写层");
+    expect(zh).toContain("镜像标签");
+    expect(zh).toContain("重启");
+    expect(zh).toMatch(/重新创建/);
+  });
+});
 
-describe('VersionBadge release source', () => {
-  it('resolves releases from the fork only', () => {
+describe("VersionBadge release source", () => {
+  it("resolves releases from the fork only", () => {
     // vitest 在 frontend/ 下运行；兼容从仓库根目录启动的情况。
     const candidates = [
-      resolve(process.cwd(), 'src/components/common/VersionBadge.vue'),
-      resolve(process.cwd(), 'frontend/src/components/common/VersionBadge.vue')
-    ]
-    const sourcePath = candidates.find((candidate) => existsSync(candidate))
-    if (!sourcePath) throw new Error(`VersionBadge.vue not found in: ${candidates.join(', ')}`)
-    const source = readFileSync(sourcePath, 'utf8')
+      resolve(process.cwd(), "src/components/common/VersionBadge.vue"),
+      resolve(process.cwd(), "frontend/src/components/common/VersionBadge.vue"),
+    ];
+    const sourcePath = candidates.find((candidate) => existsSync(candidate));
+    if (!sourcePath)
+      throw new Error(
+        `VersionBadge.vue not found in: ${candidates.join(", ")}`,
+      );
+    const source = readFileSync(sourcePath, "utf8");
 
-    expect(source).toContain(`const GITHUB_REPO = '${FORK_REPO}'`)
-    expect(source).not.toContain('Wei-Shaw')
-    expect(source).not.toContain('weishaw')
+    expect(source).toContain(`const GITHUB_REPO = '${FORK_REPO}'`);
+    expect(source).not.toContain("Wei-Shaw");
+    expect(source).not.toContain("weishaw");
     // 旧实现里的固定镜像常量不得回归
-    expect(source).not.toContain('DOCKER_IMAGE =')
-  })
-})
+    expect(source).not.toContain("DOCKER_IMAGE =");
+  });
+});

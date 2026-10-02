@@ -30,7 +30,7 @@ A generic data table component with sorting, loading states, and custom cell ren
   :columns="[
     { key: 'name', label: 'Name', sortable: true },
     { key: 'email', label: 'Email' },
-    { key: 'status', label: 'Status', formatter: (val) => val.toUpperCase() }
+    { key: 'status', label: 'Status', formatter: (val) => val.toUpperCase() },
   ]"
   :data="users"
   :loading="isLoading"
@@ -162,7 +162,13 @@ Statistics card component for displaying metrics with optional change indicators
 **Usage:**
 
 ```vue
-<StatCard title="Total Users" :value="1234" :icon="UserIcon" :change="12.5" change-type="up" />
+<StatCard
+  title="Total Users"
+  :value="1234"
+  :icon="UserIcon"
+  :change="12.5"
+  change-type="up"
+/>
 ```
 
 ---
@@ -180,21 +186,21 @@ Toast notification component that automatically displays toasts from the app sto
 
 ```typescript
 // Trigger toasts from anywhere using the app store
-import { useAppStore } from '@/stores/app'
+import { useAppStore } from "@/stores/app";
 
-const appStore = useAppStore()
-
-appStore.addToast({
-  type: 'success',
-  title: 'Success!',
-  message: 'User created successfully',
-  duration: 3000
-})
+const appStore = useAppStore();
 
 appStore.addToast({
-  type: 'error',
-  message: 'Failed to delete user'
-})
+  type: "success",
+  title: "Success!",
+  message: "User created successfully",
+  duration: 3000,
+});
+
+appStore.addToast({
+  type: "error",
+  message: "Failed to delete user",
+});
 ```
 
 ---
@@ -250,13 +256,13 @@ Empty state placeholder with icon, message, and optional action button.
 You can import components individually:
 
 ```typescript
-import { DataTable, Pagination, Modal } from '@/components/common'
+import { DataTable, Pagination, Modal } from "@/components/common";
 ```
 
 Or import specific components:
 
 ```typescript
-import DataTable from '@/components/common/DataTable.vue'
+import DataTable from "@/components/common/DataTable.vue";
 ```
 
 ## Features

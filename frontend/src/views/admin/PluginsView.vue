@@ -548,7 +548,8 @@ function closeConfiguration(): void {
 }
 
 function clearPendingBridgeRequests(): void {
-  for (const timeout of pendingBridgeRequests.values()) window.clearTimeout(timeout);
+  for (const timeout of pendingBridgeRequests.values())
+    window.clearTimeout(timeout);
   pendingBridgeRequests.clear();
 }
 
@@ -572,7 +573,8 @@ function postBridgeResult(
   payload: Record<string, unknown>,
 ): void {
   if (!pluginFrame.value?.contentWindow || !uiSession.value) return;
-  const requestID = typeof request.request_id === "string" ? request.request_id.trim() : "";
+  const requestID =
+    typeof request.request_id === "string" ? request.request_id.trim() : "";
   const timeout = pendingBridgeRequests.get(requestID);
   if (!requestID || timeout === undefined) return;
   window.clearTimeout(timeout);
@@ -607,7 +609,8 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
   )
     return;
 
-  const requestID = typeof message.request_id === "string" ? message.request_id.trim() : "";
+  const requestID =
+    typeof message.request_id === "string" ? message.request_id.trim() : "";
   const expectsResponse =
     message.type === "config.load" ||
     message.type === "config.save" ||
@@ -691,7 +694,9 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
     if (isStepUpBlocked(error)) reportSensitiveActionError(error);
     postBridgeResult(message, {
       ok: false,
-      error: isStepUpCancelled(error) ? t("common.cancel") : errorMessage(error),
+      error: isStepUpCancelled(error)
+        ? t("common.cancel")
+        : errorMessage(error),
     });
   }
 }

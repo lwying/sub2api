@@ -40,175 +40,177 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 interface AliyunCaptchaVerifyResult {
-  captchaResult: boolean
-  bizResult?: boolean
+  captchaResult: boolean;
+  bizResult?: boolean;
 }
 
 interface AliyunCaptchaInitOptions {
-  SceneId: string
-  prefix: string
-  mode: 'popup' | 'embed'
-  element: string
-  button: string
+  SceneId: string;
+  prefix: string;
+  mode: "popup" | "embed";
+  element: string;
+  button: string;
   captchaVerifyCallback: (
-    captchaVerifyParam: string
-  ) => AliyunCaptchaVerifyResult | Promise<AliyunCaptchaVerifyResult>
-  onBizResultCallback: (bizResult: boolean) => void
-  getInstance: (instance: unknown) => void
-  slideStyle?: { width: number; height: number }
-  language?: string
+    captchaVerifyParam: string,
+  ) => AliyunCaptchaVerifyResult | Promise<AliyunCaptchaVerifyResult>;
+  onBizResultCallback: (bizResult: boolean) => void;
+  getInstance: (instance: unknown) => void;
+  slideStyle?: { width: number; height: number };
+  language?: string;
 }
 
 declare global {
   interface Window {
-    initAliyunCaptcha?: (options: AliyunCaptchaInitOptions) => void
-    AliyunCaptchaConfig?: { region: string; prefix: string }
+    initAliyunCaptcha?: (options: AliyunCaptchaInitOptions) => void;
+    AliyunCaptchaConfig?: { region: string; prefix: string };
   }
 }
 
 const props = withDefaults(
   defineProps<{
-    sceneId: string
-    prefix: string
-    region?: 'cn' | 'sgp'
+    sceneId: string;
+    prefix: string;
+    region?: "cn" | "sgp";
   }>(),
   {
-    region: 'cn'
-  }
-)
+    region: "cn",
+  },
+);
 
 const emit = defineEmits<{
-  (e: 'verify', param: string): void
-  (e: 'expire'): void
-  (e: 'error'): void
-}>()
+  (e: "verify", param: string): void;
+  (e: "expire"): void;
+  (e: "error"): void;
+}>();
 
-const { t, locale } = useI18n()
+const { t, locale } = useI18n();
 
-const uid = Math.random().toString(36).slice(2, 10)
-const buttonId = `aliyun-captcha-button-${uid}`
-const elementId = `aliyun-captcha-element-${uid}`
+const uid = Math.random().toString(36).slice(2, 10);
+const buttonId = `aliyun-captcha-button-${uid}`;
+const elementId = `aliyun-captcha-element-${uid}`;
 
 // idle: 未验证可点击；verifying: 弹窗已拉起（关闭后回到 idle 可重试）；verified: 已通过
-const state = ref<'idle' | 'verifying' | 'verified'>('idle')
+const state = ref<"idle" | "verifying" | "verified">("idle");
 
 const buttonText = computed(() => {
   switch (state.value) {
-    case 'verified':
-      return t('auth.captchaVerified')
-    case 'verifying':
-      return t('auth.captchaVerifying')
+    case "verified":
+      return t("auth.captchaVerified");
+    case "verifying":
+      return t("auth.captchaVerifying");
     default:
-      return t('auth.captchaClickToVerify')
+      return t("auth.captchaClickToVerify");
   }
-})
+});
 
-const SCRIPT_SRC = 'https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js'
-const POPUP_ID = 'aliyunCaptcha-window-popup'
-const MASK_ID = 'aliyunCaptcha-mask'
-const POPUP_OPEN_TIMEOUT_MS = 8000
-const POPUP_WATCH_INTERVAL_MS = 300
+const SCRIPT_SRC =
+  "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
+const POPUP_ID = "aliyunCaptcha-window-popup";
+const MASK_ID = "aliyunCaptcha-mask";
+const POPUP_OPEN_TIMEOUT_MS = 8000;
+const POPUP_WATCH_INTERVAL_MS = 300;
 
 // captchaVerifyParam 是一次性参数：verified 后缓存于此，提交失败需 reset 后重新验证
-let cachedParam: string | null = null
-let pending: { resolve: (value: string | null) => void } | null = null
-let popupWatchTimer: number | null = null
-let readyPromise: Promise<void> | null = null
+let cachedParam: string | null = null;
+let pending: { resolve: (value: string | null) => void } | null = null;
+let popupWatchTimer: number | null = null;
+let readyPromise: Promise<void> | null = null;
 
 const loadScript = (): Promise<void> => {
   return new Promise((resolve, reject) => {
     // 全局配置必须在脚本加载前就位（region/prefix 全站一致，重复赋值无副作用）
-    window.AliyunCaptchaConfig = { region: props.region, prefix: props.prefix }
+    window.AliyunCaptchaConfig = { region: props.region, prefix: props.prefix };
 
     if (window.initAliyunCaptcha) {
-      resolve()
-      return
+      resolve();
+      return;
     }
 
     const existingScript = document.querySelector<HTMLScriptElement>(
-      'script[src*="aliyunCaptcha/AliyunCaptcha"]'
-    )
+      'script[src*="aliyunCaptcha/AliyunCaptcha"]',
+    );
     if (existingScript) {
-      existingScript.addEventListener('load', () => resolve())
-      existingScript.addEventListener('error', () =>
-        reject(new Error('Failed to load Aliyun captcha script'))
-      )
-      return
+      existingScript.addEventListener("load", () => resolve());
+      existingScript.addEventListener("error", () =>
+        reject(new Error("Failed to load Aliyun captcha script")),
+      );
+      return;
     }
 
-    const script = document.createElement('script')
-    script.src = SCRIPT_SRC
-    script.async = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Failed to load Aliyun captcha script'))
-    document.head.appendChild(script)
-  })
-}
+    const script = document.createElement("script");
+    script.src = SCRIPT_SRC;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () =>
+      reject(new Error("Failed to load Aliyun captcha script"));
+    document.head.appendChild(script);
+  });
+};
 
 function initCaptcha(): void {
   if (!window.initAliyunCaptcha) {
-    throw new Error('Aliyun captcha script not ready')
+    throw new Error("Aliyun captcha script not ready");
   }
   window.initAliyunCaptcha({
     SceneId: props.sceneId,
     prefix: props.prefix,
-    mode: 'popup',
+    mode: "popup",
     element: `#${elementId}`,
     button: `#${buttonId}`,
     // 这里不发业务请求，只把 captchaVerifyParam 当 token 交给页面，随登录/注册等
     // 业务请求的 turnstile_token 字段提交，由后端在业务接口内调阿里云校验。
     captchaVerifyCallback: (captchaVerifyParam: string) => {
-      onCaptchaParam(captchaVerifyParam)
-      return { captchaResult: true }
+      onCaptchaParam(captchaVerifyParam);
+      return { captchaResult: true };
     },
     onBizResultCallback: () => {},
     getInstance: () => {},
     slideStyle: { width: 360, height: 40 },
-    language: locale.value.toLowerCase().startsWith('zh') ? 'cn' : 'en'
-  })
+    language: locale.value.toLowerCase().startsWith("zh") ? "cn" : "en",
+  });
 }
 
 function ensureReady(): Promise<void> {
   if (!readyPromise) {
-    readyPromise = loadScript().then(() => initCaptcha())
+    readyPromise = loadScript().then(() => initCaptcha());
     readyPromise.catch(() => {
       // 失败后允许下次重试（如网络恢复）
-      readyPromise = null
-    })
+      readyPromise = null;
+    });
   }
-  return readyPromise
+  return readyPromise;
 }
 
 function onCaptchaParam(param: string): void {
-  stopPopupWatch()
-  cachedParam = param
-  state.value = 'verified'
-  emit('verify', param)
-  const current = pending
-  pending = null
-  current?.resolve(param)
+  stopPopupWatch();
+  cachedParam = param;
+  state.value = "verified";
+  emit("verify", param);
+  const current = pending;
+  pending = null;
+  current?.resolve(param);
 }
 
 function settlePending(value: string | null): void {
-  const current = pending
-  pending = null
-  current?.resolve(value)
+  const current = pending;
+  pending = null;
+  current?.resolve(value);
 }
 
 function isPopupVisible(): boolean {
-  const popup = document.getElementById(POPUP_ID)
-  if (!popup) return false
-  return window.getComputedStyle(popup).display !== 'none'
+  const popup = document.getElementById(POPUP_ID);
+  if (!popup) return false;
+  return window.getComputedStyle(popup).display !== "none";
 }
 
 function stopPopupWatch(): void {
   if (popupWatchTimer !== null) {
-    window.clearInterval(popupWatchTimer)
-    popupWatchTimer = null
+    window.clearInterval(popupWatchTimer);
+    popupWatchTimer = null;
   }
 }
 
@@ -217,36 +219,36 @@ function stopPopupWatch(): void {
 // initAliyunCaptcha 对触发按钮的事件绑定是异步完成的，首次 click 可能落空，
 // 因此弹窗出现前每个 tick 重试触发一次。
 function startPopupWatch(): void {
-  stopPopupWatch()
-  const startedAt = Date.now()
-  let seen = false
+  stopPopupWatch();
+  const startedAt = Date.now();
+  let seen = false;
   popupWatchTimer = window.setInterval(() => {
-    if (state.value === 'verified') {
-      stopPopupWatch()
-      return
+    if (state.value === "verified") {
+      stopPopupWatch();
+      return;
     }
     if (isPopupVisible()) {
-      seen = true
-      return
+      seen = true;
+      return;
     }
     if (seen || Date.now() - startedAt > POPUP_OPEN_TIMEOUT_MS) {
-      stopPopupWatch()
-      state.value = 'idle'
-      settlePending(null)
-      return
+      stopPopupWatch();
+      state.value = "idle";
+      settlePending(null);
+      return;
     }
-    document.getElementById(buttonId)?.click()
-  }, POPUP_WATCH_INTERVAL_MS)
+    document.getElementById(buttonId)?.click();
+  }, POPUP_WATCH_INTERVAL_MS);
 }
 
 // 用户点击与程序化触发共用：置 verifying 并启动弹窗监视（幂等，重试 click 不重置计时）
 function handleTriggerClick(): void {
-  if (state.value === 'verified') {
-    return
+  if (state.value === "verified") {
+    return;
   }
-  state.value = 'verifying'
+  state.value = "verifying";
   if (popupWatchTimer === null) {
-    startPopupWatch()
+    startPopupWatch();
   }
 }
 
@@ -254,49 +256,53 @@ function handleTriggerClick(): void {
 // 已通过预验证则直接复用缓存的 captchaVerifyParam；否则弹出验证码等待结果。
 // 用户关闭/未能弹出 resolve null；脚本加载失败 reject。
 async function verify(): Promise<string | null> {
-  if (state.value === 'verified' && cachedParam) {
-    return cachedParam
+  if (state.value === "verified" && cachedParam) {
+    return cachedParam;
   }
-  settlePending(null)
-  await ensureReady()
+  settlePending(null);
+  await ensureReady();
   return new Promise<string | null>((resolve) => {
-    pending = { resolve }
-    document.getElementById(buttonId)?.click()
-  })
+    pending = { resolve };
+    document.getElementById(buttonId)?.click();
+  });
 }
 
 // 重置为未验证态；captchaVerifyParam 是一次性参数，服务端校验失败后需用户重新验证
 function reset(): void {
-  stopPopupWatch()
-  settlePending(null)
-  cachedParam = null
-  state.value = 'idle'
+  stopPopupWatch();
+  settlePending(null);
+  cachedParam = null;
+  state.value = "idle";
 }
 
-defineExpose({ verify, reset })
+defineExpose({ verify, reset });
 
 onMounted(async () => {
   if (!props.sceneId || !props.prefix) {
-    return
+    return;
   }
 
-  document.getElementById(buttonId)?.addEventListener('click', handleTriggerClick)
+  document
+    .getElementById(buttonId)
+    ?.addEventListener("click", handleTriggerClick);
   try {
-    await ensureReady()
+    await ensureReady();
   } catch (error) {
-    console.error('Failed to initialize Aliyun captcha:', error)
-    emit('error')
+    console.error("Failed to initialize Aliyun captcha:", error);
+    emit("error");
   }
-})
+});
 
 onUnmounted(() => {
-  document.getElementById(buttonId)?.removeEventListener('click', handleTriggerClick)
-  stopPopupWatch()
-  settlePending(null)
+  document
+    .getElementById(buttonId)
+    ?.removeEventListener("click", handleTriggerClick);
+  stopPopupWatch();
+  settlePending(null);
   // SDK 不会自清理弹窗 DOM，残留会导致下次挂载时回调重复触发
-  document.getElementById(MASK_ID)?.remove()
-  document.getElementById(POPUP_ID)?.remove()
-})
+  document.getElementById(MASK_ID)?.remove();
+  document.getElementById(POPUP_ID)?.remove();
+});
 </script>
 
 <style scoped>

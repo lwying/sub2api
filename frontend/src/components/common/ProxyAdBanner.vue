@@ -5,14 +5,14 @@
     target="_blank"
     rel="noopener noreferrer"
   >
-    <span class="truncate">{{ t('admin.proxies.ad.inline') }}</span>
+    <span class="truncate">{{ t("admin.proxies.ad.inline") }}</span>
     <Icon name="externalLink" size="xs" />
   </a>
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
+import { useI18n } from "vue-i18n";
+import Icon from "@/components/icons/Icon.vue";
 
-const { t } = useI18n()
+const { t } = useI18n();
 </script>

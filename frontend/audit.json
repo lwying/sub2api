@@ -26,9 +26,7 @@
       "findings": [
         {
           "version": "0.18.5",
-          "paths": [
-            ".>xlsx"
-          ]
+          "paths": [".>xlsx"]
         }
       ],
       "found_by": null,
@@ -41,9 +39,7 @@
       "reported_by": null,
       "title": "Prototype Pollution in sheetJS",
       "metadata": null,
-      "cves": [
-        "CVE-2023-30533"
-      ],
+      "cves": ["CVE-2023-30533"],
       "access": "public",
       "severity": "high",
       "module_name": "xlsx",
@@ -56,18 +52,14 @@
         "score": 7.8,
         "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H"
       },
-      "cwe": [
-        "CWE-1321"
-      ],
+      "cwe": ["CWE-1321"],
       "url": "https://github.com/advisories/GHSA-4r6h-8v6p-xvw6"
     },
     "1108111": {
       "findings": [
         {
           "version": "0.18.5",
-          "paths": [
-            ".>xlsx"
-          ]
+          "paths": [".>xlsx"]
         }
       ],
       "found_by": null,
@@ -80,9 +72,7 @@
       "reported_by": null,
       "title": "SheetJS Regular Expression Denial of Service (ReDoS)",
       "metadata": null,
-      "cves": [
-        "CVE-2024-22363"
-      ],
+      "cves": ["CVE-2024-22363"],
       "access": "public",
       "severity": "high",
       "module_name": "xlsx",
@@ -95,9 +85,7 @@
         "score": 7.5,
         "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
       },
-      "cwe": [
-        "CWE-1333"
-      ],
+      "cwe": ["CWE-1333"],
       "url": "https://github.com/advisories/GHSA-5pgg-2g8v-p4x9"
     }
   },

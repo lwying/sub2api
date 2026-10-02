@@ -191,19 +191,19 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 
 Community projects that extend or integrate with Sub2API:
 
-| Project | Description | Features |
-|---------|-------------|----------|
-| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~Self-service payment system~~ | **Now Built-in** — Payment is now integrated into Sub2API, no separate deployment needed. See [Payment Configuration Guide](docs/PAYMENT.md) |
-| [sub2api-mobile](https://github.com/ckken/sub2api-mobile) | Mobile admin console | Cross-platform app (iOS/Android/Web) for user management, account management, monitoring dashboard, and multi-backend switching; built with Expo + React Native |
+| Project                                                    | Description                     | Features                                                                                                                                                        |
+| ---------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~Self-service payment system~~ | **Now Built-in** — Payment is now integrated into Sub2API, no separate deployment needed. See [Payment Configuration Guide](docs/PAYMENT.md)                    |
+| [sub2api-mobile](https://github.com/ckken/sub2api-mobile)  | Mobile admin console            | Cross-platform app (iOS/Android/Web) for user management, account management, monitoring dashboard, and multi-backend switching; built with Expo + React Native |
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|------------|
-| Backend | Go 1.27.0, Gin, Ent |
-| Frontend | Vue 3.4+, Vite 5+, TailwindCSS |
-| Database | PostgreSQL 15+ |
-| Cache/Queue | Redis 7+ |
+| Component   | Technology                     |
+| ----------- | ------------------------------ |
+| Backend     | Go 1.27.0, Gin, Ent            |
+| Frontend    | Vue 3.4+, Vite 5+, TailwindCSS |
+| Database    | PostgreSQL 15+                 |
+| Cache/Queue | Redis 7+                       |
 
 ---
 
@@ -241,6 +241,7 @@ curl -sSL https://raw.githubusercontent.com/lwying/sub2api/main/deploy/install.s
 The fork installer requires a published `lwying/sub2api` release with a Linux archive for this host and `checksums.txt`; an image-only or unverifiable release is refused. Existing upstream-built installations must switch to a fork-built binary manually once before their in-app updater can point to the fork. Docker images are operator-managed: replacing a binary inside a container is a writable-layer change, not an image upgrade, so pin the image tag in your own compose file (see `deploy/DOCKER.md`).
 
 The script will:
+
 1. Detect your system architecture
 2. Download the latest release
 3. Install binary to `/opt/sub2api`
@@ -261,6 +262,7 @@ sudo systemctl enable sub2api
 ```
 
 The Setup Wizard will guide you through:
+
 - Database configuration
 - Redis configuration
 - Admin account creation
@@ -270,6 +272,7 @@ The Setup Wizard will guide you through:
 You can upgrade directly from the **Admin Dashboard** by clicking the **Check for Updates** button in the top-left corner.
 
 The web interface will:
+
 - Check for new versions automatically
 - Download and apply updates with one click
 - Support rollback if needed
@@ -320,6 +323,7 @@ docker compose logs -f sub2api
 ```
 
 **What the script does:**
+
 - Downloads `docker-compose.local.yml` (saved as `docker-compose.yml`) and `.env.example`
 - Generates secure credentials (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
 - Creates `.env` file with auto-generated secrets
@@ -364,6 +368,7 @@ SERVER_PORT=8080
 ```
 
 **Generate secure secrets:**
+
 ```bash
 # Generate JWT_SECRET
 openssl rand -hex 32
@@ -395,10 +400,10 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 #### Deployment Versions
 
-| Version | Data Storage | Migration | Best For |
-|---------|-------------|-----------|----------|
+| Version                      | Data Storage      | Migration                      | Best For                     |
+| ---------------------------- | ----------------- | ------------------------------ | ---------------------------- |
 | **docker-compose.local.yml** | Local directories | ✅ Easy (tar entire directory) | Production, frequent backups |
-| **docker-compose.yml** | Named volumes | ⚠️ Requires docker commands | Simple setup |
+| **docker-compose.yml**       | Named volumes     | ⚠️ Requires docker commands    | Simple setup                 |
 
 **Recommendation:** Use `docker-compose.local.yml` (deployed by script) for easier data management.
 
@@ -407,6 +412,7 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 Open `http://YOUR_SERVER_IP:8080` in your browser.
 
 If admin password was auto-generated, find it in logs:
+
 ```bash
 docker compose -f docker-compose.local.yml logs sub2api | grep "admin password"
 ```
@@ -575,8 +581,8 @@ When `security.url_allowlist.enabled=false`, the system performs minimal URL val
 ```yaml
 security:
   url_allowlist:
-    enabled: false                # Disable allowlist checks
-    allow_insecure_http: false    # HTTPS only (recommended for production)
+    enabled: false # Disable allowlist checks
+    allow_insecure_http: false # HTTPS only (recommended for production)
 ```
 
 **Or via environment variable:**
@@ -587,22 +593,26 @@ SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=false
 ```
 
 **Risks of allowing HTTP:**
+
 - API keys and data transmitted in **plaintext** (vulnerable to interception)
 - Susceptible to **man-in-the-middle (MITM) attacks**
 - **NOT suitable for production** environments
 
 **When to use HTTP:**
+
 - ✅ Development/testing with local servers (http://localhost)
 - ✅ Internal networks with trusted endpoints
 - ✅ Testing account connectivity before obtaining HTTPS
 - ❌ Production environments (use HTTPS only)
 
 **Example error for HTTP URLs when `allow_insecure_http: false` is set:**
+
 ```
 Invalid base URL: invalid url scheme: http
 ```
 
 If you disable URL validation or response header filtering, harden your network layer:
+
 - Enforce an egress allowlist for upstream domains/IPs
 - Block private/loopback/link-local ranges
 - Enforce TLS-only outbound traffic
@@ -763,24 +773,24 @@ Sub2API supports both Grok subscription accounts through xAI OAuth and standard 
 
 The Grok OAuth flow uses PKCE and does not require committing private secrets. The default client details follow the public xAI OAuth flow used by compatible clients, and every value can be overridden by environment variable:
 
-| Variable | Default |
-|----------|---------|
-| `XAI_OAUTH_CLIENT_ID` | Public xAI OAuth client ID |
-| `XAI_OAUTH_SCOPE` | `openid profile email offline_access grok-cli:access api:access` |
-| `XAI_OAUTH_REDIRECT_URI` | `http://127.0.0.1:56121/callback` |
-| `XAI_OAUTH_AUTHORIZE_URL` | `https://auth.x.ai/oauth2/authorize` |
-| `XAI_OAUTH_TOKEN_URL` | `https://auth.x.ai/oauth2/token` |
-| `XAI_BASE_URL` | `https://api.x.ai/v1`; runtime-diagnostics override (account `base_url` controls request forwarding) |
-| `XAI_GROK_CLI_VERSION` | `0.2.114`; optional override for the client identity sent to `cli-chat-proxy.grok.com`. The pinned value is also the floor: an override below it is dropped |
+| Variable                  | Default                                                                                                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `XAI_OAUTH_CLIENT_ID`     | Public xAI OAuth client ID                                                                                                                                  |
+| `XAI_OAUTH_SCOPE`         | `openid profile email offline_access grok-cli:access api:access`                                                                                            |
+| `XAI_OAUTH_REDIRECT_URI`  | `http://127.0.0.1:56121/callback`                                                                                                                           |
+| `XAI_OAUTH_AUTHORIZE_URL` | `https://auth.x.ai/oauth2/authorize`                                                                                                                        |
+| `XAI_OAUTH_TOKEN_URL`     | `https://auth.x.ai/oauth2/token`                                                                                                                            |
+| `XAI_BASE_URL`            | `https://api.x.ai/v1`; runtime-diagnostics override (account `base_url` controls request forwarding)                                                        |
+| `XAI_GROK_CLI_VERSION`    | `0.2.114`; optional override for the client identity sent to `cli-chat-proxy.grok.com`. The pinned value is also the floor: an override below it is dropped |
 
 Administrators can create Grok OAuth or API-key accounts from the dashboard. OAuth authorization and reauthorization are also available through the admin API:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/v1/admin/grok/oauth/auth-url` | Generate an xAI OAuth authorization URL |
-| `POST /api/v1/admin/grok/oauth/exchange-code` | Exchange a callback URL, query string, or code for OAuth credentials |
-| `POST /api/v1/admin/grok/oauth/refresh-token` | Validate or refresh a Grok refresh token |
-| `POST /api/v1/admin/grok/accounts/:id/refresh` | Refresh an existing Grok account |
+| Endpoint                                       | Purpose                                                              |
+| ---------------------------------------------- | -------------------------------------------------------------------- |
+| `POST /api/v1/admin/grok/oauth/auth-url`       | Generate an xAI OAuth authorization URL                              |
+| `POST /api/v1/admin/grok/oauth/exchange-code`  | Exchange a callback URL, query string, or code for OAuth credentials |
+| `POST /api/v1/admin/grok/oauth/refresh-token`  | Validate or refresh a Grok refresh token                             |
+| `POST /api/v1/admin/grok/accounts/:id/refresh` | Refresh an existing Grok account                                     |
 
 OAuth credential storage reuses the existing account JSON fields: `access_token`, `refresh_token`, `token_type`, `expires_at`, `base_url`, optional `email`, optional `subscription_tier`, and `entitlement_status`. OAuth inference defaults to `https://cli-chat-proxy.grok.com/v1`; existing OAuth accounts that stored the old `https://api.x.ai/v1` default are redirected to the subscription proxy at runtime. Explicit custom upstreams remain unchanged.
 
@@ -835,10 +845,10 @@ Sub2API supports [Antigravity](https://antigravity.so/) accounts. After authoriz
 
 ### Dedicated Endpoints
 
-| Endpoint | Model |
-|----------|-------|
+| Endpoint                   | Model         |
+| -------------------------- | ------------- |
 | `/antigravity/v1/messages` | Claude models |
-| `/antigravity/v1beta/` | Gemini models |
+| `/antigravity/v1beta/`     | Gemini models |
 
 ### Claude Code Configuration
 

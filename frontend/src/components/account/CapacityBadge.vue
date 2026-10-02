@@ -1,18 +1,18 @@
 <script setup lang="ts">
 defineProps<{
-  colorClass: string
-  tooltip?: string
-  current: string | number
-  max: string | number
-  suffix?: string
-}>()
+  colorClass: string;
+  tooltip?: string;
+  current: string | number;
+  max: string | number;
+  suffix?: string;
+}>();
 </script>
 
 <template>
   <span
     :class="[
       'inline-flex items-center gap-1 rounded-md px-1.5 py-px text-[10px] font-medium leading-tight',
-      colorClass
+      colorClass,
     ]"
     :title="tooltip"
   >

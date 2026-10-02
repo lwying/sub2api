@@ -3,7 +3,7 @@
  * Handles API key group management for administrators
  */
 
-import { apiClient } from '../client'
+import { apiClient } from "../client";
 import type {
   AdminGroup,
   GroupPlatform,
@@ -13,12 +13,12 @@ import type {
   CompositeRouteDecision,
   CreateGroupRequest,
   UpdateGroupRequest,
-  PaginatedResponse
-} from '@/types'
+  PaginatedResponse,
+} from "@/types";
 
 export interface LiveCapability {
-  supported: boolean
-  reason?: string
+  supported: boolean;
+  reason?: string;
 }
 
 /**
@@ -32,26 +32,29 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    platform?: GroupPlatform
-    status?: 'active' | 'inactive'
-    is_exclusive?: boolean
-    search?: string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    platform?: GroupPlatform;
+    status?: "active" | "inactive";
+    is_exclusive?: boolean;
+    search?: string;
+    sort_by?: string;
+    sort_order?: "asc" | "desc";
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal;
+  },
 ): Promise<PaginatedResponse<AdminGroup>> {
-  const { data } = await apiClient.get<PaginatedResponse<AdminGroup>>('/admin/groups', {
-    params: {
-      page,
-      page_size: pageSize,
-      ...filters
+  const { data } = await apiClient.get<PaginatedResponse<AdminGroup>>(
+    "/admin/groups",
+    {
+      params: {
+        page,
+        page_size: pageSize,
+        ...filters,
+      },
+      signal: options?.signal,
     },
-    signal: options?.signal
-  })
-  return data
+  );
+  return data;
 }
 
 /**
@@ -60,10 +63,10 @@ export async function list(
  * @returns List of all active groups
  */
 export async function getAll(platform?: GroupPlatform): Promise<AdminGroup[]> {
-  const { data } = await apiClient.get<AdminGroup[]>('/admin/groups/all', {
-    params: platform ? { platform } : undefined
-  })
-  return data
+  const { data } = await apiClient.get<AdminGroup[]>("/admin/groups/all", {
+    params: platform ? { platform } : undefined,
+  });
+  return data;
 }
 
 /**
@@ -71,10 +74,10 @@ export async function getAll(platform?: GroupPlatform): Promise<AdminGroup[]> {
  * that admins can filter users whose keys are still bound to a now-disabled group.
  */
 export async function getAllIncludingInactive(): Promise<AdminGroup[]> {
-  const { data } = await apiClient.get<AdminGroup[]>('/admin/groups/all', {
-    params: { include_inactive: true }
-  })
-  return data
+  const { data } = await apiClient.get<AdminGroup[]>("/admin/groups/all", {
+    params: { include_inactive: true },
+  });
+  return data;
 }
 
 /**
@@ -82,14 +85,18 @@ export async function getAllIncludingInactive(): Promise<AdminGroup[]> {
  * @param platform - Platform to filter by
  * @returns List of groups for the specified platform
  */
-export async function getByPlatform(platform: GroupPlatform): Promise<AdminGroup[]> {
-  return getAll(platform)
+export async function getByPlatform(
+  platform: GroupPlatform,
+): Promise<AdminGroup[]> {
+  return getAll(platform);
 }
 
 /** 获取当前 Sub2API 服务端的 Live 运行环境能力。 */
 export async function getLiveCapability(): Promise<LiveCapability> {
-  const { data } = await apiClient.get<LiveCapability>('/admin/groups/live-capability')
-  return data
+  const { data } = await apiClient.get<LiveCapability>(
+    "/admin/groups/live-capability",
+  );
+  return data;
 }
 
 /**
@@ -98,8 +105,8 @@ export async function getLiveCapability(): Promise<LiveCapability> {
  * @returns Group details
  */
 export async function getById(id: number): Promise<AdminGroup> {
-  const { data } = await apiClient.get<AdminGroup>(`/admin/groups/${id}`)
-  return data
+  const { data } = await apiClient.get<AdminGroup>(`/admin/groups/${id}`);
+  return data;
 }
 
 /**
@@ -108,15 +115,15 @@ export async function getById(id: number): Promise<AdminGroup> {
  */
 export async function getModelAllowlistCandidates(
   id: number,
-  platform?: GroupPlatform
+  platform?: GroupPlatform,
 ): Promise<string[]> {
   const { data } = await apiClient.get<{ models: string[] }>(
     `/admin/groups/${id}/model-allowlist-candidates`,
     {
-      params: platform ? { platform } : undefined
-    }
-  )
-  return data.models || []
+      params: platform ? { platform } : undefined,
+    },
+  );
+  return data.models || [];
 }
 
 /**
@@ -124,9 +131,11 @@ export async function getModelAllowlistCandidates(
  * @param groupData - Group data
  * @returns Created group
  */
-export async function create(groupData: CreateGroupRequest): Promise<AdminGroup> {
-  const { data } = await apiClient.post<AdminGroup>('/admin/groups', groupData)
-  return data
+export async function create(
+  groupData: CreateGroupRequest,
+): Promise<AdminGroup> {
+  const { data } = await apiClient.post<AdminGroup>("/admin/groups", groupData);
+  return data;
 }
 
 /**
@@ -134,79 +143,90 @@ export async function create(groupData: CreateGroupRequest): Promise<AdminGroup>
  * list response is preserved. Keep the operation key after ambiguous failures
  * so a retry replays the original operation instead of creating another group.
  */
-const duplicateOperationKeys = new Map<string, string>()
+const duplicateOperationKeys = new Map<string, string>();
 
 interface DuplicateOperationScope {
-  adminID: string
-  key: string
+  adminID: string;
+  key: string;
 }
 
 function getCurrentAdminID(): string | null {
   try {
-    const rawUser = globalThis.localStorage?.getItem('auth_user')
-    if (!rawUser) return null
+    const rawUser = globalThis.localStorage?.getItem("auth_user");
+    if (!rawUser) return null;
 
-    const user: unknown = JSON.parse(rawUser)
-    if (typeof user !== 'object' || user === null) return null
+    const user: unknown = JSON.parse(rawUser);
+    if (typeof user !== "object" || user === null) return null;
 
-    const id = (user as { id?: unknown }).id
-    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null
-    return String(id)
+    const id = (user as { id?: unknown }).id;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)
+      return null;
+    return String(id);
   } catch {
-    return null
+    return null;
   }
 }
 
 function duplicateOperationScope(id: number): DuplicateOperationScope | null {
-  const adminID = getCurrentAdminID()
-  if (!adminID) return null
+  const adminID = getCurrentAdminID();
+  if (!adminID) return null;
 
   return {
     adminID,
-    key: `sub2api:admin:group-duplicate:${adminID}:${id}`
-  }
+    key: `sub2api:admin:group-duplicate:${adminID}:${id}`,
+  };
 }
 
 function getStoredDuplicateOperationKey(storageKey: string): string | null {
   try {
-    return globalThis.sessionStorage?.getItem(storageKey) ?? null
+    return globalThis.sessionStorage?.getItem(storageKey) ?? null;
   } catch {
-    return null
+    return null;
   }
 }
 
-function storeDuplicateOperationKey(storageKey: string, key: string | null): void {
+function storeDuplicateOperationKey(
+  storageKey: string,
+  key: string | null,
+): void {
   try {
-    if (key) globalThis.sessionStorage?.setItem(storageKey, key)
-    else globalThis.sessionStorage?.removeItem(storageKey)
+    if (key) globalThis.sessionStorage?.setItem(storageKey, key);
+    else globalThis.sessionStorage?.removeItem(storageKey);
   } catch {
     // In-memory retry protection still works when browser storage is unavailable.
   }
 }
 
 export async function duplicate(id: number): Promise<AdminGroup> {
-  const scope = duplicateOperationScope(id)
+  const scope = duplicateOperationScope(id);
   let idempotencyKey = scope
-    ? duplicateOperationKeys.get(scope.key) ?? getStoredDuplicateOperationKey(scope.key)
-    : null
+    ? (duplicateOperationKeys.get(scope.key) ??
+      getStoredDuplicateOperationKey(scope.key))
+    : null;
   if (!idempotencyKey) {
-    const requestID = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    idempotencyKey = `group-duplicate-${scope?.adminID ?? 'unknown-admin'}-${id}-${requestID}`
+    const requestID =
+      globalThis.crypto?.randomUUID?.() ??
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    idempotencyKey = `group-duplicate-${scope?.adminID ?? "unknown-admin"}-${id}-${requestID}`;
   }
   if (scope) {
-    duplicateOperationKeys.set(scope.key, idempotencyKey)
-    storeDuplicateOperationKey(scope.key, idempotencyKey)
+    duplicateOperationKeys.set(scope.key, idempotencyKey);
+    storeDuplicateOperationKey(scope.key, idempotencyKey);
   }
 
-  const { data } = await apiClient.post<AdminGroup>(`/admin/groups/${id}/duplicate`, undefined, {
-    headers: { 'Idempotency-Key': idempotencyKey }
-  })
+  const { data } = await apiClient.post<AdminGroup>(
+    `/admin/groups/${id}/duplicate`,
+    undefined,
+    {
+      headers: { "Idempotency-Key": idempotencyKey },
+    },
+  );
 
   if (scope) {
-    duplicateOperationKeys.delete(scope.key)
-    storeDuplicateOperationKey(scope.key, null)
+    duplicateOperationKeys.delete(scope.key);
+    storeDuplicateOperationKey(scope.key, null);
   }
-  return data
+  return data;
 }
 
 /**
@@ -215,9 +235,15 @@ export async function duplicate(id: number): Promise<AdminGroup> {
  * @param updates - Fields to update
  * @returns Updated group
  */
-export async function update(id: number, updates: UpdateGroupRequest): Promise<AdminGroup> {
-  const { data } = await apiClient.put<AdminGroup>(`/admin/groups/${id}`, updates)
-  return data
+export async function update(
+  id: number,
+  updates: UpdateGroupRequest,
+): Promise<AdminGroup> {
+  const { data } = await apiClient.put<AdminGroup>(
+    `/admin/groups/${id}`,
+    updates,
+  );
+  return data;
 }
 
 /**
@@ -226,8 +252,10 @@ export async function update(id: number, updates: UpdateGroupRequest): Promise<A
  * @returns Success confirmation
  */
 export async function deleteGroup(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/groups/${id}`)
-  return data
+  const { data } = await apiClient.delete<{ message: string }>(
+    `/admin/groups/${id}`,
+  );
+  return data;
 }
 
 /**
@@ -236,8 +264,11 @@ export async function deleteGroup(id: number): Promise<{ message: string }> {
  * @param status - New status
  * @returns Updated group
  */
-export async function toggleStatus(id: number, status: 'active' | 'inactive'): Promise<AdminGroup> {
-  return update(id, { status })
+export async function toggleStatus(
+  id: number,
+  status: "active" | "inactive",
+): Promise<AdminGroup> {
+  return update(id, { status });
 }
 
 /**
@@ -246,18 +277,18 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
  * @returns Group usage statistics
  */
 export async function getStats(id: number): Promise<{
-  total_api_keys: number
-  active_api_keys: number
-  total_requests: number
-  total_cost: number
+  total_api_keys: number;
+  active_api_keys: number;
+  total_requests: number;
+  total_cost: number;
 }> {
   const { data } = await apiClient.get<{
-    total_api_keys: number
-    active_api_keys: number
-    total_requests: number
-    total_cost: number
-  }>(`/admin/groups/${id}/stats`)
-  return data
+    total_api_keys: number;
+    active_api_keys: number;
+    total_requests: number;
+    total_cost: number;
+  }>(`/admin/groups/${id}/stats`);
+  return data;
 }
 
 /**
@@ -270,74 +301,81 @@ export async function getStats(id: number): Promise<{
 export async function getGroupApiKeys(
   id: number,
   page: number = 1,
-  pageSize: number = 20
+  pageSize: number = 20,
 ): Promise<PaginatedResponse<any>> {
-  const { data } = await apiClient.get<PaginatedResponse<any>>(`/admin/groups/${id}/api-keys`, {
-    params: { page, page_size: pageSize }
-  })
-  return data
+  const { data } = await apiClient.get<PaginatedResponse<any>>(
+    `/admin/groups/${id}/api-keys`,
+    {
+      params: { page, page_size: pageSize },
+    },
+  );
+  return data;
 }
 
-export async function listCompositeRoutes(id: number): Promise<CompositeModelRoute[]> {
-  const { data } = await apiClient.get<CompositeModelRoute[]>(`/admin/groups/${id}/composite-routes`)
-  return data
+export async function listCompositeRoutes(
+  id: number,
+): Promise<CompositeModelRoute[]> {
+  const { data } = await apiClient.get<CompositeModelRoute[]>(
+    `/admin/groups/${id}/composite-routes`,
+  );
+  return data;
 }
 
 export async function createCompositeRoute(
   id: number,
-  route: CompositeModelRouteInput
+  route: CompositeModelRouteInput,
 ): Promise<CompositeModelRoute> {
   const { data } = await apiClient.post<CompositeModelRoute>(
     `/admin/groups/${id}/composite-routes`,
-    route
-  )
-  return data
+    route,
+  );
+  return data;
 }
 
 export async function updateCompositeRoute(
   id: number,
   routeId: number,
-  route: CompositeModelRouteInput
+  route: CompositeModelRouteInput,
 ): Promise<CompositeModelRoute> {
   const { data } = await apiClient.put<CompositeModelRoute>(
     `/admin/groups/${id}/composite-routes/${routeId}`,
-    route
-  )
-  return data
+    route,
+  );
+  return data;
 }
 
 export async function deleteCompositeRoute(
   id: number,
-  routeId: number
+  routeId: number,
 ): Promise<{ message: string }> {
   const { data } = await apiClient.delete<{ message: string }>(
-    `/admin/groups/${id}/composite-routes/${routeId}`
-  )
-  return data
+    `/admin/groups/${id}/composite-routes/${routeId}`,
+  );
+  return data;
 }
 
 export async function previewCompositeRoute(
   id: number,
-  request: CompositeRoutePreviewRequest
+  request: CompositeRoutePreviewRequest,
 ): Promise<CompositeRouteDecision> {
   const { data } = await apiClient.post<CompositeRouteDecision>(
     `/admin/groups/${id}/composite-routes/preview`,
-    request
-  )
-  return data
+    request,
+  );
+  return data;
 }
 
 /**
  * Rate multiplier entry for a user in a group
  */
 export interface GroupRateMultiplierEntry {
-  user_id: number
-  user_name: string
-  user_email: string
-  user_notes: string
-  user_status: string
-  rate_multiplier?: number | null
-  rpm_override?: number | null
+  user_id: number;
+  user_name: string;
+  user_email: string;
+  user_notes: string;
+  user_status: string;
+  rate_multiplier?: number | null;
+  rpm_override?: number | null;
 }
 
 /**
@@ -345,11 +383,13 @@ export interface GroupRateMultiplierEntry {
  * @param id - Group ID
  * @returns List of user rate multiplier entries
  */
-export async function getGroupRateMultipliers(id: number): Promise<GroupRateMultiplierEntry[]> {
+export async function getGroupRateMultipliers(
+  id: number,
+): Promise<GroupRateMultiplierEntry[]> {
   const { data } = await apiClient.get<GroupRateMultiplierEntry[]>(
-    `/admin/groups/${id}/rate-multipliers`
-  )
-  return data
+    `/admin/groups/${id}/rate-multipliers`,
+  );
+  return data;
 }
 
 /**
@@ -358,12 +398,15 @@ export async function getGroupRateMultipliers(id: number): Promise<GroupRateMult
  * @returns Success confirmation
  */
 export async function updateSortOrder(
-  updates: Array<{ id: number; sort_order: number }>
+  updates: Array<{ id: number; sort_order: number }>,
 ): Promise<{ message: string }> {
-  const { data } = await apiClient.put<{ message: string }>('/admin/groups/sort-order', {
-    updates
-  })
-  return data
+  const { data } = await apiClient.put<{ message: string }>(
+    "/admin/groups/sort-order",
+    {
+      updates,
+    },
+  );
+  return data;
 }
 
 /**
@@ -371,9 +414,13 @@ export async function updateSortOrder(
  * @param id - Group ID
  * @returns Success confirmation
  */
-export async function clearGroupRateMultipliers(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/groups/${id}/rate-multipliers`)
-  return data
+export async function clearGroupRateMultipliers(
+  id: number,
+): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(
+    `/admin/groups/${id}/rate-multipliers`,
+  );
+  return data;
 }
 
 /**
@@ -382,44 +429,46 @@ export async function clearGroupRateMultipliers(id: number): Promise<{ message: 
  */
 export async function batchSetGroupRateMultipliers(
   id: number,
-  entries: Array<{ user_id: number; rate_multiplier: number }>
+  entries: Array<{ user_id: number; rate_multiplier: number }>,
 ): Promise<{ message: string }> {
   const { data } = await apiClient.put<{ message: string }>(
     `/admin/groups/${id}/rate-multipliers`,
-    { entries }
-  )
-  return data
+    { entries },
+  );
+  return data;
 }
 
 /**
  * RPM override entry for a user in a group
  */
 export interface GroupRPMOverrideEntry {
-  user_id: number
-  user_name: string
-  user_email: string
-  user_notes: string
-  user_status: string
-  rpm_override: number
+  user_id: number;
+  user_name: string;
+  user_email: string;
+  user_notes: string;
+  user_status: string;
+  rpm_override: number;
 }
 
 /**
  * Get RPM overrides for users in a group (subset of rate-multipliers endpoint).
  */
-export async function getGroupRPMOverrides(id: number): Promise<GroupRPMOverrideEntry[]> {
+export async function getGroupRPMOverrides(
+  id: number,
+): Promise<GroupRPMOverrideEntry[]> {
   const { data } = await apiClient.get<GroupRateMultiplierEntry[]>(
-    `/admin/groups/${id}/rate-multipliers`
-  )
+    `/admin/groups/${id}/rate-multipliers`,
+  );
   return data
-    .filter(e => e.rpm_override != null)
-    .map(e => ({
+    .filter((e) => e.rpm_override != null)
+    .map((e) => ({
       user_id: e.user_id,
       user_name: e.user_name,
       user_email: e.user_email,
       user_notes: e.user_notes,
       user_status: e.user_status,
-      rpm_override: e.rpm_override as number
-    }))
+      rpm_override: e.rpm_override as number,
+    }));
 }
 
 /**
@@ -428,21 +477,25 @@ export async function getGroupRPMOverrides(id: number): Promise<GroupRPMOverride
  */
 export async function batchSetGroupRPMOverrides(
   id: number,
-  entries: Array<{ user_id: number; rpm_override: number }>
+  entries: Array<{ user_id: number; rpm_override: number }>,
 ): Promise<{ message: string }> {
   const { data } = await apiClient.put<{ message: string }>(
     `/admin/groups/${id}/rpm-overrides`,
-    { entries }
-  )
-  return data
+    { entries },
+  );
+  return data;
 }
 
 /**
  * Clear all RPM overrides for a group (preserves rate_multiplier).
  */
-export async function clearGroupRPMOverrides(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/groups/${id}/rpm-overrides`)
-  return data
+export async function clearGroupRPMOverrides(
+  id: number,
+): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(
+    `/admin/groups/${id}/rpm-overrides`,
+  );
+  return data;
 }
 
 /**
@@ -450,24 +503,50 @@ export async function clearGroupRPMOverrides(id: number): Promise<{ message: str
  * @returns Array of group usage summaries
  */
 export async function getUsageSummary(): Promise<
-  { group_id: number; today_cost: number; yesterday_cost: number; total_cost: number }[]
+  {
+    group_id: number;
+    today_cost: number;
+    yesterday_cost: number;
+    total_cost: number;
+  }[]
 > {
   const { data } = await apiClient.get<
-    { group_id: number; today_cost: number; yesterday_cost: number; total_cost: number }[]
-  >('/admin/groups/usage-summary')
-  return data
+    {
+      group_id: number;
+      today_cost: number;
+      yesterday_cost: number;
+      total_cost: number;
+    }[]
+  >("/admin/groups/usage-summary");
+  return data;
 }
 
 /**
  * Get capacity summary (concurrency/sessions/RPM) for all active groups
  */
 export async function getCapacitySummary(): Promise<
-  { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
+  {
+    group_id: number;
+    concurrency_used: number;
+    concurrency_max: number;
+    sessions_used: number;
+    sessions_max: number;
+    rpm_used: number;
+    rpm_max: number;
+  }[]
 > {
   const { data } = await apiClient.get<
-    { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
-  >('/admin/groups/capacity-summary')
-  return data
+    {
+      group_id: number;
+      concurrency_used: number;
+      concurrency_max: number;
+      sessions_used: number;
+      sessions_max: number;
+      rpm_used: number;
+      rpm_max: number;
+    }[]
+  >("/admin/groups/capacity-summary");
+  return data;
 }
 
 export const groupsAPI = {
@@ -498,7 +577,7 @@ export const groupsAPI = {
   batchSetGroupRPMOverrides,
   updateSortOrder,
   getUsageSummary,
-  getCapacitySummary
-}
+  getCapacitySummary,
+};
 
-export default groupsAPI
+export default groupsAPI;

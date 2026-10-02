@@ -7,9 +7,13 @@
       class="!hidden w-full table-fixed border-collapse text-sm lg:!table"
     >
       <thead>
-        <tr class="border-b border-gray-100 bg-gray-50/50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:border-dark-700 dark:bg-dark-800/50 dark:text-gray-400">
+        <tr
+          class="border-b border-gray-100 bg-gray-50/50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:border-dark-700 dark:bg-dark-800/50 dark:text-gray-400"
+        >
           <th class="w-[180px] px-4 py-3 text-center">{{ columns.name }}</th>
-          <th class="w-[200px] px-4 py-3 text-left">{{ columns.description }}</th>
+          <th class="w-[200px] px-4 py-3 text-left">
+            {{ columns.description }}
+          </th>
           <th class="w-[140px] px-4 py-3 text-left">{{ columns.platform }}</th>
           <th class="px-4 py-3 text-left">{{ columns.groups }}</th>
           <th class="px-4 py-3 text-left">{{ columns.supportedModels }}</th>
@@ -18,15 +22,25 @@
       <tbody v-if="loading">
         <tr>
           <td colspan="5" class="py-10 text-center">
-            <Icon name="refresh" size="lg" class="inline-block animate-spin text-gray-400" />
+            <Icon
+              name="refresh"
+              size="lg"
+              class="inline-block animate-spin text-gray-400"
+            />
           </td>
         </tr>
       </tbody>
       <tbody v-else-if="rows.length === 0">
         <tr>
           <td colspan="5" class="py-12 text-center">
-            <Icon name="inbox" size="xl" class="mx-auto mb-3 h-12 w-12 text-gray-400" />
-            <p class="text-sm text-gray-500 dark:text-gray-400">{{ emptyLabel }}</p>
+            <Icon
+              name="inbox"
+              size="xl"
+              class="mx-auto mb-3 h-12 w-12 text-gray-400"
+            />
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              {{ emptyLabel }}
+            </p>
           </td>
         </tr>
       </tbody>
@@ -42,7 +56,9 @@
           v-for="(section, secIdx) in channel.platforms"
           :key="`${channel.name}-${section.platform}`"
           class="transition-colors hover:bg-gray-50/40 dark:hover:bg-dark-800/40"
-          :class="{ 'border-t border-gray-100/70 dark:border-dark-700/50': secIdx > 0 }"
+          :class="{
+            'border-t border-gray-100/70 dark:border-dark-700/50': secIdx > 0,
+          }"
         >
           <!-- 渠道名：只在第一行渲染并用 rowspan 纵向合并 -->
           <td
@@ -59,7 +75,9 @@
             :rowspan="channel.platforms.length"
             class="px-4 py-3 align-middle text-xs text-gray-500 dark:text-gray-400"
           >
-            <template v-if="channel.description">{{ channel.description }}</template>
+            <template v-if="channel.description">{{
+              channel.description
+            }}</template>
             <span v-else class="text-gray-400">-</span>
           </td>
 
@@ -71,7 +89,10 @@
                 platformBadgeClass(section.platform),
               ]"
             >
-              <PlatformIcon :platform="section.platform as GroupPlatform" size="xs" />
+              <PlatformIcon
+                :platform="section.platform as GroupPlatform"
+                size="xs"
+              />
               {{ section.platform }}
             </span>
           </td>
@@ -88,7 +109,7 @@
                   :title="t('availableChannels.exclusiveTooltip')"
                 >
                   <Icon name="shield" size="xs" class="h-3 w-3" />
-                  {{ t('availableChannels.exclusive') }}
+                  {{ t("availableChannels.exclusive") }}
                 </span>
                 <div
                   v-for="g in exclusiveGroups(section)"
@@ -98,7 +119,9 @@
                   <GroupBadge
                     :name="g.name"
                     :platform="g.platform as GroupPlatform"
-                    :subscription-type="(g.subscription_type || 'standard') as SubscriptionType"
+                    :subscription-type="
+                      (g.subscription_type || 'standard') as SubscriptionType
+                    "
                     :rate-multiplier="g.rate_multiplier"
                     :user-rate-multiplier="userGroupRates[g.id] ?? null"
                     always-show-rate
@@ -122,7 +145,7 @@
                   :title="t('availableChannels.publicTooltip')"
                 >
                   <Icon name="globe" size="xs" class="h-3 w-3" />
-                  {{ t('availableChannels.public') }}
+                  {{ t("availableChannels.public") }}
                 </span>
                 <div
                   v-for="g in publicGroups(section)"
@@ -132,7 +155,9 @@
                   <GroupBadge
                     :name="g.name"
                     :platform="g.platform as GroupPlatform"
-                    :subscription-type="(g.subscription_type || 'standard') as SubscriptionType"
+                    :subscription-type="
+                      (g.subscription_type || 'standard') as SubscriptionType
+                    "
                     :rate-multiplier="g.rate_multiplier"
                     :user-rate-multiplier="userGroupRates[g.id] ?? null"
                     always-show-rate
@@ -147,7 +172,11 @@
                   </span>
                 </div>
               </div>
-              <span v-if="section.groups.length === 0" class="text-xs text-gray-400">-</span>
+              <span
+                v-if="section.groups.length === 0"
+                class="text-xs text-gray-400"
+                >-</span
+              >
             </div>
           </td>
 
@@ -163,7 +192,10 @@
                 :show-platform="false"
                 :platform-hint="section.platform"
               />
-              <span v-if="section.supported_models.length === 0" class="text-xs text-gray-400">
+              <span
+                v-if="section.supported_models.length === 0"
+                class="text-xs text-gray-400"
+              >
                 {{ noModelsLabel }}
               </span>
             </div>
@@ -172,12 +204,31 @@
       </tbody>
     </table>
 
-    <div data-testid="mobile-channels" class="w-full min-w-0 overflow-x-hidden lg:hidden">
-      <div v-if="loading" data-testid="mobile-loading" class="py-10 text-center">
-        <Icon name="refresh" size="lg" class="inline-block animate-spin text-gray-400" />
+    <div
+      data-testid="mobile-channels"
+      class="w-full min-w-0 overflow-x-hidden lg:hidden"
+    >
+      <div
+        v-if="loading"
+        data-testid="mobile-loading"
+        class="py-10 text-center"
+      >
+        <Icon
+          name="refresh"
+          size="lg"
+          class="inline-block animate-spin text-gray-400"
+        />
       </div>
-      <div v-else-if="rows.length === 0" data-testid="mobile-empty" class="py-12 text-center">
-        <Icon name="inbox" size="xl" class="mx-auto mb-3 h-12 w-12 text-gray-400" />
+      <div
+        v-else-if="rows.length === 0"
+        data-testid="mobile-empty"
+        class="py-12 text-center"
+      >
+        <Icon
+          name="inbox"
+          size="xl"
+          class="mx-auto mb-3 h-12 w-12 text-gray-400"
+        />
         <p class="text-sm text-gray-500 dark:text-gray-400">{{ emptyLabel }}</p>
       </div>
       <section
@@ -187,11 +238,15 @@
         class="border-b-2 border-gray-200 px-4 py-4 last:border-b-0 dark:border-dark-600"
       >
         <header class="mb-3 min-w-0">
-          <h3 class="break-words text-sm font-semibold text-gray-900 dark:text-white">
+          <h3
+            class="break-words text-sm font-semibold text-gray-900 dark:text-white"
+          >
             {{ channel.name }}
           </h3>
-          <p class="mt-1 break-words text-xs leading-5 text-gray-500 dark:text-gray-400">
-            {{ channel.description || '-' }}
+          <p
+            class="mt-1 break-words text-xs leading-5 text-gray-500 dark:text-gray-400"
+          >
+            {{ channel.description || "-" }}
           </p>
         </header>
 
@@ -207,13 +262,18 @@
                 platformBadgeClass(section.platform),
               ]"
             >
-              <PlatformIcon :platform="section.platform as GroupPlatform" size="xs" />
+              <PlatformIcon
+                :platform="section.platform as GroupPlatform"
+                size="xs"
+              />
               {{ section.platform }}
             </span>
 
             <dl class="mt-3 space-y-3">
               <div class="min-w-0">
-                <dt class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                <dt
+                  class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+                >
                   {{ columns.groups }}
                 </dt>
                 <dd class="flex min-w-0 flex-col gap-2">
@@ -226,7 +286,7 @@
                       :title="t('availableChannels.exclusiveTooltip')"
                     >
                       <Icon name="shield" size="xs" class="h-3 w-3" />
-                      {{ t('availableChannels.exclusive') }}
+                      {{ t("availableChannels.exclusive") }}
                     </span>
                     <div
                       v-for="g in exclusiveGroups(section)"
@@ -237,7 +297,10 @@
                         class="max-w-full"
                         :name="g.name"
                         :platform="g.platform as GroupPlatform"
-                        :subscription-type="(g.subscription_type || 'standard') as SubscriptionType"
+                        :subscription-type="
+                          (g.subscription_type ||
+                            'standard') as SubscriptionType
+                        "
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="userGroupRates[g.id] ?? null"
                         always-show-rate
@@ -261,7 +324,7 @@
                       :title="t('availableChannels.publicTooltip')"
                     >
                       <Icon name="globe" size="xs" class="h-3 w-3" />
-                      {{ t('availableChannels.public') }}
+                      {{ t("availableChannels.public") }}
                     </span>
                     <div
                       v-for="g in publicGroups(section)"
@@ -272,7 +335,10 @@
                         class="max-w-full"
                         :name="g.name"
                         :platform="g.platform as GroupPlatform"
-                        :subscription-type="(g.subscription_type || 'standard') as SubscriptionType"
+                        :subscription-type="
+                          (g.subscription_type ||
+                            'standard') as SubscriptionType
+                        "
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="userGroupRates[g.id] ?? null"
                         always-show-rate
@@ -287,12 +353,18 @@
                       </span>
                     </div>
                   </div>
-                  <span v-if="section.groups.length === 0" class="text-xs text-gray-400">-</span>
+                  <span
+                    v-if="section.groups.length === 0"
+                    class="text-xs text-gray-400"
+                    >-</span
+                  >
                 </dd>
               </div>
 
               <div class="min-w-0">
-                <dt class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                <dt
+                  class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+                >
                   {{ columns.supportedModels }}
                 </dt>
                 <dd class="flex min-w-0 flex-wrap gap-1">
@@ -306,7 +378,10 @@
                     :show-platform="false"
                     :platform-hint="section.platform"
                   />
-                  <span v-if="section.supported_models.length === 0" class="text-xs text-gray-400">
+                  <span
+                    v-if="section.supported_models.length === 0"
+                    class="text-xs text-gray-400"
+                  >
                     {{ noModelsLabel }}
                   </span>
                 </dd>
@@ -320,60 +395,78 @@
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
-import PlatformIcon from '@/components/common/PlatformIcon.vue'
-import GroupBadge from '@/components/common/GroupBadge.vue'
-import SupportedModelChip from './SupportedModelChip.vue'
-import type { UserAvailableChannel, UserAvailableGroup, UserChannelPlatformSection } from '@/api/channels'
-import type { GroupPlatform, SubscriptionType } from '@/types'
-import { platformBadgeClass } from '@/utils/platformColors'
-import { useAppStore } from '@/stores/app'
-import { hasPeakRate as groupHasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { useI18n } from "vue-i18n";
+import Icon from "@/components/icons/Icon.vue";
+import PlatformIcon from "@/components/common/PlatformIcon.vue";
+import GroupBadge from "@/components/common/GroupBadge.vue";
+import SupportedModelChip from "./SupportedModelChip.vue";
+import type {
+  UserAvailableChannel,
+  UserAvailableGroup,
+  UserChannelPlatformSection,
+} from "@/api/channels";
+import type { GroupPlatform, SubscriptionType } from "@/types";
+import { platformBadgeClass } from "@/utils/platformColors";
+import { useAppStore } from "@/stores/app";
+import {
+  hasPeakRate as groupHasPeakRate,
+  formatPeakRateWindow,
+  serverTimezoneLabel,
+} from "@/utils/peak-rate";
 
 const props = defineProps<{
   columns: {
-    name: string
-    description: string
-    platform: string
-    groups: string
-    supportedModels: string
-  }
-  rows: UserAvailableChannel[]
-  loading: boolean
-  pricingKeyPrefix: string
-  noPricingLabel: string
-  noModelsLabel: string
-  emptyLabel: string
+    name: string;
+    description: string;
+    platform: string;
+    groups: string;
+    supportedModels: string;
+  };
+  rows: UserAvailableChannel[];
+  loading: boolean;
+  pricingKeyPrefix: string;
+  noPricingLabel: string;
+  noModelsLabel: string;
+  emptyLabel: string;
   /** 用户专属倍率（group_id → multiplier）；无专属时由 GroupBadge 仅显示默认倍率。 */
-  userGroupRates: Record<number, number>
-}>()
+  userGroupRates: Record<number, number>;
+}>();
 
 // Suppress unused warning — props is accessed via template automatically but
 // the explicit reference here keeps the linter from flagging userGroupRates.
-void props.userGroupRates
+void props.userGroupRates;
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-function exclusiveGroups(section: UserChannelPlatformSection): UserAvailableGroup[] {
-  return section.groups.filter((g) => g.is_exclusive)
+function exclusiveGroups(
+  section: UserChannelPlatformSection,
+): UserAvailableGroup[] {
+  return section.groups.filter((g) => g.is_exclusive);
 }
 
-function publicGroups(section: UserChannelPlatformSection): UserAvailableGroup[] {
-  return section.groups.filter((g) => !g.is_exclusive)
+function publicGroups(
+  section: UserChannelPlatformSection,
+): UserAvailableGroup[] {
+  return section.groups.filter((g) => !g.is_exclusive);
 }
 
-const appStore = useAppStore()
+const appStore = useAppStore();
 
 function hasPeakRate(group: UserAvailableGroup): boolean {
-  return groupHasPeakRate(group)
+  return groupHasPeakRate(group);
 }
 
 function peakRateLabel(group: UserAvailableGroup): string {
-  return formatPeakRateWindow(group, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
+  return formatPeakRateWindow(
+    group,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+  );
 }
 
 function peakRateTitle(group: UserAvailableGroup): string {
-  return t('common.peakRateTooltip', { window: peakRateLabel(group) }) + t('common.peakRateImageNote')
+  return (
+    t("common.peakRateTooltip", { window: peakRateLabel(group) }) +
+    t("common.peakRateImageNote")
+  );
 }
 </script>

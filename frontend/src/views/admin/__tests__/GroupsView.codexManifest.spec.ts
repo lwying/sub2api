@@ -138,14 +138,16 @@ const AppLayoutStub = defineComponent({
 });
 
 const TablePageLayoutStub = defineComponent({
-  template: '<section><slot name="filters" /><slot name="table" /><slot name="pagination" /></section>',
+  template:
+    '<section><slot name="filters" /><slot name="table" /><slot name="pagination" /></section>',
 });
 
 const DataTableStub = defineComponent({
   props: {
     data: { type: Array, default: () => [] },
   },
-  template: '<div><div v-if="data.length"><slot name="cell-actions" :row="data[0]" /></div></div>',
+  template:
+    '<div><div v-if="data.length"><slot name="cell-actions" :row="data[0]" /></div></div>',
 });
 
 const BaseDialogStub = defineComponent({
@@ -268,9 +270,9 @@ describe("GroupsView Codex manifest binding", () => {
 
     await wrapper.get('[data-testid="codex-manifest-enable"]').trigger("click");
     await flushPromises();
-    expect(wrapper.get('[data-testid="codex-manifest-value"]').text()).toContain(
-      '"enabled":true',
-    );
+    expect(
+      wrapper.get('[data-testid="codex-manifest-value"]').text(),
+    ).toContain('"enabled":true');
 
     await wrapper
       .get('[data-testid="codex-manifest-select-account"]')

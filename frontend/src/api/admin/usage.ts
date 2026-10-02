@@ -3,166 +3,171 @@
  * Handles admin-level usage logs and statistics retrieval
  */
 
-import { apiClient } from '../client'
-import type { AdminUsageLog, UsageQueryParams, PaginatedResponse, UsageRequestType } from '@/types'
-import type { EndpointStat } from '@/types'
+import { apiClient } from "../client";
+import type {
+  AdminUsageLog,
+  UsageQueryParams,
+  PaginatedResponse,
+  UsageRequestType,
+} from "@/types";
+import type { EndpointStat } from "@/types";
 
 // ==================== Types ====================
 
 export interface AdminUsageStatsResponse {
-  total_requests: number
-  total_input_tokens: number
-  total_output_tokens: number
-  total_cache_tokens: number
-  total_cache_creation_tokens: number
-  total_cache_read_tokens: number
-  total_tokens: number
-  total_cost: number
-  total_actual_cost: number
-  total_account_cost: number
-  average_duration_ms: number
-  endpoints?: EndpointStat[]
-  upstream_endpoints?: EndpointStat[]
-  endpoint_paths?: EndpointStat[]
+  total_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_tokens: number;
+  total_cache_creation_tokens: number;
+  total_cache_read_tokens: number;
+  total_tokens: number;
+  total_cost: number;
+  total_actual_cost: number;
+  total_account_cost: number;
+  average_duration_ms: number;
+  endpoints?: EndpointStat[];
+  upstream_endpoints?: EndpointStat[];
+  endpoint_paths?: EndpointStat[];
 }
 
 export interface SimpleUser {
-  id: number
-  email: string
-  deleted: boolean
+  id: number;
+  email: string;
+  deleted: boolean;
 }
 
 export interface SimpleApiKey {
-  id: number
-  name: string
-  user_id: number
+  id: number;
+  name: string;
+  user_id: number;
 }
 
 export interface UsageCleanupFilters {
-  start_time: string
-  end_time: string
-  user_id?: number
-  api_key_id?: number
-  account_id?: number
-  group_id?: number
-  model?: string | null
-  request_type?: UsageRequestType | null
-  stream?: boolean | null
-  billing_type?: number | null
+  start_time: string;
+  end_time: string;
+  user_id?: number;
+  api_key_id?: number;
+  account_id?: number;
+  group_id?: number;
+  model?: string | null;
+  request_type?: UsageRequestType | null;
+  stream?: boolean | null;
+  billing_type?: number | null;
 }
 
 export interface UsageCleanupTask {
-  id: number
-  status: string
-  filters: UsageCleanupFilters
-  created_by: number
-  deleted_rows: number
-  error_message?: string | null
-  canceled_by?: number | null
-  canceled_at?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-  created_at: string
-  updated_at: string
+  id: number;
+  status: string;
+  filters: UsageCleanupFilters;
+  created_by: number;
+  deleted_rows: number;
+  error_message?: string | null;
+  canceled_by?: number | null;
+  canceled_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CreateUsageCleanupTaskRequest {
-  start_date: string
-  end_date: string
-  user_id?: number
-  api_key_id?: number
-  account_id?: number
-  group_id?: number
-  model?: string | null
-  request_type?: UsageRequestType | null
-  stream?: boolean | null
-  billing_type?: number | null
-  timezone?: string
+  start_date: string;
+  end_date: string;
+  user_id?: number;
+  api_key_id?: number;
+  account_id?: number;
+  group_id?: number;
+  model?: string | null;
+  request_type?: UsageRequestType | null;
+  stream?: boolean | null;
+  billing_type?: number | null;
+  timezone?: string;
 }
 
 export interface RequestAuditEventSkeleton {
-  type: string
-  index: number
-  bytes: number
-  fingerprint?: string
-  truncated?: boolean
-  original?: number
-  original_bytes?: number
-  kept?: number
-  kept_bytes?: number
-  dropped?: number
-  dropped_bytes?: number
-  reason?: string
+  type: string;
+  index: number;
+  bytes: number;
+  fingerprint?: string;
+  truncated?: boolean;
+  original?: number;
+  original_bytes?: number;
+  kept?: number;
+  kept_bytes?: number;
+  dropped?: number;
+  dropped_bytes?: number;
+  reason?: string;
 }
 
 export interface RequestAuditProtocolFields {
-  stream?: boolean
-  thinking_type?: 'disabled' | 'enabled' | 'adaptive'
-  present_fields?: string[]
-  normalized_fields?: string[]
+  stream?: boolean;
+  thinking_type?: "disabled" | "enabled" | "adaptive";
+  present_fields?: string[];
+  normalized_fields?: string[];
 }
 
 export interface RequestAuditMetadata {
-  routes?: Record<string, string>
-  ids?: Record<string, string>
-  status?: Record<string, number>
-  bytes?: Record<string, number>
-  tokens?: Record<string, number>
-  protocol_fields?: RequestAuditProtocolFields
+  routes?: Record<string, string>;
+  ids?: Record<string, string>;
+  status?: Record<string, number>;
+  bytes?: Record<string, number>;
+  tokens?: Record<string, number>;
+  protocol_fields?: RequestAuditProtocolFields;
 }
 
 export interface RequestAuditAttempt {
-  account_id?: number
+  account_id?: number;
   /**
    * @deprecated The backend strips the raw model alias at the persistence boundary, so this
    * field is never populated. Render `model_fingerprint` instead and never display the raw alias.
    */
-  model?: string
+  model?: string;
   /**
    * Request-scoped HMAC digest of the model alias for this attempt (64 lowercase hex characters).
    * It is not reversible and cannot be correlated across requests or users, but equal aliases
    * within one logical request produce the same digest, so stages can be compared.
    */
-  model_fingerprint?: string
-  protocol?: string
-  stage?: string
-  wire_request_headers?: Record<string, unknown>
-  upstream_response_headers?: Record<string, unknown>
-  upstream_status?: number
-  request_payload_bytes?: number
-  response_payload_bytes?: number
-  response_read_complete?: boolean
+  model_fingerprint?: string;
+  protocol?: string;
+  stage?: string;
+  wire_request_headers?: Record<string, unknown>;
+  upstream_response_headers?: Record<string, unknown>;
+  upstream_status?: number;
+  request_payload_bytes?: number;
+  response_payload_bytes?: number;
+  response_read_complete?: boolean;
 }
 
 export interface RequestAudit {
-  usage_log_id: number
+  usage_log_id: number;
   /** Inbound/client headers only; upstream headers live on their attempt. */
-  headers?: Record<string, unknown>
-  events: RequestAuditEventSkeleton[]
-  attempts?: RequestAuditAttempt[]
-  capture_completeness?: string
-  capture_reason?: string
-  request_fingerprint?: string
-  fingerprint_key_version?: number
-  metadata?: RequestAuditMetadata
+  headers?: Record<string, unknown>;
+  events: RequestAuditEventSkeleton[];
+  attempts?: RequestAuditAttempt[];
+  capture_completeness?: string;
+  capture_reason?: string;
+  request_fingerprint?: string;
+  fingerprint_key_version?: number;
+  metadata?: RequestAuditMetadata;
 }
 
 export interface AdminUsageQueryParams extends UsageQueryParams {
-  user_id?: number
+  user_id?: number;
   /**
    * Exact usage record lookup (>0). Set when the page is opened from a linked request
    * Trace, which only knows the usage log id of the record it points at.
    */
-  usage_log_id?: number
-  exact_total?: boolean
-  billing_mode?: string
-  upstream_model_mismatch?: boolean
-  sort_by?: string
-  sort_order?: 'asc' | 'desc'
+  usage_log_id?: number;
+  exact_total?: boolean;
+  billing_mode?: string;
+  upstream_model_mismatch?: boolean;
+  sort_by?: string;
+  sort_order?: "asc" | "desc";
   // 错误请求 tab 专属筛选(仅传给错误列表接口;共用同一 filters 对象)
-  error_phase?: string | null
-  error_category?: string | null
-  status_code?: number | null
+  error_phase?: string | null;
+  error_category?: string | null;
+  status_code?: number | null;
 }
 
 // ==================== API Functions ====================
@@ -174,13 +179,16 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
  */
 export async function list(
   params: AdminUsageQueryParams,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<PaginatedResponse<AdminUsageLog>> {
-  const { data } = await apiClient.get<PaginatedResponse<AdminUsageLog>>('/admin/usage', {
-    params,
-    signal: options?.signal
-  })
-  return data
+  const { data } = await apiClient.get<PaginatedResponse<AdminUsageLog>>(
+    "/admin/usage",
+    {
+      params,
+      signal: options?.signal,
+    },
+  );
+  return data;
 }
 
 /**
@@ -189,25 +197,28 @@ export async function list(
  * @returns Usage statistics
  */
 export async function getStats(params: {
-  user_id?: number
-  api_key_id?: number
-  account_id?: number
-  group_id?: number
-  model?: string
-  request_type?: UsageRequestType
-  stream?: boolean
-  native_compaction_v2?: boolean | null
-  upstream_model_mismatch?: boolean
-  period?: string
-  start_date?: string
-  end_date?: string
-  timezone?: string
-  nocache?: number
+  user_id?: number;
+  api_key_id?: number;
+  account_id?: number;
+  group_id?: number;
+  model?: string;
+  request_type?: UsageRequestType;
+  stream?: boolean;
+  native_compaction_v2?: boolean | null;
+  upstream_model_mismatch?: boolean;
+  period?: string;
+  start_date?: string;
+  end_date?: string;
+  timezone?: string;
+  nocache?: number;
 }): Promise<AdminUsageStatsResponse> {
-  const { data } = await apiClient.get<AdminUsageStatsResponse>('/admin/usage/stats', {
-    params
-  })
-  return data
+  const { data } = await apiClient.get<AdminUsageStatsResponse>(
+    "/admin/usage/stats",
+    {
+      params,
+    },
+  );
+  return data;
 }
 
 /**
@@ -216,10 +227,13 @@ export async function getStats(params: {
  * @returns List of matching users (max 30)
  */
 export async function searchUsers(keyword: string): Promise<SimpleUser[]> {
-  const { data } = await apiClient.get<SimpleUser[]>('/admin/usage/search-users', {
-    params: { q: keyword }
-  })
-  return data
+  const { data } = await apiClient.get<SimpleUser[]>(
+    "/admin/usage/search-users",
+    {
+      params: { q: keyword },
+    },
+  );
+  return data;
 }
 
 /**
@@ -228,18 +242,24 @@ export async function searchUsers(keyword: string): Promise<SimpleUser[]> {
  * @param keyword - Optional keyword to search in key name
  * @returns List of matching API keys (max 30)
  */
-export async function searchApiKeys(userId?: number, keyword?: string): Promise<SimpleApiKey[]> {
-  const params: Record<string, unknown> = {}
+export async function searchApiKeys(
+  userId?: number,
+  keyword?: string,
+): Promise<SimpleApiKey[]> {
+  const params: Record<string, unknown> = {};
   if (userId !== undefined) {
-    params.user_id = userId
+    params.user_id = userId;
   }
   if (keyword) {
-    params.q = keyword
+    params.q = keyword;
   }
-  const { data } = await apiClient.get<SimpleApiKey[]>('/admin/usage/search-api-keys', {
-    params
-  })
-  return data
+  const { data } = await apiClient.get<SimpleApiKey[]>(
+    "/admin/usage/search-api-keys",
+    {
+      params,
+    },
+  );
+  return data;
 }
 
 /**
@@ -249,13 +269,16 @@ export async function searchApiKeys(userId?: number, keyword?: string): Promise<
  */
 export async function listCleanupTasks(
   params: { page?: number; page_size?: number },
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<PaginatedResponse<UsageCleanupTask>> {
-  const { data } = await apiClient.get<PaginatedResponse<UsageCleanupTask>>('/admin/usage/cleanup-tasks', {
-    params,
-    signal: options?.signal
-  })
-  return data
+  const { data } = await apiClient.get<PaginatedResponse<UsageCleanupTask>>(
+    "/admin/usage/cleanup-tasks",
+    {
+      params,
+      signal: options?.signal,
+    },
+  );
+  return data;
 }
 
 /**
@@ -263,20 +286,27 @@ export async function listCleanupTasks(
  * @param payload - Cleanup task parameters
  * @returns Created cleanup task
  */
-export async function createCleanupTask(payload: CreateUsageCleanupTaskRequest): Promise<UsageCleanupTask> {
-  const { data } = await apiClient.post<UsageCleanupTask>('/admin/usage/cleanup-tasks', payload)
-  return data
+export async function createCleanupTask(
+  payload: CreateUsageCleanupTaskRequest,
+): Promise<UsageCleanupTask> {
+  const { data } = await apiClient.post<UsageCleanupTask>(
+    "/admin/usage/cleanup-tasks",
+    payload,
+  );
+  return data;
 }
 
 /**
  * Cancel a usage cleanup task (admin only)
  * @param taskId - Task ID to cancel
  */
-export async function cancelCleanupTask(taskId: number): Promise<{ id: number; status: string }> {
+export async function cancelCleanupTask(
+  taskId: number,
+): Promise<{ id: number; status: string }> {
   const { data } = await apiClient.post<{ id: number; status: string }>(
-    `/admin/usage/cleanup-tasks/${taskId}/cancel`
-  )
-  return data
+    `/admin/usage/cleanup-tasks/${taskId}/cancel`,
+  );
+  return data;
 }
 
 /**
@@ -285,12 +315,15 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
  */
 export async function getForcedRequestAudit(
   id: number,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<RequestAudit> {
-  const { data } = await apiClient.get<RequestAudit>(`/admin/usage/${id}/request-audit/forced`, {
-    signal: options?.signal
-  })
-  return data
+  const { data } = await apiClient.get<RequestAudit>(
+    `/admin/usage/${id}/request-audit/forced`,
+    {
+      signal: options?.signal,
+    },
+  );
+  return data;
 }
 
 export const adminUsageAPI = {
@@ -301,7 +334,7 @@ export const adminUsageAPI = {
   listCleanupTasks,
   createCleanupTask,
   cancelCleanupTask,
-  getForcedRequestAudit
-}
+  getForcedRequestAudit,
+};
 
-export default adminUsageAPI
+export default adminUsageAPI;

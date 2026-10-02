@@ -3,7 +3,7 @@
  * Handles Two-Factor Authentication with Google Authenticator
  */
 
-import { apiClient } from './client'
+import { apiClient } from "./client";
 import type {
   TotpStatus,
   TotpSetupRequest,
@@ -11,16 +11,16 @@ import type {
   TotpEnableRequest,
   TotpEnableResponse,
   TotpDisableRequest,
-  TotpVerificationMethod
-} from '@/types'
+  TotpVerificationMethod,
+} from "@/types";
 
 /**
  * Get TOTP status for current user
  * @returns TOTP status including enabled state and feature availability
  */
 export async function getStatus(): Promise<TotpStatus> {
-  const { data } = await apiClient.get<TotpStatus>('/user/totp/status')
-  return data
+  const { data } = await apiClient.get<TotpStatus>("/user/totp/status");
+  return data;
 }
 
 /**
@@ -28,8 +28,10 @@ export async function getStatus(): Promise<TotpStatus> {
  * @returns Method ('email' or 'password') required for setup/disable
  */
 export async function getVerificationMethod(): Promise<TotpVerificationMethod> {
-  const { data } = await apiClient.get<TotpVerificationMethod>('/user/totp/verification-method')
-  return data
+  const { data } = await apiClient.get<TotpVerificationMethod>(
+    "/user/totp/verification-method",
+  );
+  return data;
 }
 
 /**
@@ -37,8 +39,10 @@ export async function getVerificationMethod(): Promise<TotpVerificationMethod> {
  * @returns Success response
  */
 export async function sendVerifyCode(): Promise<{ success: boolean }> {
-  const { data } = await apiClient.post<{ success: boolean }>('/user/totp/send-code')
-  return data
+  const { data } = await apiClient.post<{ success: boolean }>(
+    "/user/totp/send-code",
+  );
+  return data;
 }
 
 /**
@@ -46,9 +50,14 @@ export async function sendVerifyCode(): Promise<{ success: boolean }> {
  * @param request - Email code or password depending on verification method
  * @returns Setup response with secret, QR code URL, and setup token
  */
-export async function initiateSetup(request?: TotpSetupRequest): Promise<TotpSetupResponse> {
-  const { data } = await apiClient.post<TotpSetupResponse>('/user/totp/setup', request || {})
-  return data
+export async function initiateSetup(
+  request?: TotpSetupRequest,
+): Promise<TotpSetupResponse> {
+  const { data } = await apiClient.post<TotpSetupResponse>(
+    "/user/totp/setup",
+    request || {},
+  );
+  return data;
 }
 
 /**
@@ -56,9 +65,14 @@ export async function initiateSetup(request?: TotpSetupRequest): Promise<TotpSet
  * @param request - TOTP code and setup token
  * @returns Enable response with success status and enabled timestamp
  */
-export async function enable(request: TotpEnableRequest): Promise<TotpEnableResponse> {
-  const { data } = await apiClient.post<TotpEnableResponse>('/user/totp/enable', request)
-  return data
+export async function enable(
+  request: TotpEnableRequest,
+): Promise<TotpEnableResponse> {
+  const { data } = await apiClient.post<TotpEnableResponse>(
+    "/user/totp/enable",
+    request,
+  );
+  return data;
 }
 
 /**
@@ -66,17 +80,22 @@ export async function enable(request: TotpEnableRequest): Promise<TotpEnableResp
  * @param request - Email code or password depending on verification method
  * @returns Success response
  */
-export async function disable(request: TotpDisableRequest): Promise<{ success: boolean }> {
-  const { data } = await apiClient.post<{ success: boolean }>('/user/totp/disable', request)
-  return data
+export async function disable(
+  request: TotpDisableRequest,
+): Promise<{ success: boolean }> {
+  const { data } = await apiClient.post<{ success: boolean }>(
+    "/user/totp/disable",
+    request,
+  );
+  return data;
 }
 
 /**
  * Step-up verification response
  */
 export interface TotpStepUpResponse {
-  verified: boolean
-  expires_in: number
+  verified: boolean;
+  expires_in: number;
 }
 
 /**
@@ -85,8 +104,11 @@ export interface TotpStepUpResponse {
  * @param code - 6-digit TOTP code
  */
 export async function stepUp(code: string): Promise<TotpStepUpResponse> {
-  const { data } = await apiClient.post<TotpStepUpResponse>('/user/totp/step-up', { code })
-  return data
+  const { data } = await apiClient.post<TotpStepUpResponse>(
+    "/user/totp/step-up",
+    { code },
+  );
+  return data;
 }
 
 export const totpAPI = {
@@ -96,7 +118,7 @@ export const totpAPI = {
   initiateSetup,
   enable,
   disable,
-  stepUp
-}
+  stepUp,
+};
 
-export default totpAPI
+export default totpAPI;

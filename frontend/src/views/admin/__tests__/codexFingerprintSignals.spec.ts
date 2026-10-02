@@ -10,7 +10,11 @@ describe("codex fingerprint signals 行编解码", () => {
       '[{"type":"header_exact","match":["session-id","session_id"],"required":true}]',
     );
     expect(rows).toEqual([
-      { type: "header_exact", match: "session-id / session_id", required: true },
+      {
+        type: "header_exact",
+        match: "session-id / session_id",
+        required: true,
+      },
     ]);
   });
   it("序列化: / 合并 → 变体数组, required 透传", () => {

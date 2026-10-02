@@ -22,14 +22,7 @@ import {
 
 describe("groupsReasoningEffort", () => {
   it("provides fixed OpenAI choices to OpenAI and Composite groups", () => {
-    const expected = [
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ];
+    const expected = ["minimal", "low", "medium", "high", "xhigh", "max"];
     for (const platform of ["openai", "composite"] as const) {
       expect(
         reasoningEffortOptionsForPlatform(platform).map(
@@ -57,7 +50,14 @@ describe("groupsReasoningEffort", () => {
       reasoningEffortTargetOptionsForPlatform("anthropic").map(
         (option) => option.value,
       ),
-    ).toEqual(["low", "medium", "high", "xhigh", "max", reasoningEffortMappingDeny]);
+    ).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      reasoningEffortMappingDeny,
+    ]);
     expect(supportsReasoningEffortPolicyPlatform("anthropic")).toBe(true);
 
     for (const platform of ["gemini", "antigravity", "grok"] as const) {
@@ -92,7 +92,9 @@ describe("groupsReasoningEffort", () => {
       { from: "none", to: "low" },
     ]);
     expect(validateReasoningEffortMappings(rows, "openai")).toEqual({});
-    expect(normalizeReasoningEffortSourceForPlatform("composite", " NONE ")).toBe("none");
+    expect(
+      normalizeReasoningEffortSourceForPlatform("composite", " NONE "),
+    ).toBe("none");
 
     const invalidTarget = createReasoningEffortMappingRow({
       from: "low",
@@ -117,7 +119,9 @@ describe("groupsReasoningEffort", () => {
       reasoningEffortMappingDeny,
     );
     expect(normalizeReasoningEffortForPlatform("openai", "deny")).toBe("");
-    expect(normalizeReasoningEffortSourceForPlatform("openai", "deny")).toBe("");
+    expect(normalizeReasoningEffortSourceForPlatform("openai", "deny")).toBe(
+      "",
+    );
 
     const invalidSource = createReasoningEffortMappingRow({
       from: "deny",
@@ -230,7 +234,10 @@ describe("groupsReasoningEffort", () => {
 
   it("rejects duplicate source values case insensitively", () => {
     const first = createReasoningEffortMappingRow({ from: "MAX", to: "xhigh" });
-    const second = createReasoningEffortMappingRow({ from: " max ", to: "high" });
+    const second = createReasoningEffortMappingRow({
+      from: " max ",
+      to: "high",
+    });
 
     expect(validateReasoningEffortMappings([first, second])).toEqual({
       [first.id]: { duplicateScope: "duplicateScope" },
@@ -255,7 +262,9 @@ describe("groupsReasoningEffort", () => {
     });
     const global = createReasoningEffortMappingRow({ from: "max", to: "high" });
 
-    expect(validateReasoningEffortMappings([prefix, exact, global])).toEqual({});
+    expect(validateReasoningEffortMappings([prefix, exact, global])).toEqual(
+      {},
+    );
   });
 
   it("allows multiple request values in one model scope", () => {

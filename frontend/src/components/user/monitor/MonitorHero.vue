@@ -12,9 +12,11 @@
           role="tab"
           :aria-selected="window === opt.value"
           class="px-3 py-1 rounded-lg transition-colors"
-          :class="window === opt.value
-            ? 'bg-white dark:bg-dark-700 shadow-sm text-gray-900 dark:text-white font-semibold'
-            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+          :class="
+            window === opt.value
+              ? 'bg-white dark:bg-dark-700 shadow-sm text-gray-900 dark:text-white font-semibold'
+              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+          "
           @click="emit('update:window', opt.value)"
         >
           {{ opt.label }}
@@ -56,61 +58,64 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
-import AutoRefreshButton from '@/components/common/AutoRefreshButton.vue'
-export type MonitorWindow = '7d' | '15d' | '30d'
-export type OverallStatus = 'operational' | 'degraded'
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import Icon from "@/components/icons/Icon.vue";
+import AutoRefreshButton from "@/components/common/AutoRefreshButton.vue";
+export type MonitorWindow = "7d" | "15d" | "30d";
+export type OverallStatus = "operational" | "degraded";
 
 const props = defineProps<{
-  overallStatus: OverallStatus
-  intervalSeconds: number
-  window: MonitorWindow
-  loading: boolean
+  overallStatus: OverallStatus;
+  intervalSeconds: number;
+  window: MonitorWindow;
+  loading: boolean;
   autoRefresh?: {
-    enabled: { value: boolean }
-    intervalSeconds: { value: number }
-    countdown: { value: number }
-    intervals: readonly number[]
-    setEnabled: (v: boolean) => void
-    setInterval: (v: number) => void
-  }
-}>()
+    enabled: { value: boolean };
+    intervalSeconds: { value: number };
+    countdown: { value: number };
+    intervals: readonly number[];
+    setEnabled: (v: boolean) => void;
+    setInterval: (v: number) => void;
+  };
+}>();
 
 const emit = defineEmits<{
-  (e: 'update:window', value: MonitorWindow): void
-  (e: 'refresh'): void
-}>()
+  (e: "update:window", value: MonitorWindow): void;
+  (e: "refresh"): void;
+}>();
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-const windowOptions = computed<{ value: MonitorWindow; label: string }[]>(() => [
-  { value: '7d', label: t('channelStatus.windowTab.7d') },
-  { value: '15d', label: t('channelStatus.windowTab.15d') },
-  { value: '30d', label: t('channelStatus.windowTab.30d') },
-])
+const windowOptions = computed<{ value: MonitorWindow; label: string }[]>(
+  () => [
+    { value: "7d", label: t("channelStatus.windowTab.7d") },
+    { value: "15d", label: t("channelStatus.windowTab.15d") },
+    { value: "30d", label: t("channelStatus.windowTab.30d") },
+  ],
+);
 
-const overallLabel = computed(() => t(`channelStatus.overall.${props.overallStatus}`))
+const overallLabel = computed(() =>
+  t(`channelStatus.overall.${props.overallStatus}`),
+);
 
 const overallChipClass = computed(() => {
   switch (props.overallStatus) {
-    case 'operational':
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-    case 'degraded':
+    case "operational":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+    case "degraded":
     default:
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+      return "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
   }
-})
+});
 
 const overallDotClass = computed(() => {
   switch (props.overallStatus) {
-    case 'operational':
-      return 'bg-emerald-500 animate-pulse'
-    case 'degraded':
+    case "operational":
+      return "bg-emerald-500 animate-pulse";
+    case "degraded":
     default:
-      return 'bg-amber-500 animate-pulse'
+      return "bg-amber-500 animate-pulse";
   }
-})
-
+});
 </script>

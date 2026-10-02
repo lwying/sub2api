@@ -8,7 +8,7 @@
         :class="[
           hasUpdate
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
-            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700',
         ]"
         :title="
           hasUpdate
@@ -18,7 +18,9 @@
               : t('version.upToDate')
         "
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span v-if="currentVersion" class="font-medium"
+          >v{{ currentVersion }}</span
+        >
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
@@ -28,7 +30,9 @@
           <span
             class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"
           ></span>
-          <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+          <span
+            class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"
+          ></span>
         </span>
       </button>
 
@@ -44,9 +48,10 @@
           <div
             class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-dark-700"
           >
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-300">{{
-              t('version.currentVersion')
-            }}</span>
+            <span
+              class="text-sm font-medium text-gray-700 dark:text-dark-300"
+              >{{ t("version.currentVersion") }}</span
+            >
             <button
               @click="refreshVersion(true)"
               class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-dark-200"
@@ -65,7 +70,11 @@
           <div class="p-4">
             <!-- Loading state -->
             <div v-if="loading" class="flex items-center justify-center py-6">
-              <svg class="h-6 w-6 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
+              <svg
+                class="h-6 w-6 animate-spin text-primary-500"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
                 <circle
                   class="opacity-25"
                   cx="12"
@@ -92,7 +101,11 @@
                     class="text-2xl font-bold text-gray-900 dark:text-white"
                     >v{{ currentVersion }}</span
                   >
-                  <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
+                  <span
+                    v-else
+                    class="text-2xl font-bold text-gray-400 dark:text-dark-500"
+                    >--</span
+                  >
                   <!-- Show check mark when up to date (not when unconfirmed) -->
                   <span
                     v-if="!hasUpdate && !versionCheckUnknown"
@@ -114,10 +127,10 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                   {{
                     hasUpdate
-                      ? t('version.latestVersion') + ': v' + latestVersion
+                      ? t("version.latestVersion") + ": v" + latestVersion
                       : versionCheckUnknown
-                        ? t('version.checkUnavailable')
-                        : t('version.upToDate')
+                        ? t("version.checkUnavailable")
+                        : t("version.upToDate")
                   }}
                 </p>
               </div>
@@ -138,10 +151,14 @@
                     />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-red-700 dark:text-red-300">
-                      {{ t('version.updateFailed') }}
+                    <p
+                      class="text-sm font-medium text-red-700 dark:text-red-300"
+                    >
+                      {{ t("version.updateFailed") }}
                     </p>
-                    <p class="truncate text-xs text-red-600/70 dark:text-red-400/70">
+                    <p
+                      class="truncate text-xs text-red-600/70 dark:text-red-400/70"
+                    >
                       {{ updateError }}
                     </p>
                   </div>
@@ -153,7 +170,7 @@
                   :disabled="updating"
                   class="flex w-full items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {{ t('version.retry') }}
+                  {{ t("version.retry") }}
                 </button>
               </div>
 
@@ -172,19 +189,25 @@
                       stroke="currentColor"
                       stroke-width="2"
                     >
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M5 13l4 4L19 7"
+                      />
                     </svg>
                   </div>
                   <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-green-700 dark:text-green-300">
+                    <p
+                      class="text-sm font-medium text-green-700 dark:text-green-300"
+                    >
                       {{
-                        successKind === 'rollback'
-                          ? t('version.rollbackComplete')
-                          : t('version.updateComplete')
+                        successKind === "rollback"
+                          ? t("version.rollbackComplete")
+                          : t("version.updateComplete")
                       }}
                     </p>
                     <p class="text-xs text-green-600/70 dark:text-green-400/70">
-                      {{ t('version.restartRequired') }}
+                      {{ t("version.restartRequired") }}
                     </p>
                   </div>
                 </div>
@@ -230,12 +253,12 @@
                     />
                   </svg>
                   <template v-if="restarting">
-                    <span>{{ t('version.restarting') }}</span>
+                    <span>{{ t("version.restarting") }}</span>
                     <span v-if="restartCountdown > 0" class="tabular-nums"
                       >({{ restartCountdown }}s)</span
                     >
                   </template>
-                  <span v-else>{{ t('version.restartNow') }}</span>
+                  <span v-else>{{ t("version.restartNow") }}</span>
                 </button>
               </div>
 
@@ -256,10 +279,15 @@
                     />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-gray-700 dark:text-dark-200">
-                      {{ t('version.updateNothingToInstall') }}
+                    <p
+                      class="text-sm font-medium text-gray-700 dark:text-dark-200"
+                    >
+                      {{ t("version.updateNothingToInstall") }}
                     </p>
-                    <p v-if="versionWarning" class="break-words text-xs text-gray-500 dark:text-dark-400">
+                    <p
+                      v-if="versionWarning"
+                      class="break-words text-xs text-gray-500 dark:text-dark-400"
+                    >
                       {{ versionWarning }}
                     </p>
                   </div>
@@ -269,7 +297,10 @@
               <!-- Unconfirmed: the check produced no usable answer (no
                    installable asset, GitHub unreachable). Must not be shown as
                    "already up to date". -->
-              <div v-else-if="versionCheckUnknown && !hasUpdate" class="space-y-2">
+              <div
+                v-else-if="versionCheckUnknown && !hasUpdate"
+                class="space-y-2"
+              >
                 <div
                   class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
                 >
@@ -284,14 +315,21 @@
                     />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
-                      {{ t('version.checkUnavailable') }}
+                    <p
+                      class="text-sm font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      {{ t("version.checkUnavailable") }}
                     </p>
-                    <p v-if="versionWarning" class="break-words text-xs text-amber-600/70 dark:text-amber-400/70">
+                    <p
+                      v-if="versionWarning"
+                      class="break-words text-xs text-amber-600/70 dark:text-amber-400/70"
+                    >
                       {{ versionWarning }}
                     </p>
-                    <p class="mt-1 text-xs text-amber-600/70 dark:text-amber-400/70">
-                      {{ t('version.checkUnavailableHint') }}
+                    <p
+                      class="mt-1 text-xs text-amber-600/70 dark:text-amber-400/70"
+                    >
+                      {{ t("version.checkUnavailableHint") }}
                     </p>
                   </div>
                 </div>
@@ -318,8 +356,10 @@
                     />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
-                      {{ t('version.updateAvailable') }}
+                    <p
+                      class="text-sm font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      {{ t("version.updateAvailable") }}
                     </p>
                     <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
                       v{{ latestVersion }}
@@ -332,7 +372,11 @@
                     stroke="currentColor"
                     stroke-width="2"
                   >
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M9 5l7 7-7 7"
+                    />
                   </svg>
                 </a>
                 <!-- Operator-managed hint (source build / image deployment) -->
@@ -365,19 +409,21 @@
                 <div
                   class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
                 >
-                <div
-                  class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
-                >
-                  <Icon
-                    name="download"
-                    size="sm"
-                    :stroke-width="2"
-                    class="text-amber-600 dark:text-amber-400"
-                  />
-                </div>
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
+                  >
+                    <Icon
+                      name="download"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-amber-600 dark:text-amber-400"
+                    />
+                  </div>
                   <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
-                      {{ t('version.updateAvailable') }}
+                    <p
+                      class="text-sm font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      {{ t("version.updateAvailable") }}
                     </p>
                     <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
                       v{{ latestVersion }}
@@ -398,8 +444,10 @@
                     :stroke-width="2"
                     class="mt-px flex-shrink-0 text-amber-600 dark:text-amber-400"
                   />
-                  <p class="min-w-0 flex-1 text-xs leading-4 text-amber-700 dark:text-amber-300">
-                    {{ t('version.updateDockerCaveat') }}
+                  <p
+                    class="min-w-0 flex-1 text-xs leading-4 text-amber-700 dark:text-amber-300"
+                  >
+                    {{ t("version.updateDockerCaveat") }}
                   </p>
                 </div>
 
@@ -409,7 +457,12 @@
                   :disabled="updating"
                   class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <svg v-if="updating" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <svg
+                    v-if="updating"
+                    class="h-4 w-4 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
                     <circle
                       class="opacity-25"
                       cx="12"
@@ -425,7 +478,9 @@
                     ></path>
                   </svg>
                   <Icon v-else name="download" size="sm" :stroke-width="2" />
-                  {{ updating ? t('version.updating') : t('version.updateNow') }}
+                  {{
+                    updating ? t("version.updating") : t("version.updateNow")
+                  }}
                 </button>
 
                 <!-- View release link -->
@@ -436,7 +491,7 @@
                   rel="noopener noreferrer"
                   class="flex items-center justify-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200"
                 >
-                  {{ t('version.viewChangelog') }}
+                  {{ t("version.viewChangelog") }}
                   <Icon name="externalLink" size="xs" :stroke-width="2" />
                 </a>
               </div>
@@ -449,7 +504,11 @@
                 class="space-y-2"
               >
                 <a
-                  v-if="!hasUpdate && releaseInfo?.html_url && releaseInfo.html_url !== '#'"
+                  v-if="
+                    !hasUpdate &&
+                    releaseInfo?.html_url &&
+                    releaseInfo.html_url !== '#'
+                  "
                   :href="releaseInfo.html_url"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -462,7 +521,7 @@
                       d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
                     />
                   </svg>
-                  {{ t('version.viewRelease') }}
+                  {{ t("version.viewRelease") }}
                 </a>
 
                 <!-- Version rollback entry -->
@@ -473,7 +532,7 @@
                   >
                     <span class="flex items-center gap-1.5">
                       <Icon name="clock" size="xs" :stroke-width="2" />
-                      {{ t('version.rollback') }}
+                      {{ t("version.rollback") }}
                     </span>
                     <Icon
                       name="chevronDown"
@@ -506,7 +565,9 @@
                             d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                           />
                         </svg>
-                        <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
+                        <p
+                          class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400"
+                        >
                           {{ rollbackPathHint }}
                         </p>
                       </div>
@@ -548,7 +609,7 @@
                           @click="loadRollbackVersions"
                           class="w-full rounded-lg border border-gray-200 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:border-dark-700 dark:text-dark-400 dark:hover:bg-dark-700/50 dark:hover:text-dark-200"
                         >
-                          {{ t('version.retry') }}
+                          {{ t("version.retry") }}
                         </button>
                       </div>
 
@@ -557,13 +618,15 @@
                         v-else-if="rollbackVersions.length === 0"
                         class="py-3 text-center text-xs text-gray-400 dark:text-dark-500"
                       >
-                        {{ t('version.noRollbackVersions') }}
+                        {{ t("version.noRollbackVersions") }}
                       </p>
 
                       <!-- Version list -->
                       <template v-else>
-                        <p class="px-0.5 text-[11px] text-gray-400 dark:text-dark-500">
-                          {{ t('version.rollbackSelectVersion') }}
+                        <p
+                          class="px-0.5 text-[11px] text-gray-400 dark:text-dark-500"
+                        >
+                          {{ t("version.rollbackSelectVersion") }}
                         </p>
 
                         <button
@@ -602,7 +665,9 @@
                               >v{{ item.version }}</span
                             >
                           </span>
-                          <span class="text-[11px] tabular-nums text-gray-400 dark:text-dark-500">
+                          <span
+                            class="text-[11px] tabular-nums text-gray-400 dark:text-dark-500"
+                          >
                             {{ formatPublishedAt(item.published_at) }}
                           </span>
                         </button>
@@ -610,8 +675,10 @@
                         <!-- Selected version: manual command (per deploy method) + confirm -->
                         <transition name="rollback">
                           <div v-if="selectedRollbackVersion" class="space-y-2">
-                            <p class="px-0.5 text-[11px] text-gray-400 dark:text-dark-500">
-                              {{ t('version.manualRollbackCommand') }}
+                            <p
+                              class="px-0.5 text-[11px] text-gray-400 dark:text-dark-500"
+                            >
+                              {{ t("version.manualRollbackCommand") }}
                             </p>
 
                             <!-- Terminal-style block with deploy-method tabs -->
@@ -648,7 +715,11 @@
                                     :stroke-width="2"
                                     :class="copied ? 'text-green-500' : ''"
                                   />
-                                  {{ copied ? t('version.copied') : t('version.copyCommand') }}
+                                  {{
+                                    copied
+                                      ? t("version.copied")
+                                      : t("version.copyCommand")
+                                  }}
                                 </button>
                               </div>
                               <code
@@ -667,9 +738,9 @@
                                 class="mt-px flex-shrink-0"
                               />
                               {{
-                                manualTab === 'docker'
-                                  ? t('version.rollbackWarningDocker')
-                                  : t('version.rollbackWarning')
+                                manualTab === "docker"
+                                  ? t("version.rollbackWarningDocker")
+                                  : t("version.rollbackWarning")
                               }}
                             </p>
 
@@ -705,12 +776,17 @@
                                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                                 ></path>
                               </svg>
-                              <Icon v-else name="clock" size="sm" :stroke-width="2" />
+                              <Icon
+                                v-else
+                                name="clock"
+                                size="sm"
+                                :stroke-width="2"
+                              />
                               <span>{{
                                 rollingBack
-                                  ? t('version.rollingBack')
-                                  : t('version.rollbackConfirm', {
-                                      version: 'v' + selectedRollbackVersion
+                                  ? t("version.rollingBack")
+                                  : t("version.rollbackConfirm", {
+                                      version: "v" + selectedRollbackVersion,
                                     })
                               }}</span>
                             </button>
@@ -735,204 +811,216 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useAuthStore, useAppStore } from '@/stores'
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { useI18n } from "vue-i18n";
+import { useAuthStore, useAppStore } from "@/stores";
 import {
   performUpdate,
   restartService,
   getRollbackVersions,
   rollback as rollbackAPI,
-  type RollbackVersionInfo
-} from '@/api/admin/system'
-import { useClipboard } from '@/composables/useClipboard'
-import Icon from '@/components/icons/Icon.vue'
+  type RollbackVersionInfo,
+} from "@/api/admin/system";
+import { useClipboard } from "@/composables/useClipboard";
+import Icon from "@/components/icons/Icon.vue";
 
 // Release source for the in-app update/rollback and for the manual install
 // command. Must stay the same repository the backend queries.
-const GITHUB_REPO = 'lwying/sub2api'
+const GITHUB_REPO = "lwying/sub2api";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 const props = defineProps<{
-  version?: string
-}>()
+  version?: string;
+}>();
 
-const authStore = useAuthStore()
-const appStore = useAppStore()
+const authStore = useAuthStore();
+const appStore = useAppStore();
 
-const isAdmin = computed(() => authStore.isAdmin)
+const isAdmin = computed(() => authStore.isAdmin);
 
-const dropdownOpen = ref(false)
-const dropdownRef = ref<HTMLElement | null>(null)
+const dropdownOpen = ref(false);
+const dropdownRef = ref<HTMLElement | null>(null);
 
 // Use store's cached version state
-const loading = computed(() => appStore.versionLoading)
-const currentVersion = computed(() => appStore.currentVersion || props.version || '')
-const latestVersion = computed(() => appStore.latestVersion)
-const hasUpdate = computed(() => appStore.hasUpdate)
-const releaseInfo = computed(() => appStore.releaseInfo)
-const buildType = computed(() => appStore.buildType)
+const loading = computed(() => appStore.versionLoading);
+const currentVersion = computed(
+  () => appStore.currentVersion || props.version || "",
+);
+const latestVersion = computed(() => appStore.latestVersion);
+const hasUpdate = computed(() => appStore.hasUpdate);
+const releaseInfo = computed(() => appStore.releaseInfo);
+const buildType = computed(() => appStore.buildType);
 // Distinguishes a CI-built binary from a source build. It does NOT distinguish
 // binary from image deployments: both report "release".
-const isReleaseBuild = computed(() => buildType.value === 'release')
+const isReleaseBuild = computed(() => buildType.value === "release");
 // A failed check and a backend `warning` (no installable asset, GitHub
 // unreachable, ...) both mean "no update" was NOT a confirmation of being
 // current. Never render either as "up to date".
-const versionWarning = computed(() => appStore.versionWarning)
+const versionWarning = computed(() => appStore.versionWarning);
 const versionCheckUnknown = computed(
-  () => appStore.versionCheckFailed || !!appStore.versionWarning
-)
+  () => appStore.versionCheckFailed || !!appStore.versionWarning,
+);
 // build_type is "release" for image builds too, so it cannot decide whether an
 // in-place binary swap is safe. Only an explicit capability flag can, and a
 // response without it (older backend) is treated as unsupported.
-const canBinaryUpdate = computed(() => appStore.binaryUpdateSupported === true)
-const isDockerDeployment = computed(() => appStore.deploymentType === 'docker')
+const canBinaryUpdate = computed(() => appStore.binaryUpdateSupported === true);
+const isDockerDeployment = computed(() => appStore.deploymentType === "docker");
 // A container deployment may install the update in place (writable layer) but
 // still owns its version through the image tag: the backend refuses an in-app
 // rollback there, so the rollback UI (candidates, manual command, confirm) must
 // stay off even when canBinaryUpdate is true.
-const canBinaryRollback = computed(() => canBinaryUpdate.value && !isDockerDeployment.value)
+const canBinaryRollback = computed(
+  () => canBinaryUpdate.value && !isDockerDeployment.value,
+);
 
 // Operator-managed wording: how this deployment is upgraded, without printing
 // an image reference this UI cannot verify.
 const updatePathHint = computed(() => {
-  if (isDockerDeployment.value) return t('version.updateDockerHint')
-  if (isReleaseBuild.value) return t('version.updateUnsupportedHint')
-  return t('version.sourceModeHint')
-})
+  if (isDockerDeployment.value) return t("version.updateDockerHint");
+  if (isReleaseBuild.value) return t("version.updateUnsupportedHint");
+  return t("version.sourceModeHint");
+});
 
 const rollbackPathHint = computed(() =>
-  isDockerDeployment.value ? t('version.rollbackDockerHint') : t('version.rollbackSourceHint')
-)
+  isDockerDeployment.value
+    ? t("version.rollbackDockerHint")
+    : t("version.rollbackSourceHint"),
+);
 
 // Update process states (local to this component)
-const updating = ref(false)
-const restarting = ref(false)
-const needRestart = ref(false)
-const updateError = ref('')
-const updateSuccess = ref(false)
+const updating = ref(false);
+const restarting = ref(false);
+const needRestart = ref(false);
+const updateError = ref("");
+const updateSuccess = ref(false);
 // The backend can answer 200 with nothing installed ("already up to date").
-const updateNoop = ref(false)
-const restartCountdown = ref(0)
+const updateNoop = ref(false);
+const restartCountdown = ref(0);
 // Distinguishes the success + restart panel between update and rollback flows
-const successKind = ref<'update' | 'rollback'>('update')
+const successKind = ref<"update" | "rollback">("update");
 
 // Rollback states
-const rollbackPanelOpen = ref(false)
-const rollbackVersions = ref<RollbackVersionInfo[]>([])
-const rollbackVersionsLoading = ref(false)
-const rollbackVersionsError = ref('')
-const selectedRollbackVersion = ref('')
-const rollingBack = ref(false)
-const rollbackError = ref('')
+const rollbackPanelOpen = ref(false);
+const rollbackVersions = ref<RollbackVersionInfo[]>([]);
+const rollbackVersionsLoading = ref(false);
+const rollbackVersionsError = ref("");
+const selectedRollbackVersion = ref("");
+const rollingBack = ref(false);
+const rollbackError = ref("");
 
-const { copied, copyToClipboard } = useClipboard()
+const { copied, copyToClipboard } = useClipboard();
 
 // Manual rollback methods differ by deployment: binary/systemd installs use
 // install.sh, docker deployments pin the image tag instead. The docker tab is
 // operator-managed on purpose: this build cannot verify that a fork image was
 // actually published, so it never prints an image reference it cannot back up.
-const manualTab = ref<'script' | 'docker'>('script')
+const manualTab = ref<"script" | "docker">("script");
 
 const manualTabs = computed(() => [
-  { key: 'script' as const, label: t('version.deployScript') },
-  { key: 'docker' as const, label: t('version.deployDocker') }
-])
+  { key: "script" as const, label: t("version.deployScript") },
+  { key: "docker" as const, label: t("version.deployDocker") },
+]);
 
 const scriptRollbackCommand = computed(() => {
-  if (!selectedRollbackVersion.value) return ''
-  const tag = `v${selectedRollbackVersion.value}`
-  return `curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/deploy/install.sh | sudo bash -s -- rollback ${tag}`
-})
+  if (!selectedRollbackVersion.value) return "";
+  const tag = `v${selectedRollbackVersion.value}`;
+  return `curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/deploy/install.sh | sudo bash -s -- rollback ${tag}`;
+});
 
 const dockerRollbackCommand = computed(() => {
-  if (!selectedRollbackVersion.value) return ''
+  if (!selectedRollbackVersion.value) return "";
   // GoReleaser builds image tags from {{ .Version }}, which drops the "v"
   // prefix, so the image tag is 0.2.6 while the git/release tag stays v0.2.6.
-  const imageTag = selectedRollbackVersion.value
+  const imageTag = selectedRollbackVersion.value;
   return [
-    `# ${t('version.dockerEditCompose')}`,
-    `image: ${t('version.dockerImagePlaceholder')}:${imageTag}`,
-    '',
-    `# ${t('version.dockerRecreate')}`,
-    'docker compose up -d',
-    '',
-    `# ${t('version.dockerOperatorManaged', { version: imageTag })}`
-  ].join('\n')
-})
+    `# ${t("version.dockerEditCompose")}`,
+    `image: ${t("version.dockerImagePlaceholder")}:${imageTag}`,
+    "",
+    `# ${t("version.dockerRecreate")}`,
+    "docker compose up -d",
+    "",
+    `# ${t("version.dockerOperatorManaged", { version: imageTag })}`,
+  ].join("\n");
+});
 
 const activeManualCommand = computed(() =>
-  manualTab.value === 'docker' ? dockerRollbackCommand.value : scriptRollbackCommand.value
-)
+  manualTab.value === "docker"
+    ? dockerRollbackCommand.value
+    : scriptRollbackCommand.value,
+);
 
 function toggleDropdown() {
-  dropdownOpen.value = !dropdownOpen.value
+  dropdownOpen.value = !dropdownOpen.value;
 }
 
 function closeDropdown() {
-  dropdownOpen.value = false
+  dropdownOpen.value = false;
 }
 
 async function refreshVersion(force = true) {
-  if (!isAdmin.value) return
+  if (!isAdmin.value) return;
 
   // Reset update states when refreshing
-  updateError.value = ''
-  updateSuccess.value = false
-  updateNoop.value = false
-  needRestart.value = false
-  resetRollbackState()
+  updateError.value = "";
+  updateSuccess.value = false;
+  updateNoop.value = false;
+  needRestart.value = false;
+  resetRollbackState();
 
-  await appStore.fetchVersion(force)
+  await appStore.fetchVersion(force);
 }
 
 async function handleUpdate() {
-  if (updating.value) return
+  if (updating.value) return;
 
-  updating.value = true
-  updateError.value = ''
-  updateSuccess.value = false
-  updateNoop.value = false
+  updating.value = true;
+  updateError.value = "";
+  updateSuccess.value = false;
+  updateNoop.value = false;
 
   try {
-    const result = await performUpdate()
+    const result = await performUpdate();
 
     // HTTP 200 without an install: the backend reports "already up to date"
     // when it has nothing to install, which also happens when the release
     // check itself failed. Not a completed update, so do not claim one and do
     // not drop the cached check result that explains why.
     if (result.already_up_to_date) {
-      updateNoop.value = true
-      await appStore.fetchVersion(true)
-      return
+      updateNoop.value = true;
+      await appStore.fetchVersion(true);
+      return;
     }
 
-    successKind.value = 'update'
-    updateSuccess.value = true
-    needRestart.value = result.need_restart
+    successKind.value = "update";
+    updateSuccess.value = true;
+    needRestart.value = result.need_restart;
     // Clear version cache to reflect update completed
-    appStore.clearVersionCache()
+    appStore.clearVersionCache();
   } catch (error: unknown) {
-    const err = error as { response?: { data?: { message?: string } }; message?: string }
-    updateError.value = err.response?.data?.message || err.message || t('version.updateFailed')
+    const err = error as {
+      response?: { data?: { message?: string } };
+      message?: string;
+    };
+    updateError.value =
+      err.response?.data?.message || err.message || t("version.updateFailed");
   } finally {
-    updating.value = false
+    updating.value = false;
   }
 }
 
 function resetRollbackState() {
-  rollbackPanelOpen.value = false
-  rollbackVersions.value = []
-  rollbackVersionsError.value = ''
-  selectedRollbackVersion.value = ''
-  rollbackError.value = ''
-  manualTab.value = 'script'
+  rollbackPanelOpen.value = false;
+  rollbackVersions.value = [];
+  rollbackVersionsError.value = "";
+  selectedRollbackVersion.value = "";
+  rollbackError.value = "";
+  manualTab.value = "script";
 }
 
 async function toggleRollbackPanel() {
-  if (!isAdmin.value) return
-  rollbackPanelOpen.value = !rollbackPanelOpen.value
+  if (!isAdmin.value) return;
+  rollbackPanelOpen.value = !rollbackPanelOpen.value;
   // Deployments that cannot roll back in place only show a hint; there is no
   // in-app version list to fetch for them (the backend would refuse the call).
   if (
@@ -941,134 +1029,148 @@ async function toggleRollbackPanel() {
     rollbackVersions.value.length === 0 &&
     !rollbackVersionsLoading.value
   ) {
-    await loadRollbackVersions()
+    await loadRollbackVersions();
   }
 }
 
 async function loadRollbackVersions() {
-  if (!isAdmin.value) return
-  rollbackVersionsLoading.value = true
-  rollbackVersionsError.value = ''
+  if (!isAdmin.value) return;
+  rollbackVersionsLoading.value = true;
+  rollbackVersionsError.value = "";
   try {
-    const data = await getRollbackVersions()
-    rollbackVersions.value = data.versions || []
+    const data = await getRollbackVersions();
+    rollbackVersions.value = data.versions || [];
   } catch (error: unknown) {
-    const err = error as { response?: { data?: { message?: string } }; message?: string }
+    const err = error as {
+      response?: { data?: { message?: string } };
+      message?: string;
+    };
     rollbackVersionsError.value =
-      err.response?.data?.message || err.message || t('version.loadVersionsFailed')
+      err.response?.data?.message ||
+      err.message ||
+      t("version.loadVersionsFailed");
   } finally {
-    rollbackVersionsLoading.value = false
+    rollbackVersionsLoading.value = false;
   }
 }
 
 function selectRollbackVersion(version: string) {
-  if (rollingBack.value) return
-  rollbackError.value = ''
-  selectedRollbackVersion.value = selectedRollbackVersion.value === version ? '' : version
+  if (rollingBack.value) return;
+  rollbackError.value = "";
+  selectedRollbackVersion.value =
+    selectedRollbackVersion.value === version ? "" : version;
 }
 
 function formatPublishedAt(publishedAt: string): string {
-  if (!publishedAt) return ''
-  const date = new Date(publishedAt)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString()
+  if (!publishedAt) return "";
+  const date = new Date(publishedAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString();
 }
 
 async function handleRollback() {
-  if (!isAdmin.value) return
-  if (rollingBack.value || !selectedRollbackVersion.value) return
+  if (!isAdmin.value) return;
+  if (rollingBack.value || !selectedRollbackVersion.value) return;
 
-  rollingBack.value = true
-  rollbackError.value = ''
+  rollingBack.value = true;
+  rollbackError.value = "";
 
   try {
-    const result = await rollbackAPI(selectedRollbackVersion.value)
-    successKind.value = 'rollback'
-    updateSuccess.value = true
-    needRestart.value = result.need_restart
-    rollbackPanelOpen.value = false
+    const result = await rollbackAPI(selectedRollbackVersion.value);
+    successKind.value = "rollback";
+    updateSuccess.value = true;
+    needRestart.value = result.need_restart;
+    rollbackPanelOpen.value = false;
     // Clear version cache so the next check reflects the rolled-back version
-    appStore.clearVersionCache()
+    appStore.clearVersionCache();
   } catch (error: unknown) {
-    const err = error as { response?: { data?: { message?: string } }; message?: string }
-    rollbackError.value = err.response?.data?.message || err.message || t('version.rollbackFailed')
+    const err = error as {
+      response?: { data?: { message?: string } };
+      message?: string;
+    };
+    rollbackError.value =
+      err.response?.data?.message || err.message || t("version.rollbackFailed");
   } finally {
-    rollingBack.value = false
+    rollingBack.value = false;
   }
 }
 
 async function handleRestart() {
-  if (restarting.value) return
+  if (restarting.value) return;
 
-  restarting.value = true
-  restartCountdown.value = 8
+  restarting.value = true;
+  restartCountdown.value = 8;
 
   try {
-    await restartService()
+    await restartService();
     // Service will restart, page will reload automatically or show disconnected
   } catch (error) {
     // Expected - connection will be lost during restart
-    console.log('Service restarting...')
+    console.log("Service restarting...");
   }
 
   // Start countdown
   const countdownInterval = setInterval(() => {
-    restartCountdown.value--
+    restartCountdown.value--;
     if (restartCountdown.value <= 0) {
-      clearInterval(countdownInterval)
+      clearInterval(countdownInterval);
       // Try to check if service is back before reload
-      checkServiceAndReload()
+      checkServiceAndReload();
     }
-  }, 1000)
+  }, 1000);
 }
 
 async function checkServiceAndReload() {
-  const maxRetries = 5
-  const retryDelay = 1000
+  const maxRetries = 5;
+  const retryDelay = 1000;
 
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const response = await fetch('/health', {
-        method: 'GET',
-        cache: 'no-cache'
-      })
+      const response = await fetch("/health", {
+        method: "GET",
+        cache: "no-cache",
+      });
       if (response.ok) {
         // Service is back, reload page
-        window.location.reload()
-        return
+        window.location.reload();
+        return;
       }
     } catch {
       // Service not ready yet
     }
 
     if (i < maxRetries - 1) {
-      await new Promise((resolve) => setTimeout(resolve, retryDelay))
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
     }
   }
 
   // After retries, reload anyway
-  window.location.reload()
+  window.location.reload();
 }
 
 function handleClickOutside(event: MouseEvent) {
-  const target = event.target as Node
-  const button = (event.target as Element).closest('button')
-  if (dropdownRef.value && !dropdownRef.value.contains(target) && !button?.contains(target)) {
-    closeDropdown()
+  const target = event.target as Node;
+  const button = (event.target as Element).closest("button");
+  if (
+    dropdownRef.value &&
+    !dropdownRef.value.contains(target) &&
+    !button?.contains(target)
+  ) {
+    closeDropdown();
   }
 }
 
 onMounted(() => {
   if (isAdmin.value) {
     // Use cached version if available, otherwise fetch
-    appStore.fetchVersion(false)
+    appStore.fetchVersion(false);
   }
-  document.addEventListener('click', handleClickOutside)
-})
+  document.addEventListener("click", handleClickOutside);
+});
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
+  document.removeEventListener("click", handleClickOutside);
+});
 </script>
 
 <style scoped>

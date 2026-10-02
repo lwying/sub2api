@@ -61,10 +61,13 @@ describe("groupModelAllowlist", () => {
   });
 
   it("builds config with selected models in current display order", () => {
-    const state = hydrateModelAllowlistState({
-      enabled: true,
-      models: ["gpt-5.5", "gpt-5.4", "legacy-gpt"],
-    }, ["gpt-5.5", "gpt-5.4", "legacy-gpt"]);
+    const state = hydrateModelAllowlistState(
+      {
+        enabled: true,
+        models: ["gpt-5.5", "gpt-5.4", "legacy-gpt"],
+      },
+      ["gpt-5.5", "gpt-5.4", "legacy-gpt"],
+    );
 
     toggleModelAllowlistItem(state, "legacy-gpt");
     moveModelAllowlistItem(state, 1, 0);
@@ -76,10 +79,13 @@ describe("groupModelAllowlist", () => {
   });
 
   it("keeps selected models in payload even when disabled so reopening can restore choices", () => {
-    const state = hydrateModelAllowlistState({
-      enabled: false,
-      models: ["gpt-5.5"],
-    }, ["gpt-5.5", "gpt-5.4"]);
+    const state = hydrateModelAllowlistState(
+      {
+        enabled: false,
+        models: ["gpt-5.5"],
+      },
+      ["gpt-5.5", "gpt-5.4"],
+    );
 
     expect(buildModelAllowlistConfig(state)).toEqual({
       enabled: false,
@@ -100,10 +106,13 @@ describe("groupModelAllowlist", () => {
   });
 
   it("selects all candidate models from the toolbar action", () => {
-    const state = hydrateModelAllowlistState({
-      enabled: true,
-      models: ["gpt-5.5"],
-    }, ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
+    const state = hydrateModelAllowlistState(
+      {
+        enabled: true,
+        models: ["gpt-5.5"],
+      },
+      ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    );
 
     selectAllModelAllowlistItems(state);
 
@@ -115,10 +124,13 @@ describe("groupModelAllowlist", () => {
   });
 
   it("inverts selected models from the toolbar action", () => {
-    const state = hydrateModelAllowlistState({
-      enabled: true,
-      models: ["gpt-5.5"],
-    }, ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
+    const state = hydrateModelAllowlistState(
+      {
+        enabled: true,
+        models: ["gpt-5.5"],
+      },
+      ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    );
 
     invertModelAllowlistSelection(state);
 
@@ -131,7 +143,8 @@ describe("groupModelAllowlist", () => {
 });
 
 describe("addCustomModelAllowlistItem", () => {
-  const state = () => createModelAllowlistState({ enabled: true, models: ["gpt-5.4"] });
+  const state = () =>
+    createModelAllowlistState({ enabled: true, models: ["gpt-5.4"] });
 
   it("appends a trimmed entry as selected", () => {
     const s = state();
@@ -146,7 +159,9 @@ describe("addCustomModelAllowlistItem", () => {
   });
 
   it("rejects blank input", () => {
-    expect(addCustomModelAllowlistItem(state(), "   ")).toBe<ModelAllowlistAddError>("empty");
+    expect(
+      addCustomModelAllowlistItem(state(), "   "),
+    ).toBe<ModelAllowlistAddError>("empty");
   });
 
   it("accepts wildcards at any position", () => {
@@ -154,11 +169,17 @@ describe("addCustomModelAllowlistItem", () => {
     expect(addCustomModelAllowlistItem(s, "gpt-*-5.4")).toBeNull();
     expect(addCustomModelAllowlistItem(s, "*codex")).toBeNull();
     expect(addCustomModelAllowlistItem(s, "gpt-*-codex-*")).toBeNull();
-    expect(buildModelAllowlistConfig(s).models).toEqual(["gpt-*-5.4", "*codex", "gpt-*-codex-*"]);
+    expect(buildModelAllowlistConfig(s).models).toEqual([
+      "gpt-*-5.4",
+      "*codex",
+      "gpt-*-codex-*",
+    ]);
   });
 
   it("rejects duplicates case-insensitively", () => {
     const s = state();
-    expect(addCustomModelAllowlistItem(s, "GPT-5.4")).toBe<ModelAllowlistAddError>("duplicate");
+    expect(
+      addCustomModelAllowlistItem(s, "GPT-5.4"),
+    ).toBe<ModelAllowlistAddError>("duplicate");
   });
 });

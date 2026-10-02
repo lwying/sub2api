@@ -25,22 +25,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from "vue";
 
-const isMobile = ref(false)
+const isMobile = ref(false);
 
 const checkMobile = () => {
-  isMobile.value = window.innerWidth < 1024
-}
+  isMobile.value = window.innerWidth < 1024;
+};
 
 onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
-})
+  checkMobile();
+  window.addEventListener("resize", checkMobile);
+});
 
 onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile)
-})
+  window.removeEventListener("resize", checkMobile);
+});
 </script>
 
 <style scoped>

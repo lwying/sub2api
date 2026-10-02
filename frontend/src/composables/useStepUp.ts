@@ -12,81 +12,85 @@
  *   }
  *   // template: <TotpStepUpDialog :controller="stepUp" />
  */
-import { ref } from 'vue'
+import { ref } from "vue";
 
 /** Error codes the backend uses to signal step-up state. */
-const STEP_UP_REQUIRED = 'STEP_UP_REQUIRED'
-const STEP_UP_TOTP_NOT_ENABLED = 'STEP_UP_TOTP_NOT_ENABLED'
-const STEP_UP_ADMIN_API_KEY_FORBIDDEN = 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+const STEP_UP_REQUIRED = "STEP_UP_REQUIRED";
+const STEP_UP_TOTP_NOT_ENABLED = "STEP_UP_TOTP_NOT_ENABLED";
+const STEP_UP_ADMIN_API_KEY_FORBIDDEN = "STEP_UP_ADMIN_API_KEY_FORBIDDEN";
 
 /**
  * Thrown by run() when the user dismisses the TOTP dialog.
  * Callers should treat it as a silent no-op, not an error to toast.
  */
 export class StepUpCancelledError extends Error {
-  readonly code = 'STEP_UP_CANCELLED'
+  readonly code = "STEP_UP_CANCELLED";
   constructor() {
-    super('step-up verification cancelled by user')
-    this.name = 'StepUpCancelledError'
+    super("step-up verification cancelled by user");
+    this.name = "StepUpCancelledError";
   }
 }
 
 export function isStepUpCancelled(err: unknown): boolean {
-  return err instanceof StepUpCancelledError
+  return err instanceof StepUpCancelledError;
 }
 
 interface ApiError {
-  status?: number
-  code?: string | number
-  reason?: string
-  message?: string
+  status?: number;
+  code?: string | number;
+  reason?: string;
+  message?: string;
 }
 
 /** Extract the semantic error marker from either envelope shape (code or reason). */
 function markerOf(err: unknown): string {
-  const e = (err ?? {}) as ApiError
-  const candidates = [e.code, e.reason].map((v) => (typeof v === 'string' ? v : ''))
-  return candidates.find((v) => v.startsWith('STEP_UP')) || ''
+  const e = (err ?? {}) as ApiError;
+  const candidates = [e.code, e.reason].map((v) =>
+    typeof v === "string" ? v : "",
+  );
+  return candidates.find((v) => v.startsWith("STEP_UP")) || "";
 }
 
 export function isStepUpRequired(err: unknown): boolean {
-  return markerOf(err) === STEP_UP_REQUIRED
+  return markerOf(err) === STEP_UP_REQUIRED;
 }
 
 export function isStepUpBlocked(err: unknown): boolean {
-  const m = markerOf(err)
-  return m === STEP_UP_TOTP_NOT_ENABLED || m === STEP_UP_ADMIN_API_KEY_FORBIDDEN
+  const m = markerOf(err);
+  return (
+    m === STEP_UP_TOTP_NOT_ENABLED || m === STEP_UP_ADMIN_API_KEY_FORBIDDEN
+  );
 }
 
 export function stepUpBlockReason(err: unknown): string {
-  return markerOf(err)
+  return markerOf(err);
 }
 
-export type StepUpController = ReturnType<typeof useStepUp>
+export type StepUpController = ReturnType<typeof useStepUp>;
 
 export function useStepUp() {
-  const visible = ref(false)
-  const blockedReason = ref<string>('')
-  let resolver: ((ok: boolean) => void) | null = null
+  const visible = ref(false);
+  const blockedReason = ref<string>("");
+  let resolver: ((ok: boolean) => void) | null = null;
 
   /** Open the TOTP dialog and resolve true once a grant is obtained. */
   function prompt(): Promise<boolean> {
-    visible.value = true
+    visible.value = true;
     return new Promise<boolean>((resolve) => {
-      resolver = resolve
-    })
+      resolver = resolve;
+    });
   }
 
   function onVerified() {
-    visible.value = false
-    resolver?.(true)
-    resolver = null
+    visible.value = false;
+    resolver?.(true);
+    resolver = null;
   }
 
   function onCancel() {
-    visible.value = false
-    resolver?.(false)
-    resolver = null
+    visible.value = false;
+    resolver?.(false);
+    resolver = null;
   }
 
   /**
@@ -98,21 +102,21 @@ export function useStepUp() {
    */
   async function run<T>(action: () => Promise<T>): Promise<T> {
     try {
-      return await action()
+      return await action();
     } catch (err) {
       if (isStepUpBlocked(err)) {
-        blockedReason.value = markerOf(err)
-        throw err
+        blockedReason.value = markerOf(err);
+        throw err;
       }
       if (!isStepUpRequired(err)) {
-        throw err
+        throw err;
       }
-      const ok = await prompt()
+      const ok = await prompt();
       if (!ok) {
-        throw new StepUpCancelledError()
+        throw new StepUpCancelledError();
       }
       // Retry once now that the session holds a step-up grant.
-      return await action()
+      return await action();
     }
   }
 
@@ -122,6 +126,6 @@ export function useStepUp() {
     prompt,
     onVerified,
     onCancel,
-    run
-  }
+    run,
+  };
 }

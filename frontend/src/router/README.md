@@ -92,16 +92,16 @@ Each route can define the following meta fields:
 
 ```typescript
 interface RouteMeta {
-  requiresAuth?: boolean // Default: true (requires authentication)
-  requiresAdmin?: boolean // Default: false (admin access only)
-  title?: string // Page title
+  requiresAuth?: boolean; // Default: true (requires authentication)
+  requiresAdmin?: boolean; // Default: false (admin access only)
+  title?: string; // Page title
   breadcrumbs?: Array<{
     // Breadcrumb navigation
-    label: string
-    to?: string
-  }>
-  icon?: string // Icon for navigation menu
-  hideInMenu?: boolean // Hide from navigation menu
+    label: string;
+    to?: string;
+  }>;
+  icon?: string; // Icon for navigation menu
+  hideInMenu?: boolean; // Hide from navigation menu
 }
 ```
 
@@ -110,7 +110,7 @@ interface RouteMeta {
 All route components use dynamic imports for code splitting:
 
 ```typescript
-component: () => import('@/views/user/DashboardView.vue')
+component: () => import("@/views/user/DashboardView.vue");
 ```
 
 Benefits:
@@ -125,13 +125,13 @@ Benefits:
 The router integrates with the Pinia auth store (`@/stores/auth`):
 
 ```typescript
-const authStore = useAuthStore()
+const authStore = useAuthStore();
 
 // Check authentication status
-authStore.isAuthenticated
+authStore.isAuthenticated;
 
 // Check admin role
-authStore.isAdmin
+authStore.isAdmin;
 ```
 
 ## Usage Examples
@@ -139,21 +139,21 @@ authStore.isAdmin
 ### Programmatic Navigation
 
 ```typescript
-import { useRouter } from 'vue-router'
+import { useRouter } from "vue-router";
 
-const router = useRouter()
+const router = useRouter();
 
 // Navigate to a route
-router.push('/dashboard')
+router.push("/dashboard");
 
 // Navigate with query parameters
 router.push({
-  path: '/usage',
-  query: { filter: 'today' }
-})
+  path: "/usage",
+  query: { filter: "today" },
+});
 
 // Navigate to admin route (will be blocked if not admin)
-router.push('/admin/users')
+router.push("/admin/users");
 ```
 
 ### Route Links
@@ -167,22 +167,24 @@ router.push('/admin/users')
   <router-link :to="{ name: 'Keys' }">API Keys</router-link>
 
   <!-- With query parameters -->
-  <router-link :to="{ path: '/usage', query: { page: 1 } }"> Usage </router-link>
+  <router-link :to="{ path: '/usage', query: { page: 1 } }">
+    Usage
+  </router-link>
 </template>
 ```
 
 ### Checking Current Route
 
 ```typescript
-import { useRoute } from 'vue-router'
+import { useRoute } from "vue-router";
 
-const route = useRoute()
+const route = useRoute();
 
 // Check if on admin page
-const isAdminPage = route.path.startsWith('/admin')
+const isAdminPage = route.path.startsWith("/admin");
 
 // Get route meta
-const requiresAdmin = route.meta.requiresAdmin
+const requiresAdmin = route.meta.requiresAdmin;
 ```
 
 ## Scroll Behavior
@@ -199,8 +201,8 @@ The router includes error handling for navigation failures:
 
 ```typescript
 router.onError((error) => {
-  console.error('Router error:', error)
-})
+  console.error("Router error:", error);
+});
 ```
 
 ## Testing Routes
@@ -229,10 +231,10 @@ Enable Vue Router debug mode:
 
 ```typescript
 // In browser console
-window.__VUE_ROUTER__ = router
+window.__VUE_ROUTER__ = router;
 
 // Check current route
-router.currentRoute.value
+router.currentRoute.value;
 ```
 
 ### Common Issues

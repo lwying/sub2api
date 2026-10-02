@@ -64,7 +64,10 @@
           @focus="onSearchFocus"
         />
         <div
-          v-if="showDropdown && (searchResults.length > 0 || searchKeyword.trim() !== '')"
+          v-if="
+            showDropdown &&
+            (searchResults.length > 0 || searchKeyword.trim() !== '')
+          "
           class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:border-dark-600 dark:bg-dark-800"
           data-testid="codex-manifest-dropdown"
         >

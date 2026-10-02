@@ -12,7 +12,9 @@ describe("normalizeSupportedModelScopesForPlatform", () => {
   });
 
   it("returns an empty array for Antigravity groups without scopes", () => {
-    expect(normalizeSupportedModelScopesForPlatform("antigravity", undefined)).toEqual([]);
+    expect(
+      normalizeSupportedModelScopesForPlatform("antigravity", undefined),
+    ).toEqual([]);
   });
 
   it("drops hidden model scopes for OpenAI groups", () => {
@@ -26,6 +28,8 @@ describe("normalizeSupportedModelScopesForPlatform", () => {
   });
 
   it("drops hidden model scopes for other non-Antigravity groups", () => {
-    expect(normalizeSupportedModelScopesForPlatform("claude", ["claude"])).toEqual([]);
+    expect(
+      normalizeSupportedModelScopesForPlatform("claude", ["claude"]),
+    ).toEqual([]);
   });
 });

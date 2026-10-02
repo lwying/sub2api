@@ -28,7 +28,9 @@
           $slots.prefix ? 'pl-11' : '',
           $slots.suffix ? 'pr-11' : '',
           error ? 'input-error ring-2 ring-red-500/20' : '',
-          disabled ? 'cursor-not-allowed bg-gray-100 opacity-60 dark:bg-dark-900' : ''
+          disabled
+            ? 'cursor-not-allowed bg-gray-100 opacity-60 dark:bg-dark-900'
+            : '',
         ]"
         @input="onInput"
         @change="$emit('change', ($event.target as HTMLInputElement).value)"
@@ -56,48 +58,48 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref } from "vue";
 
 interface Props {
-  modelValue: string | number | null | undefined
-  type?: string
-  label?: string
-  placeholder?: string
-  disabled?: boolean
-  required?: boolean
-  readonly?: boolean
-  error?: string
-  hint?: string
-  id?: string
-  autocomplete?: string
+  modelValue: string | number | null | undefined;
+  type?: string;
+  label?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  required?: boolean;
+  readonly?: boolean;
+  error?: string;
+  hint?: string;
+  id?: string;
+  autocomplete?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  type: 'text',
+  type: "text",
   disabled: false,
   required: false,
-  readonly: false
-})
+  readonly: false,
+});
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void
-  (e: 'change', value: string): void
-  (e: 'blur', event: FocusEvent): void
-  (e: 'focus', event: FocusEvent): void
-  (e: 'enter', event: KeyboardEvent): void
-}>()
+  (e: "update:modelValue", value: string): void;
+  (e: "change", value: string): void;
+  (e: "blur", event: FocusEvent): void;
+  (e: "focus", event: FocusEvent): void;
+  (e: "enter", event: KeyboardEvent): void;
+}>();
 
-const inputRef = ref<HTMLInputElement | null>(null)
-const placeholderText = computed(() => props.placeholder || '')
+const inputRef = ref<HTMLInputElement | null>(null);
+const placeholderText = computed(() => props.placeholder || "");
 
 const onInput = (event: Event) => {
-  const value = (event.target as HTMLInputElement).value
-  emit('update:modelValue', value)
-}
+  const value = (event.target as HTMLInputElement).value;
+  emit("update:modelValue", value);
+};
 
 // Expose focus method
 defineExpose({
   focus: () => inputRef.value?.focus(),
-  select: () => inputRef.value?.select()
-})
+  select: () => inputRef.value?.select(),
+});
 </script>

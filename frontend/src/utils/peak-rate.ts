@@ -7,27 +7,29 @@
  */
 
 export interface PeakRateFields {
-  peak_rate_enabled?: boolean
-  peak_start?: string
-  peak_end?: string
-  peak_rate_multiplier?: number
+  peak_rate_enabled?: boolean;
+  peak_start?: string;
+  peak_end?: string;
+  peak_rate_multiplier?: number;
 }
 
 export function hasPeakRate(fields?: PeakRateFields | null): boolean {
-  return Boolean(fields?.peak_rate_enabled && fields.peak_start && fields.peak_end)
+  return Boolean(
+    fields?.peak_rate_enabled && fields.peak_start && fields.peak_end,
+  );
 }
 
 /** "+08:00" → "UTC+08:00"；旧缓存无该字段时返回空串，调用方降级为不带时区标注 */
 export function serverTimezoneLabel(utcOffset?: string | null): string {
-  return utcOffset ? `UTC${utcOffset}` : ''
+  return utcOffset ? `UTC${utcOffset}` : "";
 }
 
 /** "14:00-18:00 ×2 (UTC+08:00)"，tzLabel 为空时省略括号部分 */
 export function formatPeakRateWindow(
   fields: PeakRateFields | null | undefined,
-  tzLabel?: string
+  tzLabel?: string,
 ): string {
-  if (!hasPeakRate(fields) || !fields) return ''
-  const base = `${fields.peak_start}-${fields.peak_end} ×${fields.peak_rate_multiplier ?? 1}`
-  return tzLabel ? `${base} (${tzLabel})` : base
+  if (!hasPeakRate(fields) || !fields) return "";
+  const base = `${fields.peak_start}-${fields.peak_end} ×${fields.peak_rate_multiplier ?? 1}`;
+  return tzLabel ? `${base} (${tzLabel})` : base;
 }

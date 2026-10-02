@@ -39,16 +39,16 @@ Configure an S3-compatible object store (AWS S3, Cloudflare R2, Aliyun OSS, MinI
 ```yaml
 image_storage:
   enabled: true
-  endpoint: "https://<account_id>.r2.cloudflarestorage.com"  # AWS 官方可留空
+  endpoint: "https://<account_id>.r2.cloudflarestorage.com" # AWS 官方可留空
   region: "auto"
   bucket: "my-images"
   access_key_id: "..."
   secret_access_key: "..."
   prefix: "images/"
-  force_path_style: false          # MinIO/path-style buckets set true
-  public_base_url: ""              # set to return public_base_url/key直链; empty → presigned URL
-  presign_expiry_hours: 24         # presigned link TTL when public_base_url is empty
-  max_download_bytes: 33554432     # cap when re-hosting an upstream image URL (32MB)
+  force_path_style: false # MinIO/path-style buckets set true
+  public_base_url: "" # set to return public_base_url/key直链; empty → presigned URL
+  presign_expiry_hours: 24 # presigned link TTL when public_base_url is empty
+  max_download_bytes: 33554432 # cap when re-hosting an upstream image URL (32MB)
 ```
 
 When a task completes, each generated image is uploaded to the bucket and the result is rewritten to a compact form: `data[].url` points at the stored object (a permanent `public_base_url/key` link, or a time-limited presigned URL) and `b64_json` is removed. Only this small JSON is stored in Redis. If an upload fails, the task is marked `failed` rather than persisting the raw base64.
@@ -134,7 +134,7 @@ On success, `result` mirrors the synchronous image API body, except each image h
   "image_url": "https://...",
   "result": {
     "created": 1784092923,
-    "data": [{"url": "https://..."}]
+    "data": [{ "url": "https://..." }]
   },
   "created_at": 1784092800,
   "completed_at": 1784092923,

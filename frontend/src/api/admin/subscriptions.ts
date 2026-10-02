@@ -3,53 +3,54 @@
  * Handles user subscription management for administrators
  */
 
-import { apiClient } from '../client'
+import { apiClient } from "../client";
 import type {
   UserSubscription,
   SubscriptionProgress,
   AssignSubscriptionRequest,
   BulkAssignSubscriptionRequest,
   ExtendSubscriptionRequest,
-  PaginatedResponse
-} from '@/types'
+  PaginatedResponse,
+} from "@/types";
 
-export type SubscriptionBulkAction = 'extend' | 'reset_quota' | 'revoke' | 'restore'
+export type SubscriptionBulkAction =
+  "extend" | "reset_quota" | "revoke" | "restore";
 
 export interface SubscriptionBulkActionRequest {
-  subscription_ids: number[]
-  action: SubscriptionBulkAction
-  days?: number
-  daily?: boolean
-  weekly?: boolean
-  monthly?: boolean
+  subscription_ids: number[];
+  action: SubscriptionBulkAction;
+  days?: number;
+  daily?: boolean;
+  weekly?: boolean;
+  monthly?: boolean;
 }
 
 export interface SubscriptionBulkActionResult {
-  success_count: number
-  failed_count: number
-  results: Array<{ subscription_id: number; success: boolean; error?: string }>
+  success_count: number;
+  failed_count: number;
+  results: Array<{ subscription_id: number; success: boolean; error?: string }>;
 }
 
 export interface BulkAssignSubscriptionResult {
-  success_count: number
-  created_count: number
-  reused_count: number
-  failed_count: number
-  subscriptions: UserSubscription[]
-  errors: string[]
-  statuses?: Record<string, 'created' | 'reused' | 'failed'>
+  success_count: number;
+  created_count: number;
+  reused_count: number;
+  failed_count: number;
+  subscriptions: UserSubscription[];
+  errors: string[];
+  statuses?: Record<string, "created" | "reused" | "failed">;
 }
 
 export async function bulkAction(
   request: SubscriptionBulkActionRequest,
-  idempotencyKey: string
+  idempotencyKey: string,
 ): Promise<SubscriptionBulkActionResult> {
   const { data } = await apiClient.post<SubscriptionBulkActionResult>(
-    '/admin/subscriptions/bulk-action',
+    "/admin/subscriptions/bulk-action",
     request,
-    { headers: { 'Idempotency-Key': idempotencyKey } }
-  )
-  return data
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  );
+  return data;
 }
 
 /**
@@ -63,29 +64,29 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    status?: 'active' | 'expired' | 'revoked' | 'suspended'
-    user_id?: number
-    group_id?: number
-    platform?: string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    status?: "active" | "expired" | "revoked" | "suspended";
+    user_id?: number;
+    group_id?: number;
+    platform?: string;
+    sort_by?: string;
+    sort_order?: "asc" | "desc";
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal;
+  },
 ): Promise<PaginatedResponse<UserSubscription>> {
   const { data } = await apiClient.get<PaginatedResponse<UserSubscription>>(
-    '/admin/subscriptions',
+    "/admin/subscriptions",
     {
       params: {
         page,
         page_size: pageSize,
-        ...filters
+        ...filters,
       },
-      signal: options?.signal
-    }
-  )
-  return data
+      signal: options?.signal,
+    },
+  );
+  return data;
 }
 
 /**
@@ -94,8 +95,10 @@ export async function list(
  * @returns Subscription details
  */
 export async function getById(id: number): Promise<UserSubscription> {
-  const { data } = await apiClient.get<UserSubscription>(`/admin/subscriptions/${id}`)
-  return data
+  const { data } = await apiClient.get<UserSubscription>(
+    `/admin/subscriptions/${id}`,
+  );
+  return data;
 }
 
 /**
@@ -104,8 +107,10 @@ export async function getById(id: number): Promise<UserSubscription> {
  * @returns Subscription progress with usage stats
  */
 export async function getProgress(id: number): Promise<SubscriptionProgress> {
-  const { data } = await apiClient.get<SubscriptionProgress>(`/admin/subscriptions/${id}/progress`)
-  return data
+  const { data } = await apiClient.get<SubscriptionProgress>(
+    `/admin/subscriptions/${id}/progress`,
+  );
+  return data;
 }
 
 /**
@@ -113,9 +118,14 @@ export async function getProgress(id: number): Promise<SubscriptionProgress> {
  * @param request - Assignment request
  * @returns Created subscription
  */
-export async function assign(request: AssignSubscriptionRequest): Promise<UserSubscription> {
-  const { data } = await apiClient.post<UserSubscription>('/admin/subscriptions/assign', request)
-  return data
+export async function assign(
+  request: AssignSubscriptionRequest,
+): Promise<UserSubscription> {
+  const { data } = await apiClient.post<UserSubscription>(
+    "/admin/subscriptions/assign",
+    request,
+  );
+  return data;
 }
 
 /**
@@ -124,13 +134,13 @@ export async function assign(request: AssignSubscriptionRequest): Promise<UserSu
  * @returns Per-user assignment outcomes and created or reused subscriptions
  */
 export async function bulkAssign(
-  request: BulkAssignSubscriptionRequest
+  request: BulkAssignSubscriptionRequest,
 ): Promise<BulkAssignSubscriptionResult> {
   const { data } = await apiClient.post<BulkAssignSubscriptionResult>(
-    '/admin/subscriptions/bulk-assign',
-    request
-  )
-  return data
+    "/admin/subscriptions/bulk-assign",
+    request,
+  );
+  return data;
 }
 
 /**
@@ -141,13 +151,13 @@ export async function bulkAssign(
  */
 export async function extend(
   id: number,
-  request: ExtendSubscriptionRequest
+  request: ExtendSubscriptionRequest,
 ): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(
     `/admin/subscriptions/${id}/extend`,
-    request
-  )
-  return data
+    request,
+  );
+  return data;
 }
 
 /**
@@ -156,8 +166,10 @@ export async function extend(
  * @returns Success confirmation
  */
 export async function revoke(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>(`/admin/subscriptions/${id}/revoke`)
-  return data
+  const { data } = await apiClient.post<{ message: string }>(
+    `/admin/subscriptions/${id}/revoke`,
+  );
+  return data;
 }
 
 /**
@@ -166,8 +178,10 @@ export async function revoke(id: number): Promise<{ message: string }> {
  * @returns Restored subscription
  */
 export async function restore(id: number): Promise<UserSubscription> {
-  const { data } = await apiClient.post<UserSubscription>(`/admin/subscriptions/${id}/restore`)
-  return data
+  const { data } = await apiClient.post<UserSubscription>(
+    `/admin/subscriptions/${id}/restore`,
+  );
+  return data;
 }
 
 /**
@@ -178,13 +192,13 @@ export async function restore(id: number): Promise<UserSubscription> {
  */
 export async function resetQuota(
   id: number,
-  options: { daily: boolean; weekly: boolean; monthly: boolean }
+  options: { daily: boolean; weekly: boolean; monthly: boolean },
 ): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(
     `/admin/subscriptions/${id}/reset-quota`,
-    options
-  )
-  return data
+    options,
+  );
+  return data;
 }
 
 /**
@@ -197,15 +211,15 @@ export async function resetQuota(
 export async function listByGroup(
   groupId: number,
   page: number = 1,
-  pageSize: number = 20
+  pageSize: number = 20,
 ): Promise<PaginatedResponse<UserSubscription>> {
   const { data } = await apiClient.get<PaginatedResponse<UserSubscription>>(
     `/admin/groups/${groupId}/subscriptions`,
     {
-      params: { page, page_size: pageSize }
-    }
-  )
-  return data
+      params: { page, page_size: pageSize },
+    },
+  );
+  return data;
 }
 
 /**
@@ -218,15 +232,15 @@ export async function listByGroup(
 export async function listByUser(
   userId: number,
   page: number = 1,
-  pageSize: number = 20
+  pageSize: number = 20,
 ): Promise<PaginatedResponse<UserSubscription>> {
   const { data } = await apiClient.get<PaginatedResponse<UserSubscription>>(
     `/admin/users/${userId}/subscriptions`,
     {
-      params: { page, page_size: pageSize }
-    }
-  )
-  return data
+      params: { page, page_size: pageSize },
+    },
+  );
+  return data;
 }
 
 export const subscriptionsAPI = {
@@ -241,7 +255,7 @@ export const subscriptionsAPI = {
   restore,
   resetQuota,
   listByGroup,
-  listByUser
-}
+  listByUser,
+};
 
-export default subscriptionsAPI
+export default subscriptionsAPI;

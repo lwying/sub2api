@@ -11,12 +11,14 @@
 ## Goals / Non-Goals
 
 **Goals:**
+
 - 固定账号模式的运行时逻辑放在 service 层，handler 只做分支与错误映射。
 - 合并逻辑是纯函数，可独立单测。
 - 缓存策略只有一套实现，OAuth 与 API Key 账号共用；固定账号模式不引入第二层分组级缓存。
 - 新字段在所有分组加载路径上都可见，特别是认证快照与 API Key 投影。
 
 **Non-Goals:**
+
 - 不改动调度器逻辑与普通请求的账号选择。
 - 不为账号解绑或删除增加对该配置的级联清理，运行时容忍失效 ID。
 - 固定账号关闭时保留本地生成 manifest 的路径；开启时以指定账号上游发现为先，映射在发现后应用。
@@ -25,16 +27,20 @@
 ## Decisions
 
 ### D1：配置以单个 JSONB 列存储
+
 `groups.codex_models_manifest_config`，领域类型 `domain.GroupCodexModelsManifestConfig{Enabled bool; AccountIDs []int64; FallbackToScheduler bool}`，JSON 键为 `enabled`、`account_ids`、`fallback_to_scheduler`。
+
 - 备选：三个独立列。否决：三个字段语义耦合，JSON 保证原子写入，且与 `models_list_config` 一致。
 - 迁移文件 `234_group_codex_models_manifest_config.sql`：`ADD COLUMN IF NOT EXISTS ... JSONB NOT NULL DEFAULT '{}'::jsonb`。ent schema 使用 `field.JSON(...).Default(domain.GroupCodexModelsManifestConfig{})`。
 
 ### D2：校验放在 admin service，创建路径拒绝开启
+
 - 新文件 `group_codex_models_manifest.go` 提供 `normalizeCodexModelsManifestConfig`（平台非 openai 归零；去重保序；`enabled=false` 时保留列表便于再次启用）与 `validateCodexModelsManifestConfig(ctx, groupID, cfg)`（`enabled=true` 时：非空、≤10、全部属于 `accountRepo.ListByGroup(groupID)` 且平台 openai）。
 - 创建路径：`enabled=true` 直接 400。原因：账号绑定发生在分组创建之后，创建时无法校验成员关系；前端也不展示。
 - 备选：校验放 handler。否决：需要访问账号仓储，且创建与更新两条路径共用，service 是唯一收口。
 
 ### D3：运行时入口与回退策略
+
 - handler 在本地生成分支之前判断 `group.Platform == openai && cfg.Enabled`，调用 `gatewayService.FetchPinnedCodexModelsManifest(ctx, group, clientVersion)`。
 - 返回值：`(*OpenAIModelsResponse, *Account, error)`，`*Account` 为配置顺序中第一个成功账号，用于 `setOpsSelectedAccount`。
 - 「无可用账号」以哨兵错误 `ErrNoPinnedCodexModelsAccounts` 表示；「全部失败」返回最后一个上游错误。handler 根据 `FallbackToScheduler` 决定：true 时跌入现有调度器循环；false 时无可用账号返回 503、全部失败按 `infraerrors.Code(err)` 返回。
@@ -43,12 +49,14 @@
 - 备选：复用 `BuildGroupConfiguredCodexModelsManifest` 已加载的账号列表以省一次查询。否决：那两个列表是可调度集合，会漏掉限流中的账号；一次按分组的查询成本可接受。
 
 ### D4：并发拉取与纯函数合并
+
 - 用 `sync.WaitGroup` 对每个可用账号并发执行：`FetchCodexModelsManifest(ctx, acc, clientVersion, "")` → API Key 账号再 `CompleteAPIKeyCodexModelsManifestForClient`。结果写入按配置顺序索引的切片，失败记录到同下标的错误切片；各账号独立完成，不因单账号失败取消其他请求。
 - Codex 合并函数 `mergeCodexModelsManifestBodies(bodies [][]byte) ([]byte, error)`：以第一个 body 的顶层信封为基底，`models` 按 slug 并集，先出现者优先；slug 为空或解析失败的条目按出现顺序保留一次。输出后设置 `ETag = codexModelsManifestBodyETag(body)`，再交给 `MergeGroupConfiguredCodexModels` 做分组过滤与 304 判断。
 - 部分失败：`slog.Warn` 带 group_id 与失败账号 ID 列表。
 - 实现放在新文件 `openai_codex_models_pinned.go`，避免继续膨胀 2300 行的主文件。
 
 ### D5：缓存统一并调整时效
+
 - 将 `fetchCachedAPIKeyCodexModelsManifest` 泛化为 `fetchCachedOpenAIModels(ctx, request, fetch, ifNoneMatch)`，`fetch func(ctx, ifNoneMatch) (*CodexModelsManifest, error)` 由调用方提供：API Key 路径传 `fetchCodexModelsManifestUpstream`；OAuth 路径传一个包含 agent identity 任务恢复逻辑的闭包。`handleCodexModelsManifestAccountAuthError` 在 OAuth 闭包返回错误时照旧调用。
 - 常量：`openAIModelsCacheTTL` 30s → 60s；`openAIModelsCacheStaleTTL` 保持 5 分钟；超过 5 分钟 `get` 删除条目返回 miss，调用方同步等待单飞结果，这与「超期强制等待上游刷新」一致，无需新状态。
 - 缓存键已包含 Authorization 与 Version 头，令牌刷新自然失效旧条目；`client_version` 不同的客户端各占一个条目。
@@ -58,6 +66,7 @@
 - 备选：为固定账号模式增加分组级合并结果缓存。否决：账号级缓存命中后合并只是内存操作，再加一层会引入两套时效与失效问题。
 
 ### D6：前端拆出独立组件
+
 - 新组件 `components/admin/group/CodexManifestAccountsField.vue`：props 为 `groupId`、`modelValue`（`{enabled, account_ids, fallback_to_scheduler}`）与已选账号名称映射；内部实现开关、标签列表、带防抖的搜索输入与下拉、回退子开关。搜索调用 `adminAPI.accounts.list(1, 20, {search, platform: 'openai', group: String(groupId)})`。
 - `GroupsView.vue` 只在编辑对话框 OpenAI 区块挂载组件，打开编辑时用 `adminAPI.accounts.getById` 解析已存 ID 的名称，失败则显示 `#<id>`。提交时开关打开且列表为空则 toast 报错并阻止。
 - 备选：在 GroupsView 内联复制模型路由的搜索状态。否决：会再引入一套按 key 索引的搜索状态，文件已过大。

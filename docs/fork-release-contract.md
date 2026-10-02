@@ -15,13 +15,13 @@
 
 fork 使用独立、递增的三段数字版本 `vX.Y.Z`：
 
-| 规则 | 拒绝码 |
-| --- | --- |
-| 必须是 `vX.Y.Z`：三段、全数字、无前导零、无预发布/构建后缀（`v0.2`、`v0.2.8-rc.1`、`V0.2.8`、`0.2.8` 均拒绝） | `bad_format` |
-| 必须严格高于 fork 已发布基线 | `not_increasing` |
-| 必须是 fork 自己决定发布的版本，不能只是上游同步误带的版本 | `upstream_only` |
-| fork 已发布基线读不到时拒绝发布，而不是当作“从未发布” | `fork_baseline_unknown` |
-| 触发入口只允许 tag push 与 `workflow_dispatch` | `unknown_event` |
+| 规则                                                                                                          | 拒绝码                  |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 必须是 `vX.Y.Z`：三段、全数字、无前导零、无预发布/构建后缀（`v0.2`、`v0.2.8-rc.1`、`V0.2.8`、`0.2.8` 均拒绝） | `bad_format`            |
+| 必须严格高于 fork 已发布基线                                                                                  | `not_increasing`        |
+| 必须是 fork 自己决定发布的版本，不能只是上游同步误带的版本                                                    | `upstream_only`         |
+| fork 已发布基线读不到时拒绝发布，而不是当作“从未发布”                                                         | `fork_baseline_unknown` |
+| 触发入口只允许 tag push 与 `workflow_dispatch`                                                                | `unknown_event`         |
 
 手动发布以该次 `workflow_dispatch` 的 `simple_release` 输入决定是否仅发布镜像；tag push 则按仓库变量 `SIMPLE_RELEASE` 决定。两个入口的发布任务共用串行队列，不会同时写入可变的镜像 `latest` 标签或回写 VERSION。
 
@@ -40,10 +40,10 @@ tag 当基线会把上游版本误当成 fork 已发布版本。门禁的辅助�
 
 基线来自 `gh release list --limit 1000`，采集过程本身有三类不确定，处理如下：
 
-| 情况 | 标记 | 门禁行为 |
-| --- | --- | --- |
-| fork Releases 查询失败 | `fork_baseline_unknown` | **拒绝**：读不到基线不等于没有基线 |
-| 返回条数达到分页上限 | `fork_baseline_truncated` | **拒绝**：被截断的列表可能恰好漏掉最高的已发布版本 |
+| 情况                             | 标记                        | 门禁行为                                                                        |
+| -------------------------------- | --------------------------- | ------------------------------------------------------------------------------- |
+| fork Releases 查询失败           | `fork_baseline_unknown`     | **拒绝**：读不到基线不等于没有基线                                              |
+| 返回条数达到分页上限             | `fork_baseline_truncated`   | **拒绝**：被截断的列表可能恰好漏掉最高的已发布版本                              |
 | upstream tags 分页查询或解析失败 | `upstream_versions_unknown` | 不拒绝，但判定里记录告警：该次「上游误带版本」检查未执行（fork 基线检查仍生效） |
 
 工作流以分页方式读取 upstream tags；查询或解析失败仍按上表降级，不会把失败当成空列表。这三项都是**本地无法验证的远端事实**：`GITHUB_TOKEN` 能否读取 fork Releases 与
@@ -55,10 +55,10 @@ upstream tags、fork 真实 Release 数量是否远低于上限 1000、以及上
 
 ## 3. Release 资产契约
 
-| 发布形态 | 配置 | 可安装平台 |
-| --- | --- | --- |
-| 完整二进制发布 | `.goreleaser.yaml`：`archives` + `checksums.txt` | 有对应归档的平台 |
-| 仅镜像发布 | `.goreleaser.simple.yaml`：`archives: []`、`checksum.disable: true`、`release.skip_upload: true` | 无（任何平台都不可安装） |
+| 发布形态       | 配置                                                                                             | 可安装平台               |
+| -------------- | ------------------------------------------------------------------------------------------------ | ------------------------ |
+| 完整二进制发布 | `.goreleaser.yaml`：`archives` + `checksums.txt`                                                 | 有对应归档的平台         |
+| 仅镜像发布     | `.goreleaser.simple.yaml`：`archives: []`、`checksum.disable: true`、`release.skip_upload: true` | 无（任何平台都不可安装） |
 
 完整二进制发布必须同时具备：
 

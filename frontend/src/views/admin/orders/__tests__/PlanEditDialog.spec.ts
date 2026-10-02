@@ -1,46 +1,48 @@
-import { describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from "vitest";
+import { defineComponent } from "vue";
+import { mount } from "@vue/test-utils";
 
-import PlanEditDialog from '../PlanEditDialog.vue'
-import type { AdminGroup } from '@/types'
+import PlanEditDialog from "../PlanEditDialog.vue";
+import type { AdminGroup } from "@/types";
 
-vi.mock('vue-i18n', () => ({
+vi.mock("vue-i18n", () => ({
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) => {
-      if (key === 'payment.admin.subscriptionCnyPayPreview') return `preview ${params?.amount}`
-      if (key === 'payment.admin.subscriptionCnyPayPreviewWithFee') return `fee ${params?.feeRate} ${params?.total}`
-      return key
+      if (key === "payment.admin.subscriptionCnyPayPreview")
+        return `preview ${params?.amount}`;
+      if (key === "payment.admin.subscriptionCnyPayPreviewWithFee")
+        return `fee ${params?.feeRate} ${params?.total}`;
+      return key;
     },
   }),
-}))
+}));
 
-vi.mock('@/stores/app', () => ({
+vi.mock("@/stores/app", () => ({
   useAppStore: () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
   }),
-}))
+}));
 
-vi.mock('@/api/admin/payment', () => ({
+vi.mock("@/api/admin/payment", () => ({
   adminPaymentAPI: {
     createPlan: vi.fn(),
     updatePlan: vi.fn(),
   },
-}))
+}));
 
 const BaseDialogStub = defineComponent({
-  name: 'BaseDialog',
+  name: "BaseDialog",
   props: {
     show: Boolean,
     title: String,
     width: String,
   },
   template: '<div v-if="show"><slot /><slot name="footer" /></div>',
-})
+});
 
 const SelectStub = defineComponent({
-  name: 'SelectStub',
+  name: "SelectStub",
   props: {
     modelValue: [String, Number],
     options: {
@@ -49,13 +51,13 @@ const SelectStub = defineComponent({
     },
     placeholder: String,
   },
-  emits: ['update:modelValue'],
+  emits: ["update:modelValue"],
   setup(_props, { emit }) {
     const onChange = (event: Event) => {
-      const value = (event.target as HTMLSelectElement).value
-      emit('update:modelValue', value === '' ? null : Number(value))
-    }
-    return { onChange }
+      const value = (event.target as HTMLSelectElement).value;
+      emit("update:modelValue", value === "" ? null : Number(value));
+    };
+    return { onChange };
   },
   template: `
     <select
@@ -73,18 +75,18 @@ const SelectStub = defineComponent({
       </option>
     </select>
   `,
-})
+});
 
 const groupFixture = (overrides: Partial<AdminGroup>): AdminGroup => ({
   id: 1,
-  name: 'OpenAI',
+  name: "OpenAI",
   description: null,
-  platform: 'openai',
+  platform: "openai",
   rate_multiplier: 1,
   rpm_limit: 0,
   is_exclusive: false,
-  status: 'active',
-  subscription_type: 'subscription',
+  status: "active",
+  subscription_type: "subscription",
   daily_limit_usd: null,
   weekly_limit_usd: null,
   monthly_limit_usd: null,
@@ -95,8 +97,8 @@ const groupFixture = (overrides: Partial<AdminGroup>): AdminGroup => ({
   image_price_2k: null,
   image_price_4k: null,
   peak_rate_enabled: false,
-  peak_start: '',
-  peak_end: '',
+  peak_start: "",
+  peak_end: "",
   peak_rate_multiplier: 1,
   claude_code_only: false,
   thinking_disabled_strict: false,
@@ -105,21 +107,21 @@ const groupFixture = (overrides: Partial<AdminGroup>): AdminGroup => ({
   allow_messages_dispatch: false,
   require_oauth_only: false,
   require_privacy_set: false,
-  created_at: '2026-07-01T00:00:00Z',
-  updated_at: '2026-07-01T00:00:00Z',
+  created_at: "2026-07-01T00:00:00Z",
+  updated_at: "2026-07-01T00:00:00Z",
   model_routing: null,
   model_routing_enabled: false,
   mcp_xml_inject: false,
   sort_order: 0,
   ...overrides,
-})
+});
 
 function mountDialog({
   groups = [],
   paymentConfig = null,
 }: {
-  groups?: AdminGroup[]
-  paymentConfig?: Record<string, unknown> | null
+  groups?: AdminGroup[];
+  paymentConfig?: Record<string, unknown> | null;
 } = {}) {
   return mount(PlanEditDialog, {
     props: {
@@ -136,62 +138,64 @@ function mountDialog({
         GroupBadge: true,
       },
     },
-  })
+  });
 }
 
-describe('PlanEditDialog', () => {
-  it('shows CNY channel charge using the configured subscription rate and fee', async () => {
+describe("PlanEditDialog", () => {
+  it("shows CNY channel charge using the configured subscription rate and fee", async () => {
     const wrapper = mountDialog({
       paymentConfig: {
         subscription_usd_to_cny_rate: 7.15,
         recharge_fee_rate: 2.5,
       },
-    })
+    });
 
-    await wrapper.find('input[type="number"]').setValue('9.99')
+    await wrapper.find('input[type="number"]').setValue("9.99");
 
-    expect(wrapper.text()).toContain('preview')
-    expect(wrapper.text()).toContain('¥71.43')
-    expect(wrapper.text()).toContain('fee 2.5')
-    expect(wrapper.text()).toContain('¥73.22')
-  })
+    expect(wrapper.text()).toContain("preview");
+    expect(wrapper.text()).toContain("¥71.43");
+    expect(wrapper.text()).toContain("fee 2.5");
+    expect(wrapper.text()).toContain("¥73.22");
+  });
 
-  it('hides the preview when the subscription rate is not configured', async () => {
+  it("hides the preview when the subscription rate is not configured", async () => {
     const wrapper = mountDialog({
       paymentConfig: {
         subscription_usd_to_cny_rate: 0,
         recharge_fee_rate: 2.5,
       },
-    })
+    });
 
-    await wrapper.find('input[type="number"]').setValue('9.99')
+    await wrapper.find('input[type="number"]').setValue("9.99");
 
-    expect(wrapper.text()).not.toContain('preview')
-    expect(wrapper.text()).not.toContain('¥71.43')
-  })
+    expect(wrapper.text()).not.toContain("preview");
+    expect(wrapper.text()).not.toContain("¥71.43");
+  });
 
-  it('allows composite subscription groups for payment plans', () => {
+  it("allows composite subscription groups for payment plans", () => {
     const wrapper = mountDialog({
       groups: [
         groupFixture({
           id: 10,
-          name: 'OpenAI + Claude + Gemini + Grok',
-          platform: 'composite',
+          name: "OpenAI + Claude + Gemini + Grok",
+          platform: "composite",
           rate_multiplier: 1.2,
-          subscription_type: 'subscription',
+          subscription_type: "subscription",
         }),
         groupFixture({
           id: 11,
-          name: 'Standard OpenAI',
-          platform: 'openai',
-          subscription_type: 'standard',
+          name: "Standard OpenAI",
+          platform: "openai",
+          subscription_type: "standard",
         }),
       ],
-    })
+    });
 
-    const options = wrapper.findAll('option').map(option => option.text())
+    const options = wrapper.findAll("option").map((option) => option.text());
 
-    expect(options).toContain('OpenAI + Claude + Gemini + Grok — composite (1.2x)')
-    expect(options).not.toContain('Standard OpenAI — openai (1x)')
-  })
-})
+    expect(options).toContain(
+      "OpenAI + Claude + Gemini + Grok — composite (1.2x)",
+    );
+    expect(options).not.toContain("Standard OpenAI — openai (1x)");
+  });
+});

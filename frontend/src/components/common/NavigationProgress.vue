@@ -3,13 +3,13 @@
  * 导航进度条组件
  * 在页面顶部显示加载进度，提供导航反馈
  */
-import { computed } from 'vue'
-import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
+import { computed } from "vue";
+import { useNavigationLoadingState } from "@/composables/useNavigationLoading";
 
-const { isLoading } = useNavigationLoadingState()
+const { isLoading } = useNavigationLoadingState();
 
 // 进度条可见性
-const isVisible = computed(() => isLoading.value)
+const isVisible = computed(() => isLoading.value);
 </script>
 
 <template>
@@ -46,9 +46,9 @@ const isVisible = computed(() => isLoading.value)
   background: linear-gradient(
     90deg,
     transparent 0%,
-    theme('colors.primary.400') 20%,
-    theme('colors.primary.500') 50%,
-    theme('colors.primary.400') 80%,
+    theme("colors.primary.400") 20%,
+    theme("colors.primary.500") 50%,
+    theme("colors.primary.400") 80%,
     transparent 100%
   );
   animation: progress-slide 1.5s ease-in-out infinite;
@@ -59,9 +59,9 @@ const isVisible = computed(() => isLoading.value)
   background: linear-gradient(
     90deg,
     transparent 0%,
-    theme('colors.primary.500') 20%,
-    theme('colors.primary.400') 50%,
-    theme('colors.primary.500') 80%,
+    theme("colors.primary.500") 20%,
+    theme("colors.primary.400") 50%,
+    theme("colors.primary.500") 80%,
     transparent 100%
   );
 }

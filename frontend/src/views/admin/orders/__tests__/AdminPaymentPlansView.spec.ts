@@ -1,42 +1,42 @@
-import { flushPromises, mount } from '@vue/test-utils'
-import { createPinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import AdminPaymentPlansView from '../AdminPaymentPlansView.vue'
+import AdminPaymentPlansView from "../AdminPaymentPlansView.vue";
 
 const { getPlans, getConfig, getGroups } = vi.hoisted(() => ({
   getPlans: vi.fn(),
   getConfig: vi.fn(),
   getGroups: vi.fn(),
-}))
+}));
 
-vi.mock('@/api/admin/payment', () => ({
+vi.mock("@/api/admin/payment", () => ({
   adminPaymentAPI: {
     getPlans,
     getConfig,
   },
-}))
+}));
 
-vi.mock('@/api/admin', () => ({
+vi.mock("@/api/admin", () => ({
   default: {
     groups: {
       getAll: getGroups,
     },
   },
-}))
+}));
 
-vi.mock('vue-i18n', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('vue-i18n')>()
+vi.mock("vue-i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("vue-i18n")>();
   return {
     ...actual,
     useI18n: () => ({
       t: (key: string) => key,
     }),
-  }
-})
+  };
+});
 
 const DataTableStub = {
-  props: ['data'],
+  props: ["data"],
   template: `
     <div>
       <div v-for="row in data" :key="row.id">
@@ -44,50 +44,50 @@ const DataTableStub = {
       </div>
     </div>
   `,
-}
+};
 
-describe('AdminPaymentPlansView', () => {
+describe("AdminPaymentPlansView", () => {
   beforeEach(() => {
-    getGroups.mockResolvedValue([])
-    getConfig.mockResolvedValue({ data: {} })
+    getGroups.mockResolvedValue([]);
+    getConfig.mockResolvedValue({ data: {} });
     getPlans.mockResolvedValue({
       data: [
         {
           id: 1,
-          name: 'CNY plan',
+          name: "CNY plan",
           group_id: 1,
           price: 499,
           original_price: 599,
-          currency: 'CNY',
+          currency: "CNY",
           validity_days: 30,
-          validity_unit: 'day',
+          validity_unit: "day",
           sort_order: 0,
           for_sale: true,
           features: [],
         },
         {
           id: 2,
-          name: 'Legacy plan',
+          name: "Legacy plan",
           group_id: 1,
           price: 10,
           original_price: 0,
-          currency: '',
+          currency: "",
           validity_days: 30,
-          validity_unit: 'day',
+          validity_unit: "day",
           sort_order: 0,
           for_sale: true,
           features: [],
         },
       ],
-    })
-  })
+    });
+  });
 
-  it('uses the configured currency symbol and keeps legacy prices in USD', async () => {
+  it("uses the configured currency symbol and keeps legacy prices in USD", async () => {
     const wrapper = mount(AdminPaymentPlansView, {
       global: {
         plugins: [createPinia()],
         stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
+          AppLayout: { template: "<div><slot /></div>" },
           DataTable: DataTableStub,
           ConfirmDialog: true,
           GroupBadge: true,
@@ -95,12 +95,12 @@ describe('AdminPaymentPlansView', () => {
           PlanEditDialog: true,
         },
       },
-    })
+    });
 
-    await flushPromises()
+    await flushPromises();
 
-    expect(wrapper.text()).toContain('¥499.00CNY')
-    expect(wrapper.text()).toContain('¥599.00')
-    expect(wrapper.text()).toContain('$10.00')
-  })
-})
+    expect(wrapper.text()).toContain("¥499.00CNY");
+    expect(wrapper.text()).toContain("¥599.00");
+    expect(wrapper.text()).toContain("$10.00");
+  });
+});

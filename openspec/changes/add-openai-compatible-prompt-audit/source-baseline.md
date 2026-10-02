@@ -4,16 +4,16 @@
 
 本文件记录用于本 change 功能对照的源仓库状态。参考工作区仍可继续变化，但本 change 已通过第 6 节登记的只读 patch bundle 固定实施基线；后续实现只以该冻结包和本 change specs 为依据。
 
-| 字段 | 值 |
-| --- | --- |
-| 源仓库 | `/Users/mt/code/mt-ai/aicodex/aicodex-api` |
-| 采集时间 | `2026-07-16 20:21:19 CST (+0800)` |
-| 分支 | `yjb` |
-| HEAD | `7a50378851a80650cb0c086260b23abeb3469e6b` |
-| 工作区 | dirty |
-| 已跟踪差异 | 38 files changed, 1306 insertions(+), 227 deletions(-) |
+| 字段       | 值                                                            |
+| ---------- | ------------------------------------------------------------- |
+| 源仓库     | `/Users/mt/code/mt-ai/aicodex/aicodex-api`                    |
+| 采集时间   | `2026-07-16 20:21:19 CST (+0800)`                             |
+| 分支       | `yjb`                                                         |
+| HEAD       | `7a50378851a80650cb0c086260b23abeb3469e6b`                    |
+| 工作区     | dirty                                                         |
+| 已跟踪差异 | 38 files changed, 1306 insertions(+), 227 deletions(-)        |
 | 未跟踪范围 | Prompt Guard 实现/测试 6 个文件，加 1 个 OpenSpec change 目录 |
-| 冻结状态 | **已用只读 patch bundle 冻结并在 detached worktree 恢复验证** |
+| 冻结状态   | **已用只读 patch bundle 冻结并在 detached worktree 恢复验证** |
 
 当前 HEAD 只代表已提交历史，不能单独代表要迁移的完整功能。同步 fail-closed Guard、出站安全校验、WebSocket/路由顺序测试以及相应 OpenSpec 当前存在于未提交或未跟踪状态。因此，本 change 的临时功能参考是“上述 HEAD + 采集时磁盘工作区”，最终行为权威仍是本 change 的 specs。
 
@@ -117,17 +117,17 @@
 
 ## 6. 最终冻结登记
 
-| 字段 | 待填写值 |
-| --- | --- |
-| 冻结方式 | 只读 tracked patch + untracked tar archive |
-| 冻结 commit/tag | base commit `7a50378851a80650cb0c086260b23abeb3469e6b`（detached restore） |
-| patch/archive 绝对路径 | `/Users/mt/code/mt-ai/sub2api/sub2api-mt/openspec/changes/add-openai-compatible-prompt-audit/source-freeze/` |
-| manifest SHA-256 | `badab312bf6af4d2c77857a9400381f4da4fbf45722d9f4a6df23bc7005273b6` |
-| tracked patch SHA-256 | `f751a13cce3f3a73cd60cae3aececcef6e1e76dcec8c551a7a4747f032234d2b` |
-| untracked archive SHA-256 | `1536e2781703b7620e26f2d08b249431fa5846ad9e32b2e8b0d547c3fa3b3632` |
-| 冻结人/复核人 | Codex；由恢复后的文件清单、`git diff --check` 和测试命令复核 |
-| 冻结时间 | `2026-07-16 20:21:19 CST (+0800)` |
-| 源测试结果 | 恢复副本中 Prompt Audit 核心、router、relay、gateway transport 目标测试全部通过，详见 `source-freeze/MANIFEST.md` |
+| 字段                      | 待填写值                                                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 冻结方式                  | 只读 tracked patch + untracked tar archive                                                                        |
+| 冻结 commit/tag           | base commit `7a50378851a80650cb0c086260b23abeb3469e6b`（detached restore）                                        |
+| patch/archive 绝对路径    | `/Users/mt/code/mt-ai/sub2api/sub2api-mt/openspec/changes/add-openai-compatible-prompt-audit/source-freeze/`      |
+| manifest SHA-256          | `badab312bf6af4d2c77857a9400381f4da4fbf45722d9f4a6df23bc7005273b6`                                                |
+| tracked patch SHA-256     | `f751a13cce3f3a73cd60cae3aececcef6e1e76dcec8c551a7a4747f032234d2b`                                                |
+| untracked archive SHA-256 | `1536e2781703b7620e26f2d08b249431fa5846ad9e32b2e8b0d547c3fa3b3632`                                                |
+| 冻结人/复核人             | Codex；由恢复后的文件清单、`git diff --check` 和测试命令复核                                                      |
+| 冻结时间                  | `2026-07-16 20:21:19 CST (+0800)`                                                                                 |
+| 源测试结果                | 恢复副本中 Prompt Audit 核心、router、relay、gateway transport 目标测试全部通过，详见 `source-freeze/MANIFEST.md` |
 
 ## 7. 复核命令
 

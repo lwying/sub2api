@@ -1,8 +1,8 @@
-import type { AccountPlatform, GroupPlatform } from '@/types'
+import type { AccountPlatform, GroupPlatform } from "@/types";
 
 export interface PlatformOption<T extends string = string> {
-  value: T
-  label: string
+  value: T;
+  label: string;
 }
 
 /**
@@ -11,20 +11,20 @@ export interface PlatformOption<T extends string = string> {
  * do not silently disappear from list filters.
  */
 export const CONCRETE_PLATFORM_OPTIONS = [
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'antigravity', label: 'Antigravity' },
-  { value: 'grok', label: 'Grok' },
-  { value: 'kimi', label: 'Kimi' },
-  { value: 'zhipu', label: 'Zhipu GLM' },
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'minimax', label: 'MiniMax' },
-  { value: 'opencode_go', label: 'OpenCode' }
-] as const satisfies readonly PlatformOption<AccountPlatform>[]
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai", label: "OpenAI" },
+  { value: "gemini", label: "Gemini" },
+  { value: "antigravity", label: "Antigravity" },
+  { value: "grok", label: "Grok" },
+  { value: "kimi", label: "Kimi" },
+  { value: "zhipu", label: "Zhipu GLM" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "minimax", label: "MiniMax" },
+  { value: "opencode_go", label: "OpenCode" },
+] as const satisfies readonly PlatformOption<AccountPlatform>[];
 
 /** Platforms that can own a group. */
 export const GROUP_PLATFORM_OPTIONS = [
   ...CONCRETE_PLATFORM_OPTIONS,
-  { value: 'composite', label: 'Composite' }
-] as const satisfies readonly PlatformOption<GroupPlatform>[]
+  { value: "composite", label: "Composite" },
+] as const satisfies readonly PlatformOption<GroupPlatform>[];

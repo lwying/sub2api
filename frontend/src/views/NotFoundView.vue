@@ -16,7 +16,8 @@
       <!-- 404 Display -->
       <div class="mb-8">
         <div class="relative inline-block">
-          <span class="text-[12rem] font-bold leading-none text-gray-100 dark:text-dark-800"
+          <span
+            class="text-[12rem] font-bold leading-none text-gray-100 dark:text-dark-800"
             >404</span
           >
           <div class="absolute inset-0 flex items-center justify-center">
@@ -44,7 +45,7 @@
       <!-- Text Content -->
       <div class="mb-8">
         <h1 class="mb-3 text-2xl font-bold text-gray-900 dark:text-white">
-          {{ t('errors.pageNotFound') }}
+          {{ t("errors.pageNotFound") }}
         </h1>
         <p class="text-gray-500 dark:text-dark-400">
           The page you are looking for doesn't exist or has been moved.
@@ -78,14 +79,14 @@
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
-import Icon from '@/components/icons/Icon.vue'
+import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
+import Icon from "@/components/icons/Icon.vue";
 
-const { t } = useI18n()
-const router = useRouter()
+const { t } = useI18n();
+const router = useRouter();
 
 function goBack(): void {
-  router.back()
+  router.back();
 }
 </script>

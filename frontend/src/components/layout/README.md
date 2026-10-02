@@ -20,7 +20,7 @@ Main application layout with sidebar and header.
 </template>
 
 <script setup lang="ts">
-import { AppLayout } from '@/components/layout'
+import { AppLayout } from "@/components/layout";
 </script>
 ```
 
@@ -114,14 +114,16 @@ Simple centered layout for authentication pages (login/register).
     <template #footer>
       <p>
         Don't have an account?
-        <router-link to="/register" class="text-indigo-600 hover:underline"> Sign up </router-link>
+        <router-link to="/register" class="text-indigo-600 hover:underline">
+          Sign up
+        </router-link>
       </p>
     </template>
   </AuthLayout>
 </template>
 
 <script setup lang="ts">
-import { AuthLayout } from '@/components/layout'
+import { AuthLayout } from "@/components/layout";
 
 function handleLogin() {
   // Login logic
@@ -148,17 +150,17 @@ To set page titles in the header, add meta to your routes:
 // router/index.ts
 const routes = [
   {
-    path: '/dashboard',
+    path: "/dashboard",
     component: DashboardView,
-    meta: { title: 'Dashboard' }
+    meta: { title: "Dashboard" },
   },
   {
-    path: '/api-keys',
+    path: "/api-keys",
     component: ApiKeysView,
-    meta: { title: 'API Keys' }
-  }
+    meta: { title: "API Keys" },
+  },
   // ...
-]
+];
 ```
 
 ---
@@ -180,9 +182,9 @@ All components use TailwindCSS utility classes. Make sure your `tailwind.config.
 
 ```js
 module.exports = {
-  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}']
+  content: ["./index.html", "./src/**/*.{vue,js,ts,jsx,tsx}"],
   // ...
-}
+};
 ```
 
 ---

@@ -35,7 +35,10 @@ const enabledConfig = (): CodexModelsManifestConfig => ({
 });
 
 // 挂载一个 v-model 双向绑定的宿主，验证完整的选择→移除流程。
-const mountInteractive = (initial: CodexModelsManifestConfig, accountNames?: Record<number, string>) => {
+const mountInteractive = (
+  initial: CodexModelsManifestConfig,
+  accountNames?: Record<number, string>,
+) => {
   const host = defineComponent({
     setup() {
       const config = ref(initial);
@@ -59,7 +62,10 @@ const mountInteractive = (initial: CodexModelsManifestConfig, accountNames?: Rec
   });
 };
 
-const mountField = (modelValue: CodexModelsManifestConfig, accountNames?: Record<number, string>) =>
+const mountField = (
+  modelValue: CodexModelsManifestConfig,
+  accountNames?: Record<number, string>,
+) =>
   mount(CodexManifestAccountsField, {
     props: {
       groupId: 7,
@@ -86,20 +92,34 @@ describe("CodexManifestAccountsField", () => {
   it("hides account controls while disabled and reveals them after enabling", async () => {
     const wrapper = mountField(disabledConfig());
 
-    expect(wrapper.find('[data-testid="codex-manifest-search"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="codex-manifest-fallback-toggle"]').exists()).toBe(false);
-    expect(wrapper.text()).toContain("admin.groups.codexModelsManifest.disabledHint");
+    expect(wrapper.find('[data-testid="codex-manifest-search"]').exists()).toBe(
+      false,
+    );
+    expect(
+      wrapper.find('[data-testid="codex-manifest-fallback-toggle"]').exists(),
+    ).toBe(false);
+    expect(wrapper.text()).toContain(
+      "admin.groups.codexModelsManifest.disabledHint",
+    );
 
-    await wrapper.find('[data-testid="codex-manifest-toggle"]').trigger("click");
+    await wrapper
+      .find('[data-testid="codex-manifest-toggle"]')
+      .trigger("click");
 
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toHaveLength(1);
     expect(emitted?.[0]?.[0]).toMatchObject({ enabled: true });
 
     const enabled = mountField(enabledConfig());
-    expect(enabled.find('[data-testid="codex-manifest-search"]').exists()).toBe(true);
-    expect(enabled.find('[data-testid="codex-manifest-fallback-toggle"]').exists()).toBe(true);
-    expect(enabled.text()).toContain("admin.groups.codexModelsManifest.enabledHint");
+    expect(enabled.find('[data-testid="codex-manifest-search"]').exists()).toBe(
+      true,
+    );
+    expect(
+      enabled.find('[data-testid="codex-manifest-fallback-toggle"]').exists(),
+    ).toBe(true);
+    expect(enabled.text()).toContain(
+      "admin.groups.codexModelsManifest.enabledHint",
+    );
   });
 
   it("selects accounts from search results and removes them via tags", async () => {
@@ -114,7 +134,9 @@ describe("CodexManifestAccountsField", () => {
       { 5: "oauth-five" },
     );
 
-    const initialTags = wrapper.find('[data-testid="codex-manifest-selected-tags"]');
+    const initialTags = wrapper.find(
+      '[data-testid="codex-manifest-selected-tags"]',
+    );
     expect(initialTags.text()).toContain("oauth-five");
 
     const search = wrapper.find('[data-testid="codex-manifest-search"]');
@@ -135,7 +157,9 @@ describe("CodexManifestAccountsField", () => {
     expect(dropdown.text()).toContain("apikey-six");
 
     // 账号 6 未选中：点击加入。
-    const option = dropdown.findAll("button").find((b) => b.text().includes("apikey-six"));
+    const option = dropdown
+      .findAll("button")
+      .find((b) => b.text().includes("apikey-six"));
     await option!.trigger("click");
     await flushPromises();
 
@@ -194,19 +218,23 @@ describe("CodexManifestAccountsField", () => {
     // 有关键词但无结果：展示空状态提示而非静默无反应。
     const dropdown = wrapper.find('[data-testid="codex-manifest-dropdown"]');
     expect(dropdown.exists()).toBe(true);
-    expect(wrapper.find('[data-testid="codex-manifest-search-empty"]').text()).toBe(
-      "admin.groups.codexModelsManifest.searchEmpty",
-    );
+    expect(
+      wrapper.find('[data-testid="codex-manifest-search-empty"]').text(),
+    ).toBe("admin.groups.codexModelsManifest.searchEmpty");
 
     // 点击组件外部：收起下拉。
     document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
-    expect(wrapper.find('[data-testid="codex-manifest-dropdown"]').exists()).toBe(false);
+    expect(
+      wrapper.find('[data-testid="codex-manifest-dropdown"]').exists(),
+    ).toBe(false);
 
     // 点击输入框内部：不收起。
     await search.trigger("click");
     await search.trigger("focus");
-    expect(wrapper.find('[data-testid="codex-manifest-dropdown"]').exists()).toBe(true);
+    expect(
+      wrapper.find('[data-testid="codex-manifest-dropdown"]').exists(),
+    ).toBe(true);
     wrapper.unmount();
   });
 });

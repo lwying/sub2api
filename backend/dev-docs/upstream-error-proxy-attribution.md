@@ -15,10 +15,10 @@ There is no separate `gateway/backend` source copy to synchronize.
 Every newly persisted event contains these fields. `proxy_id` is emitted even
 when its value is JSON `null`:
 
-| Field | Meaning |
-| --- | --- |
-| `proxy_id` | Managed proxy ID used by the attempt; `null` for direct or unknown routes. |
-| `proxy_name` | Snapshotted proxy name, `direct/no_proxy`, or `unknown`. |
+| Field        | Meaning                                                                    |
+| ------------ | -------------------------------------------------------------------------- |
+| `proxy_id`   | Managed proxy ID used by the attempt; `null` for direct or unknown routes. |
+| `proxy_name` | Snapshotted proxy name, `direct/no_proxy`, or `unknown`.                   |
 
 Only proxy ID and name are stored. Proxy URL, protocol endpoint, host, port,
 username, password, and authorization data are excluded.

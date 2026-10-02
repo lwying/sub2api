@@ -26,7 +26,7 @@ Login page for existing users to authenticate.
 </template>
 
 <script setup lang="ts">
-import { LoginView } from '@/views/auth'
+import { LoginView } from "@/views/auth";
 </script>
 ```
 
@@ -73,7 +73,7 @@ Registration page for new users to create accounts.
 </template>
 
 <script setup lang="ts">
-import { RegisterView } from '@/views/auth'
+import { RegisterView } from "@/views/auth";
 </script>
 ```
 
@@ -203,11 +203,11 @@ Both views use:
 
 ```typescript
 // User enters credentials
-formData.username = 'john_doe'
-formData.password = 'SecurePass123'
+formData.username = "john_doe";
+formData.password = "SecurePass123";
 
 // Submit form
-await handleLogin()
+await handleLogin();
 
 // On success:
 // - authStore.login() called
@@ -225,13 +225,13 @@ await handleLogin()
 
 ```typescript
 // User enters registration data
-formData.username = 'jane_smith'
-formData.email = 'jane@example.com'
-formData.password = 'SecurePass123'
-formData.confirmPassword = 'SecurePass123'
+formData.username = "jane_smith";
+formData.email = "jane@example.com";
+formData.password = "SecurePass123";
+formData.confirmPassword = "SecurePass123";
 
 // Submit form
-await handleRegister()
+await handleRegister();
 
 // On success:
 // - authStore.register() called
@@ -251,10 +251,11 @@ await handleRegister()
 
 ```typescript
 // Validation errors
-errors.username = 'Username must be at least 3 characters'
-errors.email = 'Please enter a valid email address'
-errors.password = 'Password must be at least 8 characters with letters and numbers'
-errors.confirmPassword = 'Passwords do not match'
+errors.username = "Username must be at least 3 characters";
+errors.email = "Please enter a valid email address";
+errors.password =
+  "Password must be at least 8 characters with letters and numbers";
+errors.confirmPassword = "Passwords do not match";
 ```
 
 ### Server-side Errors
@@ -264,14 +265,14 @@ errors.confirmPassword = 'Passwords do not match'
 {
   response: {
     data: {
-      detail: 'Username already exists'
+      detail: "Username already exists";
     }
   }
 }
 
 // Displayed as:
-errorMessage.value = 'Username already exists'
-appStore.showError('Username already exists')
+errorMessage.value = "Username already exists";
+appStore.showError("Username already exists");
 ```
 
 ## Accessibility

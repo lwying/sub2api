@@ -12,11 +12,11 @@ import {
 /** 全 null 的 5 平台 map，用于断言归一化默认值 */
 const allNullQuotas: DefaultPlatformQuotasMap = {
   anthropic: { daily: null, weekly: null, monthly: null },
-  openai:    { daily: null, weekly: null, monthly: null },
-  gemini:    { daily: null, weekly: null, monthly: null },
+  openai: { daily: null, weekly: null, monthly: null },
+  gemini: { daily: null, weekly: null, monthly: null },
   antigravity: { daily: null, weekly: null, monthly: null },
   grok: { daily: null, weekly: null, monthly: null },
-}
+};
 
 describe("admin settings auth source defaults helpers", () => {
   it("builds auth source defaults state from flat settings fields", () => {
@@ -84,17 +84,33 @@ describe("admin settings auth source defaults helpers", () => {
     const state = buildAuthSourceDefaultsState({
       auth_source_default_email_platform_quotas: {
         anthropic: { daily: 10, weekly: 50, monthly: 200 },
-        openai:    { daily: null, weekly: null, monthly: null },
+        openai: { daily: null, weekly: null, monthly: null },
       } as DefaultPlatformQuotasMap,
     });
 
     // anthropic 填写的值应被保留
-    expect(state.email.platform_quotas.anthropic).toEqual({ daily: 10, weekly: 50, monthly: 200 });
+    expect(state.email.platform_quotas.anthropic).toEqual({
+      daily: 10,
+      weekly: 50,
+      monthly: 200,
+    });
     // openai 全 null 应被保留
-    expect(state.email.platform_quotas.openai).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(state.email.platform_quotas.openai).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
     // 未出现的平台（gemini/antigravity）归一化为 null
-    expect(state.email.platform_quotas.gemini).toEqual({ daily: null, weekly: null, monthly: null });
-    expect(state.email.platform_quotas.antigravity).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(state.email.platform_quotas.gemini).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
+    expect(state.email.platform_quotas.antigravity).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
   });
 
   it("appends auth source defaults back onto update payload", () => {
@@ -209,34 +225,96 @@ describe("admin settings auth source defaults helpers", () => {
         grant_on_first_bind: false,
         platform_quotas: {
           anthropic: { daily: 10, weekly: 50, monthly: 200 },
-          openai:    { daily: 0, weekly: null, monthly: null },
+          openai: { daily: 0, weekly: null, monthly: null },
         },
       },
-      linuxdo: { balance: 0, concurrency: 5, subscriptions: [], grant_on_signup: false, grant_on_first_bind: false, platform_quotas: {} },
-      oidc:    { balance: 0, concurrency: 5, subscriptions: [], grant_on_signup: false, grant_on_first_bind: false, platform_quotas: {} },
-      wechat:  { balance: 0, concurrency: 5, subscriptions: [], grant_on_signup: false, grant_on_first_bind: false, platform_quotas: {} },
-      github:  { balance: 0, concurrency: 5, subscriptions: [], grant_on_signup: false, grant_on_first_bind: false, platform_quotas: {} },
-      google:  { balance: 0, concurrency: 5, subscriptions: [], grant_on_signup: false, grant_on_first_bind: false, platform_quotas: {} },
-      dingtalk: { balance: 0, concurrency: 5, subscriptions: [], grant_on_signup: false, grant_on_first_bind: false, platform_quotas: {} },
+      linuxdo: {
+        balance: 0,
+        concurrency: 5,
+        subscriptions: [],
+        grant_on_signup: false,
+        grant_on_first_bind: false,
+        platform_quotas: {},
+      },
+      oidc: {
+        balance: 0,
+        concurrency: 5,
+        subscriptions: [],
+        grant_on_signup: false,
+        grant_on_first_bind: false,
+        platform_quotas: {},
+      },
+      wechat: {
+        balance: 0,
+        concurrency: 5,
+        subscriptions: [],
+        grant_on_signup: false,
+        grant_on_first_bind: false,
+        platform_quotas: {},
+      },
+      github: {
+        balance: 0,
+        concurrency: 5,
+        subscriptions: [],
+        grant_on_signup: false,
+        grant_on_first_bind: false,
+        platform_quotas: {},
+      },
+      google: {
+        balance: 0,
+        concurrency: 5,
+        subscriptions: [],
+        grant_on_signup: false,
+        grant_on_first_bind: false,
+        platform_quotas: {},
+      },
+      dingtalk: {
+        balance: 0,
+        concurrency: 5,
+        subscriptions: [],
+        grant_on_signup: false,
+        grant_on_first_bind: false,
+        platform_quotas: {},
+      },
     });
 
-    const emailQuotas = (payload as Record<string, unknown>)["auth_source_default_email_platform_quotas"] as DefaultPlatformQuotasMap;
-    expect(emailQuotas.anthropic).toEqual({ daily: 10, weekly: 50, monthly: 200 });
+    const emailQuotas = (payload as Record<string, unknown>)[
+      "auth_source_default_email_platform_quotas"
+    ] as DefaultPlatformQuotasMap;
+    expect(emailQuotas.anthropic).toEqual({
+      daily: 10,
+      weekly: 50,
+      monthly: 200,
+    });
     // 0 是合法值（不限额=0 与"不设"不同，保留）
     expect(emailQuotas.openai?.daily).toBe(0);
     // 缺失平台归一化为全 null
-    expect(emailQuotas.gemini).toEqual({ daily: null, weekly: null, monthly: null });
-    expect(emailQuotas.antigravity).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(emailQuotas.gemini).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
+    expect(emailQuotas.antigravity).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
   });
 });
 
 describe("normalizePlatformQuotasMap", () => {
   it("填充缺失的平台为全 null 三档", () => {
-    const result = normalizePlatformQuotasMap({ anthropic: { daily: 5, weekly: null, monthly: null } });
+    const result = normalizePlatformQuotasMap({
+      anthropic: { daily: 5, weekly: null, monthly: null },
+    });
     expect(result.anthropic).toEqual({ daily: 5, weekly: null, monthly: null });
     expect(result.openai).toEqual({ daily: null, weekly: null, monthly: null });
     expect(result.gemini).toEqual({ daily: null, weekly: null, monthly: null });
-    expect(result.antigravity).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(result.antigravity).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
     expect(result.grok).toEqual({ daily: null, weekly: null, monthly: null });
   });
 
@@ -250,9 +328,17 @@ describe("normalizePlatformQuotasMap", () => {
 
   it("非 number 类型的值归一化为 null", () => {
     const result = normalizePlatformQuotasMap({
-      anthropic: { daily: "50" as unknown as number, weekly: undefined as unknown as number, monthly: null },
+      anthropic: {
+        daily: "50" as unknown as number,
+        weekly: undefined as unknown as number,
+        monthly: null,
+      },
     });
-    expect(result.anthropic).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(result.anthropic).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
   });
 });
 
@@ -268,7 +354,11 @@ describe("sanitizePlatformQuotasMap", () => {
 
   it("空字符串（v-model.number 空输入）清洗为 null", () => {
     const result = sanitizePlatformQuotasMap({
-      anthropic: { daily: "" as unknown as number, weekly: null, monthly: null },
+      anthropic: {
+        daily: "" as unknown as number,
+        weekly: null,
+        monthly: null,
+      },
     });
     expect(result.anthropic?.daily).toBe(null);
   });

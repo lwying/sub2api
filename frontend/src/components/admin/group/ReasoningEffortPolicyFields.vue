@@ -14,7 +14,9 @@
         clearable
         @update:model-value="updateMaxEffort"
       />
-      <p class="input-hint">{{ t("admin.groups.form.maxReasoningEffortHint") }}</p>
+      <p class="input-hint">
+        {{ t("admin.groups.form.maxReasoningEffortHint") }}
+      </p>
     </div>
 
     <div>
@@ -30,7 +32,9 @@
         :disabled="!maxEffort"
         @update:model-value="updateOverLimit"
       />
-      <p class="input-hint">{{ t("admin.groups.form.maxReasoningEffortOverLimitHint") }}</p>
+      <p class="input-hint">
+        {{ t("admin.groups.form.maxReasoningEffortOverLimitHint") }}
+      </p>
     </div>
 
     <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -63,19 +67,26 @@
             class="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_1.25rem_minmax(0,1fr)_2.75rem]"
           >
             <div>
-              <label :for="`${idPrefix}-${group.id}-match-type`" class="input-label">
+              <label
+                :for="`${idPrefix}-${group.id}-match-type`"
+                class="input-label"
+              >
                 {{ t("admin.groups.form.reasoningEffortMatchType") }}
               </label>
               <Select
                 :id="`${idPrefix}-${group.id}-match-type`"
                 :model-value="group.match_type"
                 :options="matchTypeOptions"
-                :placeholder="t('admin.groups.form.reasoningEffortMatchTypePlaceholder')"
+                :placeholder="
+                  t('admin.groups.form.reasoningEffortMatchTypePlaceholder')
+                "
                 :error="showValidation && !!groupErrors(group.id).match_type"
                 :aria-label="t('admin.groups.form.reasoningEffortMatchType')"
                 :searchable="false"
                 clearable
-                @update:model-value="updateGroup(group.id, 'match_type', $event)"
+                @update:model-value="
+                  updateGroup(group.id, 'match_type', $event)
+                "
               />
               <p
                 v-if="showValidation && groupErrors(group.id).match_type"
@@ -99,7 +110,9 @@
                 maxlength="200"
                 autocomplete="off"
                 class="input"
-                :placeholder="t('admin.groups.form.reasoningEffortModelPlaceholder')"
+                :placeholder="
+                  t('admin.groups.form.reasoningEffortModelPlaceholder')
+                "
                 :aria-label="t('admin.groups.form.reasoningEffortModel')"
                 @input="onModelInput(group.id, $event)"
               />
@@ -137,12 +150,16 @@
                 :id="`${idPrefix}-${pair.id}-from`"
                 :model-value="pair.from"
                 :options="reasoningEffortSourceOptions"
-                :placeholder="t('admin.groups.form.reasoningEffortFromPlaceholder')"
+                :placeholder="
+                  t('admin.groups.form.reasoningEffortFromPlaceholder')
+                "
                 :error="showValidation && !!pairErrors(pair.id).from"
                 :aria-label="t('admin.groups.form.reasoningEffortFrom')"
                 :searchable="false"
                 clearable
-                @update:model-value="updatePair(group.id, pair.id, 'from', $event)"
+                @update:model-value="
+                  updatePair(group.id, pair.id, 'from', $event)
+                "
               />
               <p
                 v-if="showValidation && pairErrors(pair.id).from"
@@ -153,7 +170,9 @@
               </p>
             </div>
 
-            <div class="hidden h-11 items-center justify-center self-end text-gray-400 md:flex dark:text-dark-400">
+            <div
+              class="hidden h-11 items-center justify-center self-end text-gray-400 md:flex dark:text-dark-400"
+            >
               <Icon name="arrowRight" size="sm" />
             </div>
 
@@ -165,12 +184,16 @@
                 :id="`${idPrefix}-${pair.id}-to`"
                 :model-value="pair.to"
                 :options="reasoningEffortTargetOptions"
-                :placeholder="t('admin.groups.form.reasoningEffortToPlaceholder')"
+                :placeholder="
+                  t('admin.groups.form.reasoningEffortToPlaceholder')
+                "
                 :error="showValidation && !!pairErrors(pair.id).to"
                 :aria-label="t('admin.groups.form.reasoningEffortTo')"
                 :searchable="false"
                 clearable
-                @update:model-value="updatePair(group.id, pair.id, 'to', $event)"
+                @update:model-value="
+                  updatePair(group.id, pair.id, 'to', $event)
+                "
               />
               <p
                 v-if="showValidation && pairErrors(pair.id).to"
@@ -366,7 +389,10 @@ const addPair = (groupId: string) => {
     "update:mappings",
     props.mappings.map((group) =>
       group.id === groupId
-        ? { ...group, pairs: [...group.pairs, createReasoningEffortMappingPair()] }
+        ? {
+            ...group,
+            pairs: [...group.pairs, createReasoningEffortMappingPair()],
+          }
         : group,
     ),
   );

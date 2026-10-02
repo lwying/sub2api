@@ -56,7 +56,9 @@ const {
   }),
   updateGatewayMockOperatorSettings: vi.fn(),
   seedGatewayMockPresets: vi.fn(),
-  listGatewayMockEvents: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 }),
+  listGatewayMockEvents: vi
+    .fn()
+    .mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 }),
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
   getWebSearchEmulationConfig: vi.fn(),
@@ -67,7 +69,9 @@ const {
   updateRateLimit429CooldownSettings: vi.fn(),
   getRateLimit429AccountLimit: vi.fn().mockResolvedValue({ max_accounts: 2 }),
   updateRateLimit429AccountLimit: vi.fn(),
-  getKeyBillingSnapshotSettings: vi.fn().mockResolvedValue({ enabled: false, max_stale_hours: 72 }),
+  getKeyBillingSnapshotSettings: vi
+    .fn()
+    .mockResolvedValue({ enabled: false, max_stale_hours: 72 }),
   updateKeyBillingSnapshotSettings: vi.fn(),
   getPanelRateLimitSettings: vi.fn().mockResolvedValue({
     enabled: true,
@@ -76,7 +80,9 @@ const {
     exempt_admin: true,
     public_ip_rpm: 300,
   }),
-  updatePanelRateLimitSettings: vi.fn().mockImplementation(async (payload) => payload),
+  updatePanelRateLimitSettings: vi
+    .fn()
+    .mockImplementation(async (payload) => payload),
   getStreamTimeoutSettings: vi.fn(),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
@@ -84,13 +90,17 @@ const {
     enabled: true,
     interval_minutes: 30,
   }),
-  updateUpstreamBillingProbeSettings: vi.fn().mockImplementation(async (payload) => payload),
+  updateUpstreamBillingProbeSettings: vi
+    .fn()
+    .mockImplementation(async (payload) => payload),
   getOllamaCloudUsageSettings: vi.fn().mockResolvedValue({
     enabled: false,
     interval_minutes: 60,
     debounce_minutes: 1,
   }),
-  updateOllamaCloudUsageSettings: vi.fn().mockImplementation(async (payload) => payload),
+  updateOllamaCloudUsageSettings: vi
+    .fn()
+    .mockImplementation(async (payload) => payload),
   getGroups: vi.fn(),
   listProxies: vi.fn(),
   getProviders: vi.fn(),
@@ -105,9 +115,11 @@ const {
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
-vi.mock('@/features/request-trace/api', () => ({ getOperatorSettings: getTraceOperatorSettings }));
+vi.mock("@/features/request-trace/api", () => ({
+  getOperatorSettings: getTraceOperatorSettings,
+}));
 
-vi.mock('@/features/gateway-mock/api', () => ({
+vi.mock("@/features/gateway-mock/api", () => ({
   getOperatorSettings: getGatewayMockOperatorSettings,
   updateOperatorSettings: updateGatewayMockOperatorSettings,
   seedPresets: seedGatewayMockPresets,
@@ -187,68 +199,106 @@ vi.mock("vue-i18n", async () => {
   const actual = await vi.importActual<typeof import("vue-i18n")>("vue-i18n");
   const translations: Record<string, string> = {
     "admin.settings.wechatConnect.title": "微信登录",
-    "admin.settings.wechatConnect.description": "用于微信开放平台或公众号/小程序的第三方登录配置。",
+    "admin.settings.wechatConnect.description":
+      "用于微信开放平台或公众号/小程序的第三方登录配置。",
     "admin.settings.wechatConnect.enabledLabel": "启用微信登录",
-    "admin.settings.wechatConnect.enabledHint": "开启后可使用微信第三方登录回调与授权配置。",
+    "admin.settings.wechatConnect.enabledHint":
+      "开启后可使用微信第三方登录回调与授权配置。",
     "admin.settings.wechatConnect.appIdLabel": "AppID",
     "admin.settings.wechatConnect.appIdPlaceholder": "微信开放平台 AppID",
     "admin.settings.wechatConnect.appSecretLabel": "AppSecret",
-    "admin.settings.wechatConnect.appSecretConfiguredPlaceholder": "密钥已配置，留空以保留当前值。",
-    "admin.settings.wechatConnect.appSecretPlaceholder": "微信开放平台 AppSecret",
-    "admin.settings.wechatConnect.appSecretConfiguredHint": "密钥已配置，留空以保留当前值。",
+    "admin.settings.wechatConnect.appSecretConfiguredPlaceholder":
+      "密钥已配置，留空以保留当前值。",
+    "admin.settings.wechatConnect.appSecretPlaceholder":
+      "微信开放平台 AppSecret",
+    "admin.settings.wechatConnect.appSecretConfiguredHint":
+      "密钥已配置，留空以保留当前值。",
     "admin.settings.wechatConnect.appSecretHint": "填写后会覆盖当前微信密钥。",
     "admin.settings.wechatConnect.modeLabel": "模式",
     "admin.settings.wechatConnect.openModeLabel": "非微信环境使用开放平台",
-    "admin.settings.wechatConnect.openModeHint": "浏览器不在微信内时，自动走开放平台扫码授权。",
+    "admin.settings.wechatConnect.openModeHint":
+      "浏览器不在微信内时，自动走开放平台扫码授权。",
     "admin.settings.wechatConnect.mpModeLabel": "微信环境使用公众号",
-    "admin.settings.wechatConnect.mpModeHint": "浏览器在微信内时，自动走公众号授权。",
+    "admin.settings.wechatConnect.mpModeHint":
+      "浏览器在微信内时，自动走公众号授权。",
     "admin.settings.wechatConnect.redirectUrlLabel": "回调地址",
-    "admin.settings.wechatConnect.redirectUrlPlaceholder": "https://your-site.com/api/v1/auth/oauth/wechat/callback",
+    "admin.settings.wechatConnect.redirectUrlPlaceholder":
+      "https://your-site.com/api/v1/auth/oauth/wechat/callback",
     "admin.settings.wechatConnect.generateAndCopy": "使用当前站点生成并复制",
-    "admin.settings.wechatConnect.redirectUrlSetAndCopied": "已使用当前站点生成回调地址并复制到剪贴板",
+    "admin.settings.wechatConnect.redirectUrlSetAndCopied":
+      "已使用当前站点生成回调地址并复制到剪贴板",
     "admin.settings.wechatConnect.frontendRedirectUrlLabel": "前端回调地址",
-    "admin.settings.wechatConnect.frontendRedirectUrlPlaceholder": "/auth/wechat/callback",
-    "admin.settings.wechatConnect.frontendRedirectUrlHint": "通常用于前端路由回调地址，需与后端配置保持一致。",
+    "admin.settings.wechatConnect.frontendRedirectUrlPlaceholder":
+      "/auth/wechat/callback",
+    "admin.settings.wechatConnect.frontendRedirectUrlHint":
+      "通常用于前端路由回调地址，需与后端配置保持一致。",
     "admin.settings.authSourceDefaults.title": "认证来源默认值",
-    "admin.settings.authSourceDefaults.description": "按注册来源配置新用户默认余额、并发、订阅与授权策略。",
-    "admin.settings.authSourceDefaults.requireEmailLabel": "第三方注册强制补充邮箱",
-    "admin.settings.authSourceDefaults.requireEmailHint": "启用后，Linux DO、OIDC、微信注册缺少邮箱时必须先补充邮箱地址。",
-    "admin.settings.authSourceDefaults.enabledHint": "以下默认值会在该来源注册新用户时发放；首次绑定时授权仅作用于已有账号绑定该来源。",
+    "admin.settings.authSourceDefaults.description":
+      "按注册来源配置新用户默认余额、并发、订阅与授权策略。",
+    "admin.settings.authSourceDefaults.requireEmailLabel":
+      "第三方注册强制补充邮箱",
+    "admin.settings.authSourceDefaults.requireEmailHint":
+      "启用后，Linux DO、OIDC、微信注册缺少邮箱时必须先补充邮箱地址。",
+    "admin.settings.authSourceDefaults.enabledHint":
+      "以下默认值会在该来源注册新用户时发放；首次绑定时授权仅作用于已有账号绑定该来源。",
     "admin.settings.authSourceDefaults.sources.email.title": "邮箱注册",
-    "admin.settings.authSourceDefaults.sources.email.description": "适用于邮箱密码注册的新用户默认配额。",
+    "admin.settings.authSourceDefaults.sources.email.description":
+      "适用于邮箱密码注册的新用户默认配额。",
     "admin.settings.authSourceDefaults.sources.linuxdo.title": "Linux DO 登录",
-    "admin.settings.authSourceDefaults.sources.linuxdo.description": "适用于 Linux DO 第三方注册的新用户默认配额。",
+    "admin.settings.authSourceDefaults.sources.linuxdo.description":
+      "适用于 Linux DO 第三方注册的新用户默认配额。",
     "admin.settings.authSourceDefaults.sources.oidc.title": "OIDC 登录",
-    "admin.settings.authSourceDefaults.sources.oidc.description": "适用于 OIDC 第三方注册的新用户默认配额。",
+    "admin.settings.authSourceDefaults.sources.oidc.description":
+      "适用于 OIDC 第三方注册的新用户默认配额。",
     "admin.settings.authSourceDefaults.sources.wechat.title": "微信登录",
-    "admin.settings.authSourceDefaults.sources.wechat.description": "适用于微信第三方注册的新用户默认配额。",
+    "admin.settings.authSourceDefaults.sources.wechat.description":
+      "适用于微信第三方注册的新用户默认配额。",
     "admin.settings.authSourceDefaults.grantOnFirstBindLabel": "首次绑定时授权",
-    "admin.settings.authSourceDefaults.grantOnFirstBindHint": "已有账号首次绑定该来源时发放默认权益。",
+    "admin.settings.authSourceDefaults.grantOnFirstBindHint":
+      "已有账号首次绑定该来源时发放默认权益。",
     "admin.settings.authSourceDefaults.defaultSubscriptionsLabel": "默认订阅",
-    "admin.settings.authSourceDefaults.defaultSubscriptionsHint": "仅对当前认证来源生效，未配置时不追加来源专属订阅。",
-    "admin.settings.authSourceDefaults.noSourceSubscriptions": "当前来源未配置专属默认订阅。",
+    "admin.settings.authSourceDefaults.defaultSubscriptionsHint":
+      "仅对当前认证来源生效，未配置时不追加来源专属订阅。",
+    "admin.settings.authSourceDefaults.noSourceSubscriptions":
+      "当前来源未配置专属默认订阅。",
     "admin.settings.paymentVisibleMethods.methodLabel": "{title} 可见方式",
-    "admin.settings.paymentVisibleMethods.methodHint": "控制前台结算页是否展示该方式，以及展示时使用的来源键。",
+    "admin.settings.paymentVisibleMethods.methodHint":
+      "控制前台结算页是否展示该方式，以及展示时使用的来源键。",
     "admin.settings.paymentVisibleMethods.sourceLabel": "支付来源",
-    "admin.settings.paymentVisibleMethods.sourceHint": "启用后必须明确选择一个来源；未配置状态不会对外展示该支付方式。",
-    "admin.settings.paymentVisibleMethods.sourceRequiredError": "{title} 已启用，请先选择支付来源。",
+    "admin.settings.paymentVisibleMethods.sourceHint":
+      "启用后必须明确选择一个来源；未配置状态不会对外展示该支付方式。",
+    "admin.settings.paymentVisibleMethods.sourceRequiredError":
+      "{title} 已启用，请先选择支付来源。",
     "admin.settings.payment.configGuide": "查看支付配置说明",
     "admin.settings.payment.findProvider": "查看支持的支付方式",
     "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
-    "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
-    "admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle": "低倍率优先",
-    "admin.settings.openaiExperimentalScheduler.lowRatePriorityDescription": "开启后优先选择计费倍率较低的账号；倍率相同时，再比较账号优先级和当前负载等。启用实验调度策略后，此开关不生效。",
-    "admin.settings.openaiExperimentalScheduler.oauthRateTitle": "OAuth 调度参考倍率",
-    "admin.settings.openaiExperimentalScheduler.oauthRatePriorityDescription": "OAuth 账号按此参考倍率参与低倍率优先排序；留空时使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
-    "admin.settings.openaiExperimentalScheduler.oauthRateWeightedDescription": "计算“计费倍率”得分时，OAuth 账号使用此参考倍率；留空时使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
-    "admin.settings.openaiExperimentalScheduler.oauthRateInvalid": "OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。",
-    "admin.settings.openaiExperimentalScheduler.stickyWeightedTitle": "粘性加权",
-    "admin.settings.openaiExperimentalScheduler.stickyWeightedDescription": "开启后 previous_response_id 和 session_hash 粘性进入高级调度打分；关闭时仍按旧逻辑硬命中粘性账号。",
-    "admin.settings.openaiExperimentalScheduler.subscriptionPriorityTitle": "订阅优先",
-    "admin.settings.openaiExperimentalScheduler.subscriptionPriorityDescription": "开启后先在 ChatGPT 订阅账号池中按权值选取；订阅池拿不到席位时再回退到非订阅账号池。",
+    "admin.settings.openaiExperimentalScheduler.description":
+      "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
+    "admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle":
+      "低倍率优先",
+    "admin.settings.openaiExperimentalScheduler.lowRatePriorityDescription":
+      "开启后优先选择计费倍率较低的账号；倍率相同时，再比较账号优先级和当前负载等。启用实验调度策略后，此开关不生效。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateTitle":
+      "OAuth 调度参考倍率",
+    "admin.settings.openaiExperimentalScheduler.oauthRatePriorityDescription":
+      "OAuth 账号按此参考倍率参与低倍率优先排序；留空时使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateWeightedDescription":
+      "计算“计费倍率”得分时，OAuth 账号使用此参考倍率；留空时使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateInvalid":
+      "OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。",
+    "admin.settings.openaiExperimentalScheduler.stickyWeightedTitle":
+      "粘性加权",
+    "admin.settings.openaiExperimentalScheduler.stickyWeightedDescription":
+      "开启后 previous_response_id 和 session_hash 粘性进入高级调度打分；关闭时仍按旧逻辑硬命中粘性账号。",
+    "admin.settings.openaiExperimentalScheduler.subscriptionPriorityTitle":
+      "订阅优先",
+    "admin.settings.openaiExperimentalScheduler.subscriptionPriorityDescription":
+      "开启后先在 ChatGPT 订阅账号池中按权值选取；订阅池拿不到席位时再回退到非订阅账号池。",
     "admin.settings.openaiExperimentalScheduler.weightsTitle": "调度权值覆盖",
-    "admin.settings.openaiExperimentalScheduler.weightsDescription": "留空时使用配置/环境变量值；配置未设置时使用内置默认值。页面非空设置优先。",
-    "admin.settings.openaiExperimentalScheduler.defaultPlaceholder": "配置/默认：{value}",
+    "admin.settings.openaiExperimentalScheduler.weightsDescription":
+      "留空时使用配置/环境变量值；配置未设置时使用内置默认值。页面非空设置优先。",
+    "admin.settings.openaiExperimentalScheduler.defaultPlaceholder":
+      "配置/默认：{value}",
     "admin.settings.openaiExperimentalScheduler.topKLabel": "TopK",
     "admin.settings.openaiExperimentalScheduler.priorityWeight": "优先级",
     "admin.settings.openaiExperimentalScheduler.loadWeight": "负载",
@@ -256,18 +306,24 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiExperimentalScheduler.errorRateWeight": "错误率",
     "admin.settings.openaiExperimentalScheduler.ttftWeight": "首包延迟",
     "admin.settings.openaiExperimentalScheduler.resetWeight": "重置窗口",
-    "admin.settings.openaiExperimentalScheduler.quotaHeadroomWeight": "额度余量",
+    "admin.settings.openaiExperimentalScheduler.quotaHeadroomWeight":
+      "额度余量",
     "admin.settings.openaiExperimentalScheduler.upstreamCostWeight": "计费倍率",
-    "admin.settings.openaiExperimentalScheduler.previousResponseWeight": "previous_response 粘性",
-    "admin.settings.openaiExperimentalScheduler.sessionStickyWeight": "session_hash 粘性",
+    "admin.settings.openaiExperimentalScheduler.previousResponseWeight":
+      "previous_response 粘性",
+    "admin.settings.openaiExperimentalScheduler.sessionStickyWeight":
+      "session_hash 粘性",
     "admin.settings.upstreamBillingProbe.title": "上游倍率自动探测",
-    "admin.settings.upstreamBillingProbe.description": "定期获取 OpenAI API Key 所连接上游 Sub2API 站点声明的计费倍率。",
+    "admin.settings.upstreamBillingProbe.description":
+      "定期获取 OpenAI API Key 所连接上游 Sub2API 站点声明的计费倍率。",
     "admin.settings.upstreamBillingProbe.enabled": "启用全局自动探测",
-    "admin.settings.upstreamBillingProbe.enabledHint": "开启后，仅对账号自身已启用自动检测的账号执行定时探测。",
+    "admin.settings.upstreamBillingProbe.enabledHint":
+      "开启后，仅对账号自身已启用自动检测的账号执行定时探测。",
     "admin.settings.upstreamBillingProbe.intervalMinutes": "探测周期（分钟）",
     "admin.settings.upstreamBillingProbe.intervalHint": "范围 5–1440 分钟。",
     "admin.settings.upstreamBillingProbe.saved": "上游倍率自动探测设置已保存",
-    "admin.settings.upstreamBillingProbe.saveFailed": "保存上游倍率自动探测设置失败",
+    "admin.settings.upstreamBillingProbe.saveFailed":
+      "保存上游倍率自动探测设置失败",
     "admin.settings.openaiFastPolicy.summaryTargetModels": "目标模型",
     "admin.settings.openaiFastPolicy.summaryAllModels": "全部模型",
     "admin.settings.openaiFastPolicy.summaryOtherModels": "其他模型",
@@ -282,17 +338,24 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.platformQuota.weekly": "周限额 (USD)",
     "admin.settings.platformQuota.monthly": "月限额 (USD, 30天滚动)",
     "admin.settings.platformQuota.placeholder": "不限",
-    "admin.settings.defaults.defaultPlatformQuotas": "默认平台限额（注册时分配）",
-    "admin.settings.defaults.defaultPlatformQuotasHint": "新用户注册时自动写入平台限额记录；已有用户不受影响。留空 = 该平台该窗口不限制。",
-    "admin.settings.defaults.platformQuotaNotice": "月限额为 30 天滚动窗口，非自然月",
+    "admin.settings.defaults.defaultPlatformQuotas":
+      "默认平台限额（注册时分配）",
+    "admin.settings.defaults.defaultPlatformQuotasHint":
+      "新用户注册时自动写入平台限额记录；已有用户不受影响。留空 = 该平台该窗口不限制。",
+    "admin.settings.defaults.platformQuotaNotice":
+      "月限额为 30 天滚动窗口，非自然月",
     "admin.settings.authSourceDefaults.platformQuotasOverride": "平台限额覆盖",
-    "admin.settings.authSourceDefaults.platformQuotasOverrideHint": "留空的字段继承「系统默认平台限额」；填 0 表示禁止该窗口使用。",
+    "admin.settings.authSourceDefaults.platformQuotasOverrideHint":
+      "留空的字段继承「系统默认平台限额」；填 0 表示禁止该窗口使用。",
   };
   return {
     ...actual,
     useI18n: () => ({
       t: (key: string, params?: Record<string, string>) =>
-        (translations[key] ?? key).replace(/\{(\w+)\}/g, (_, token) => params?.[token] ?? `{${token}}`),
+        (translations[key] ?? key).replace(
+          /\{(\w+)\}/g,
+          (_, token) => params?.[token] ?? `{${token}}`,
+        ),
       locale: localeRef,
     }),
   };
@@ -579,44 +642,73 @@ const baseSettingsResponse = {
   account_quota_notify_emails: [],
   // 平台限额嵌套字段（新后端契约）
   default_platform_quotas: {
-    anthropic:   { daily: null, weekly: null, monthly: null },
-    openai:      { daily: null, weekly: 12.5, monthly: null },
-    gemini:      { daily: null, weekly: null, monthly: 200 },
+    anthropic: { daily: null, weekly: null, monthly: null },
+    openai: { daily: null, weekly: 12.5, monthly: null },
+    gemini: { daily: null, weekly: null, monthly: 200 },
     antigravity: { daily: null, weekly: null, monthly: null },
   },
 };
 
 it("shows a separate, default-off Trace risk gate in gateway settings", async () => {
   getTraceOperatorSettings.mockResolvedValue({
-    enabled: false, capture_allowed: false, risk_version: 'v2026.09.28',
-    risk_phrase_en: 'Trace risk EN', risk_phrase_zh: 'Trace risk ZH',
-    risk_acknowledgement_current: false, plaintext_capture_supported: true,
-    plaintext_capture_support_reason: 'supported',
+    enabled: false,
+    capture_allowed: false,
+    risk_version: "v2026.09.28",
+    risk_phrase_en: "Trace risk EN",
+    risk_phrase_zh: "Trace risk ZH",
+    risk_acknowledgement_current: false,
+    plaintext_capture_supported: true,
+    plaintext_capture_support_reason: "supported",
     // 采集范围与开关同一条记录；缺省为“全部”，与旧行为一致。
-    all_groups: true, group_ids: [], model_scope: 'all', models: [],
-    platform_scope: 'all', platforms: [],
+    all_groups: true,
+    group_ids: [],
+    model_scope: "all",
+    models: [],
+    platform_scope: "all",
+    platforms: [],
   });
   getSettings.mockResolvedValue({ ...baseSettingsResponse });
   const wrapper = mountView();
   await flushPromises();
   await openGatewayTab(wrapper);
 
-  expect(wrapper.find('[data-testid="request-trace-settings"]').exists()).toBe(false);
-  expect(wrapper.find('[data-testid="request-audit-force-settings"]').exists()).toBe(true);
+  expect(wrapper.find('[data-testid="request-trace-settings"]').exists()).toBe(
+    false,
+  );
+  expect(
+    wrapper.find('[data-testid="request-audit-force-settings"]').exists(),
+  ).toBe(true);
 });
 
 it("shows the downstream test mock as default-off and reads no hit list in the settings tab", async () => {
   getTraceOperatorSettings.mockResolvedValue({
-    enabled: false, capture_allowed: false, risk_version: 'v2026.09.28',
-    risk_phrase_en: 'Trace risk EN', risk_phrase_zh: 'Trace risk ZH',
-    risk_acknowledgement_current: false, plaintext_capture_supported: true,
-    plaintext_capture_support_reason: 'supported',
-    all_groups: true, group_ids: [], model_scope: 'all', models: [],
-    platform_scope: 'all', platforms: [],
+    enabled: false,
+    capture_allowed: false,
+    risk_version: "v2026.09.28",
+    risk_phrase_en: "Trace risk EN",
+    risk_phrase_zh: "Trace risk ZH",
+    risk_acknowledgement_current: false,
+    plaintext_capture_supported: true,
+    plaintext_capture_support_reason: "supported",
+    all_groups: true,
+    group_ids: [],
+    model_scope: "all",
+    models: [],
+    platform_scope: "all",
+    platforms: [],
   });
   getGatewayMockOperatorSettings.mockResolvedValue({
     enabled: false,
-    rules: [{ id: 'gmr_1', keyword: 'hi', normalized_keyword: 'hi', reply: 'Hello!', enabled: true, updated_at: '2026-09-30T03:00:00Z' }],
+    rules: [
+      {
+        id: "gmr_1",
+        keyword: "hi",
+        normalized_keyword: "hi",
+        reply: "Hello!",
+        enabled: true,
+        updated_at: "2026-09-30T03:00:00Z",
+      },
+    ],
     preset_available: true,
     preset_created: 0,
   });
@@ -625,12 +717,23 @@ it("shows the downstream test mock as default-off and reads no hit list in the s
   await flushPromises();
   await openGatewayTab(wrapper);
 
-  expect(wrapper.find('[data-testid="gateway-mock-settings"]').exists()).toBe(true);
-  expect(wrapper.get('[data-testid="gateway-mock-state"]').attributes('data-state')).toBe('off');
-  expect(wrapper.get('[data-testid="gateway-mock-rule-keyword"]').element).toHaveProperty('value', 'hi');
+  expect(wrapper.find('[data-testid="gateway-mock-settings"]').exists()).toBe(
+    true,
+  );
+  expect(
+    wrapper.get('[data-testid="gateway-mock-state"]').attributes("data-state"),
+  ).toBe("off");
+  expect(
+    wrapper.get('[data-testid="gateway-mock-rule-keyword"]').element,
+  ).toHaveProperty("value", "hi");
   // 命中列表只在窗口打开时由面板自己按页读一次。
-  expect(listGatewayMockEvents).toHaveBeenCalledWith({ page: 1, page_size: 20 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-  expect(wrapper.find('[data-testid="gateway-mock-events-empty"]').exists()).toBe(true);
+  expect(listGatewayMockEvents).toHaveBeenCalledWith(
+    { page: 1, page_size: 20 },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(
+    wrapper.find('[data-testid="gateway-mock-events-empty"]').exists(),
+  ).toBe(true);
 });
 
 function mountView() {
@@ -670,7 +773,9 @@ it("saves the request-scoped 429 account limit from gateway settings", async () 
   const input = wrapper.get('[data-testid="rate-limit-429-account-limit"]');
   expect((input.element as HTMLInputElement).value).toBe("2");
   await input.setValue("3");
-  await wrapper.get('[data-testid="save-rate-limit-429-account-limit"]').trigger("click");
+  await wrapper
+    .get('[data-testid="save-rate-limit-429-account-limit"]')
+    .trigger("click");
   await flushPromises();
   // N 与跨请求冷却属于同一设置组：保存 N 时必须一并回写冷却字段，
   // 否则后端会把缺省字段绑定为默认值（关闭 / 会话级 / 60 秒），悄悄关掉已启用的冷却。
@@ -714,13 +819,19 @@ it("reads back the cross-request Claude cooldown inside the same 429 account-lim
   await flushPromises();
   await openGatewayTab(wrapper);
 
-  const toggle = wrapper.get('[data-testid="rate-limit-429-account-limit-enabled"]');
+  const toggle = wrapper.get(
+    '[data-testid="rate-limit-429-account-limit-enabled"]',
+  );
   expect((toggle.element as HTMLInputElement).checked).toBe(true);
 
-  const scope = wrapper.get('[data-testid="rate-limit-429-account-limit-scope"]');
+  const scope = wrapper.get(
+    '[data-testid="rate-limit-429-account-limit-scope"]',
+  );
   expect((scope.element as HTMLSelectElement).value).toBe("device");
 
-  const seconds = wrapper.get('[data-testid="rate-limit-429-account-limit-cooldown-seconds"]');
+  const seconds = wrapper.get(
+    '[data-testid="rate-limit-429-account-limit-cooldown-seconds"]',
+  );
   // 后端只接受 1–7200 秒，前端控件的边界必须一致。
   expect((seconds.element as HTMLInputElement).min).toBe("1");
   expect((seconds.element as HTMLInputElement).max).toBe("7200");
@@ -740,18 +851,25 @@ it("defaults the cross-request Claude cooldown to off, session level and 60 seco
   await flushPromises();
   await openGatewayTab(wrapper);
 
-  const toggle = wrapper.get('[data-testid="rate-limit-429-account-limit-enabled"]');
+  const toggle = wrapper.get(
+    '[data-testid="rate-limit-429-account-limit-enabled"]',
+  );
   expect((toggle.element as HTMLInputElement).checked).toBe(false);
 
-  const scope = wrapper.get('[data-testid="rate-limit-429-account-limit-scope"]');
+  const scope = wrapper.get(
+    '[data-testid="rate-limit-429-account-limit-scope"]',
+  );
   expect((scope.element as HTMLSelectElement).value).toBe("session");
   // 两种粒度都在同一选择控件里，默认会话级。
-  expect(Array.from((scope.element as HTMLSelectElement).options).map((option) => option.value)).toEqual([
-    "session",
-    "device",
-  ]);
+  expect(
+    Array.from((scope.element as HTMLSelectElement).options).map(
+      (option) => option.value,
+    ),
+  ).toEqual(["session", "device"]);
 
-  const seconds = wrapper.get('[data-testid="rate-limit-429-account-limit-cooldown-seconds"]');
+  const seconds = wrapper.get(
+    '[data-testid="rate-limit-429-account-limit-cooldown-seconds"]',
+  );
   expect((seconds.element as HTMLInputElement).value).toBe("60");
 });
 
@@ -768,13 +886,21 @@ it("saves N together with an enabled device-level cross-request cooldown", async
   await flushPromises();
   await openGatewayTab(wrapper);
 
-  await wrapper.get('[data-testid="rate-limit-429-account-limit"]').setValue("3");
-  await wrapper.get('[data-testid="rate-limit-429-account-limit-enabled"]').setValue(true);
-  await wrapper.get('[data-testid="rate-limit-429-account-limit-scope"]').setValue("device");
+  await wrapper
+    .get('[data-testid="rate-limit-429-account-limit"]')
+    .setValue("3");
+  await wrapper
+    .get('[data-testid="rate-limit-429-account-limit-enabled"]')
+    .setValue(true);
+  await wrapper
+    .get('[data-testid="rate-limit-429-account-limit-scope"]')
+    .setValue("device");
   await wrapper
     .get('[data-testid="rate-limit-429-account-limit-cooldown-seconds"]')
     .setValue("300");
-  await wrapper.get('[data-testid="save-rate-limit-429-account-limit"]').trigger("click");
+  await wrapper
+    .get('[data-testid="save-rate-limit-429-account-limit"]')
+    .trigger("click");
   await flushPromises();
 
   expect(updateRateLimit429AccountLimit).toHaveBeenCalledWith({
@@ -787,8 +913,13 @@ it("saves N together with an enabled device-level cross-request cooldown", async
 
 it("configures the per-key outward billing snapshot without changing the default", async () => {
   getSettings.mockResolvedValue({ ...baseSettingsResponse });
-  getKeyBillingSnapshotSettings.mockResolvedValue({ enabled: false, max_stale_hours: 72 });
-  updateKeyBillingSnapshotSettings.mockImplementation(async (payload) => payload);
+  getKeyBillingSnapshotSettings.mockResolvedValue({
+    enabled: false,
+    max_stale_hours: 72,
+  });
+  updateKeyBillingSnapshotSettings.mockImplementation(
+    async (payload) => payload,
+  );
   const wrapper = mountView();
   await flushPromises();
   await openGatewayTab(wrapper);
@@ -796,10 +927,17 @@ it("configures the per-key outward billing snapshot without changing the default
   const toggle = wrapper.get('[data-testid="key-billing-snapshot-enabled"]');
   expect((toggle.element as HTMLInputElement).checked).toBe(false);
   await toggle.setValue(true);
-  await wrapper.get('[data-testid="key-billing-snapshot-max-stale-hours"]').setValue("96");
-  await wrapper.get('[data-testid="save-key-billing-snapshot-settings"]').trigger("click");
+  await wrapper
+    .get('[data-testid="key-billing-snapshot-max-stale-hours"]')
+    .setValue("96");
+  await wrapper
+    .get('[data-testid="save-key-billing-snapshot-settings"]')
+    .trigger("click");
   await flushPromises();
-  expect(updateKeyBillingSnapshotSettings).toHaveBeenCalledWith({ enabled: true, max_stale_hours: 96 });
+  expect(updateKeyBillingSnapshotSettings).toHaveBeenCalledWith({
+    enabled: true,
+    max_stale_hours: 96,
+  });
 });
 
 async function openPaymentTab(wrapper: ReturnType<typeof mountView>) {
@@ -846,12 +984,18 @@ describe("admin SettingsView email domain quota copy", () => {
   it("documents the email domain quota and empty-whitelist behavior in both locales", () => {
     expect(zhCommon.auth.emailDomainRegistrationLimit).toContain("主流邮箱");
     expect(zhCommon.auth.emailDomainRegistrationLimit).toContain("联系客服");
-    expect(enCommon.auth.emailDomainRegistrationLimit).toContain("mainstream email");
-    expect(enCommon.auth.emailDomainRegistrationLimit).toContain("contact support");
+    expect(enCommon.auth.emailDomainRegistrationLimit).toContain(
+      "mainstream email",
+    );
+    expect(enCommon.auth.emailDomainRegistrationLimit).toContain(
+      "contact support",
+    );
 
     // 白名单 hint 描述严格默认语义；额度语义移入独立开关的 hint。
-    const zhWhitelistHint = zhSettings.settings.registration.emailSuffixWhitelistHint;
-    const enWhitelistHint = enSettings.settings.registration.emailSuffixWhitelistHint;
+    const zhWhitelistHint =
+      zhSettings.settings.registration.emailSuffixWhitelistHint;
+    const enWhitelistHint =
+      enSettings.settings.registration.emailSuffixWhitelistHint;
     expect(zhWhitelistHint).toContain("留空则不限制");
     expect(enWhitelistHint).toContain("leave empty for no restriction");
 
@@ -918,11 +1062,20 @@ describe("admin SettingsView payment visible method controls", () => {
       enabled: true,
       cooldown_seconds: 5,
     });
-    updateRateLimit429CooldownSettings.mockImplementation(async (payload) => payload);
+    updateRateLimit429CooldownSettings.mockImplementation(
+      async (payload) => payload,
+    );
     getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 2 });
-    updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
-    getKeyBillingSnapshotSettings.mockResolvedValue({ enabled: false, max_stale_hours: 72 });
-    updateKeyBillingSnapshotSettings.mockImplementation(async (payload) => payload);
+    updateRateLimit429AccountLimit.mockImplementation(
+      async (payload) => payload,
+    );
+    getKeyBillingSnapshotSettings.mockResolvedValue({
+      enabled: false,
+      max_stale_hours: 72,
+    });
+    updateKeyBillingSnapshotSettings.mockImplementation(
+      async (payload) => payload,
+    );
     getStreamTimeoutSettings.mockResolvedValue({
       enabled: true,
       action: "temp_unsched",
@@ -944,13 +1097,17 @@ describe("admin SettingsView payment visible method controls", () => {
       enabled: true,
       interval_minutes: 30,
     });
-    updateUpstreamBillingProbeSettings.mockImplementation(async (payload) => payload);
+    updateUpstreamBillingProbeSettings.mockImplementation(
+      async (payload) => payload,
+    );
     getOllamaCloudUsageSettings.mockResolvedValue({
       enabled: false,
       interval_minutes: 60,
       debounce_minutes: 1,
     });
-    updateOllamaCloudUsageSettings.mockImplementation(async (payload) => payload);
+    updateOllamaCloudUsageSettings.mockImplementation(
+      async (payload) => payload,
+    );
     getGroups.mockResolvedValue([]);
     listProxies.mockResolvedValue({
       items: [],
@@ -973,14 +1130,17 @@ describe("admin SettingsView payment visible method controls", () => {
     await toggle.setValue(true);
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    expect(updateSettings.mock.calls[0]?.[0].openai_codex_ticket_enabled).toBe(true);
+    expect(updateSettings.mock.calls[0]?.[0].openai_codex_ticket_enabled).toBe(
+      true,
+    );
     wrapper.unmount();
   });
 
   it("loads the masked Codex harvest proxy and submits a replacement URL", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
-      openai_codex_ticket_harvest_proxy_url: "http://user:***@old.example.com:8080",
+      openai_codex_ticket_harvest_proxy_url:
+        "http://user:***@old.example.com:8080",
       openai_codex_ticket_harvest_proxy_configured: true,
     });
     const wrapper = mountView();
@@ -990,34 +1150,62 @@ describe("admin SettingsView payment visible method controls", () => {
     await input.setValue("socks5h://user:new-secret@new.example.com:1080");
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    expect(updateSettings.mock.calls[0]?.[0].openai_codex_ticket_harvest_proxy_url)
-      .toBe("socks5h://user:new-secret@new.example.com:1080");
-    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("openai_codex_ticket_harvest_proxy_configured");
+    expect(
+      updateSettings.mock.calls[0]?.[0].openai_codex_ticket_harvest_proxy_url,
+    ).toBe("socks5h://user:new-secret@new.example.com:1080");
+    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty(
+      "openai_codex_ticket_harvest_proxy_configured",
+    );
     wrapper.unmount();
   });
 
   it("loads and saves the open button visibility for each custom menu", async () => {
     const menuItems = [
-      { id: "docs", label: "Docs", url: "https://example.com/docs", icon_svg: "", visibility: "user", sort_order: 0 },
-      { id: "help", label: "Help", url: "https://example.com/help", icon_svg: "", visibility: "user", sort_order: 1, hide_open_button: true },
+      {
+        id: "docs",
+        label: "Docs",
+        url: "https://example.com/docs",
+        icon_svg: "",
+        visibility: "user",
+        sort_order: 0,
+      },
+      {
+        id: "help",
+        label: "Help",
+        url: "https://example.com/help",
+        icon_svg: "",
+        visibility: "user",
+        sort_order: 1,
+        hide_open_button: true,
+      },
     ];
-    getSettings.mockResolvedValue({ ...baseSettingsResponse, custom_menu_items: menuItems });
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      custom_menu_items: menuItems,
+    });
     const wrapper = mountView();
     await flushPromises();
 
-    const toggles = wrapper.findAll<HTMLInputElement>('[data-testid="custom-menu-hide-open-button"]');
-    expect(toggles.map(toggle => toggle.element.checked)).toEqual([false, true]);
+    const toggles = wrapper.findAll<HTMLInputElement>(
+      '[data-testid="custom-menu-hide-open-button"]',
+    );
+    expect(toggles.map((toggle) => toggle.element.checked)).toEqual([
+      false,
+      true,
+    ]);
     await toggles[0].setValue(true);
     await toggles[1].setValue(false);
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
-      custom_menu_items: [
-        { ...menuItems[0], hide_open_button: true },
-        { ...menuItems[1], hide_open_button: false },
-      ],
-    }));
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        custom_menu_items: [
+          { ...menuItems[0], hide_open_button: true },
+          { ...menuItems[1], hide_open_button: false },
+        ],
+      }),
+    );
     wrapper.unmount();
   });
 
@@ -1054,9 +1242,13 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(getPanelRateLimitSettings).toHaveBeenCalled();
     expect(wrapper.text()).toContain("admin.settings.panelRateLimit.title");
-    expect(wrapper.text()).toContain("admin.settings.panelRateLimit.proxySafeNote");
+    expect(wrapper.text()).toContain(
+      "admin.settings.panelRateLimit.proxySafeNote",
+    );
 
-    const userRpmInput = wrapper.find('[data-testid="panel-rate-limit-user-rpm"]');
+    const userRpmInput = wrapper.find(
+      '[data-testid="panel-rate-limit-user-rpm"]',
+    );
     expect(userRpmInput.exists()).toBe(true);
     await userRpmInput.setValue("120");
 
@@ -1117,7 +1309,9 @@ describe("admin SettingsView payment visible method controls", () => {
     // 默认选中 Turnstile
     expect(wrapper.text()).toContain("admin.settings.turnstile.siteKey");
 
-    await wrapper.get('[data-testid="captcha-provider-tencent"]').trigger("click");
+    await wrapper
+      .get('[data-testid="captcha-provider-tencent"]')
+      .trigger("click");
     await flushPromises();
 
     const card = wrapper
@@ -1125,12 +1319,22 @@ describe("admin SettingsView payment visible method controls", () => {
       .find((node) => node.text().includes("admin.settings.captcha.title"));
     expect(card).toBeDefined();
     expect(card!.text()).not.toContain("admin.settings.turnstile.siteKey");
-    expect(card!.get('a[href="https://console.cloud.tencent.com/captcha"]').exists()).toBe(true);
-    expect(card!.get('a[href="https://console.cloud.tencent.com/cam/capi"]').exists()).toBe(true);
     expect(
-      card!.get('a[href="https://cloud.tencent.com/document/product/1110/36841"]').exists(),
+      card!.get('a[href="https://console.cloud.tencent.com/captcha"]').exists(),
     ).toBe(true);
-    const inputs = card!.findAll("input").filter((input) => input.attributes("type") !== "checkbox");
+    expect(
+      card!
+        .get('a[href="https://console.cloud.tencent.com/cam/capi"]')
+        .exists(),
+    ).toBe(true);
+    expect(
+      card!
+        .get('a[href="https://cloud.tencent.com/document/product/1110/36841"]')
+        .exists(),
+    ).toBe(true);
+    const inputs = card!
+      .findAll("input")
+      .filter((input) => input.attributes("type") !== "checkbox");
     await inputs[0]!.setValue("123456789");
     await inputs[1]!.setValue("app-secret-value");
     await inputs[2]!.setValue("cloud-secret-id-value");
@@ -1159,17 +1363,25 @@ describe("admin SettingsView payment visible method controls", () => {
     await openSecurityTab(wrapper);
 
     await wrapper.get('[data-testid="captcha-enabled-toggle"]').setValue(true);
-    await wrapper.get('[data-testid="captcha-provider-tencent"]').trigger("click");
-    await wrapper.get('[data-testid="tencent-captcha-region-intl"]').trigger("click");
+    await wrapper
+      .get('[data-testid="captcha-provider-tencent"]')
+      .trigger("click");
+    await wrapper
+      .get('[data-testid="tencent-captcha-region-intl"]')
+      .trigger("click");
 
     const card = wrapper
       .findAll(".card")
       .find((node) => node.text().includes("admin.settings.captcha.title"));
     expect(card).toBeDefined();
-    expect(card!.get('a[href="https://console.tencentcloud.com/captcha/graphical"]').exists()).toBe(
-      true,
-    );
-    expect(card!.get('a[href="https://console.tencentcloud.com/cam/capi"]').exists()).toBe(true);
+    expect(
+      card!
+        .get('a[href="https://console.tencentcloud.com/captcha/graphical"]')
+        .exists(),
+    ).toBe(true);
+    expect(
+      card!.get('a[href="https://console.tencentcloud.com/cam/capi"]').exists(),
+    ).toBe(true);
 
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
@@ -1190,7 +1402,9 @@ describe("admin SettingsView payment visible method controls", () => {
     const masterToggle = wrapper.get('[data-testid="captcha-enabled-toggle"]');
     await masterToggle.setValue(true);
 
-    await wrapper.get('[data-testid="captcha-provider-aliyun"]').trigger("click");
+    await wrapper
+      .get('[data-testid="captcha-provider-aliyun"]')
+      .trigger("click");
     await flushPromises();
 
     const card = wrapper
@@ -1199,7 +1413,9 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(card).toBeDefined();
     expect(card!.text()).toContain("admin.settings.aliyunCaptcha.region");
     expect(card!.text()).not.toContain("admin.settings.turnstile.siteKey");
-    const inputs = card!.findAll("input").filter((input) => input.attributes("type") !== "checkbox");
+    const inputs = card!
+      .findAll("input")
+      .filter((input) => input.attributes("type") !== "checkbox");
     await inputs[0]!.setValue("prefix-1");
     await inputs[1]!.setValue("scene-1");
     await inputs[2]!.setValue("ak-id");
@@ -1267,7 +1483,9 @@ describe("admin SettingsView payment visible method controls", () => {
     await openSecurityTab(wrapper);
 
     const settings = wrapper.get('[data-testid="passkey-settings"]');
-    expect(settings.get('[data-testid="passkey-toggle"]').attributes("disabled")).toBeDefined();
+    expect(
+      settings.get('[data-testid="passkey-toggle"]').attributes("disabled"),
+    ).toBeDefined();
     const status = settings.get('[data-testid="passkey-config-status"]');
     expect(status.text()).toContain(
       "admin.settings.security.passkeyNotConfigured",
@@ -1295,15 +1513,21 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(card).toBeDefined();
     const toggle = card!.get('input[type="checkbox"]');
     expect((toggle.element as HTMLInputElement).checked).toBe(false);
-    expect(card!.find('[data-testid="forwarded-client-ip-headers-input"]').exists()).toBe(false);
+    expect(
+      card!.find('[data-testid="forwarded-client-ip-headers-input"]').exists(),
+    ).toBe(false);
 
     await toggle.setValue(true);
-    expect(card!.findAll('[data-testid="forwarded-client-ip-header-tag"]')).toHaveLength(2);
+    expect(
+      card!.findAll('[data-testid="forwarded-client-ip-header-tag"]'),
+    ).toHaveLength(2);
     expect(card!.text()).toContain("Cf-Connecting-Ip");
     expect(card!.text()).toContain("X-Real-Ip");
     showError.mockClear();
 
-    const input = card!.get('[data-testid="forwarded-client-ip-headers-input"]');
+    const input = card!.get(
+      '[data-testid="forwarded-client-ip-headers-input"]',
+    );
     await input.setValue("x-client-ip");
     await input.trigger("keydown", { key: "Enter" });
     await input.setValue("X-CLIENT-IP");
@@ -1311,7 +1535,9 @@ describe("admin SettingsView payment visible method controls", () => {
     await input.setValue("invalid header");
     await input.trigger("keydown", { key: "Enter" });
     expect(showError).toHaveBeenCalledTimes(1);
-    expect(card!.findAll('[data-testid="forwarded-client-ip-header-tag"]')).toHaveLength(3);
+    expect(
+      card!.findAll('[data-testid="forwarded-client-ip-header-tag"]'),
+    ).toHaveLength(3);
 
     const realIpTag = card!
       .findAll('[data-testid="forwarded-client-ip-header-tag"]')
@@ -1321,7 +1547,9 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(card!.text()).not.toContain("X-Real-Ip");
 
     await toggle.setValue(false);
-    expect(card!.find('[data-testid="forwarded-client-ip-headers-input"]').exists()).toBe(false);
+    expect(
+      card!.find('[data-testid="forwarded-client-ip-headers-input"]').exists(),
+    ).toBe(false);
     await toggle.setValue(true);
     expect(card!.text()).toContain("X-Client-Ip");
 
@@ -1620,14 +1848,24 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(card.isVisible()).toBe(true);
     expect(card.text()).toContain("上游倍率自动探测");
     expect(
-      (card.get('[data-testid="upstream-billing-probe-enabled"]').element as HTMLInputElement)
-        .checked,
+      (
+        card.get('[data-testid="upstream-billing-probe-enabled"]')
+          .element as HTMLInputElement
+      ).checked,
     ).toBe(false);
-    expect(card.find('[data-testid="upstream-billing-probe-interval"]').exists()).toBe(false);
+    expect(
+      card.find('[data-testid="upstream-billing-probe-interval"]').exists(),
+    ).toBe(false);
 
-    await card.get('[data-testid="upstream-billing-probe-enabled"]').setValue(true);
-    await card.get('[data-testid="upstream-billing-probe-interval"]').setValue(60);
-    await card.get('[data-testid="upstream-billing-probe-save"]').trigger("click");
+    await card
+      .get('[data-testid="upstream-billing-probe-enabled"]')
+      .setValue(true);
+    await card
+      .get('[data-testid="upstream-billing-probe-interval"]')
+      .setValue(60);
+    await card
+      .get('[data-testid="upstream-billing-probe-save"]')
+      .trigger("click");
     await flushPromises();
 
     expect(updateUpstreamBillingProbeSettings).toHaveBeenCalledWith({
@@ -1652,7 +1890,9 @@ describe("admin SettingsView payment visible method controls", () => {
     const mappingToggle = wrapper.get(
       '[data-testid="grok-cross-client-model-map-toggle"]',
     );
-    expect((modelInput.element as HTMLInputElement).value).toBe("grok-4.1-fast");
+    expect((modelInput.element as HTMLInputElement).value).toBe(
+      "grok-4.1-fast",
+    );
     expect((mappingToggle.element as HTMLInputElement).checked).toBe(true);
 
     await modelInput.setValue("grok-custom-text");
@@ -1660,7 +1900,10 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(payload.grok_default_text_model).toBe("grok-custom-text");
     expect(payload.grok_cross_client_model_map_enabled).toBe(false);
   });
@@ -1681,7 +1924,9 @@ describe("admin SettingsView payment visible method controls", () => {
     const card = wrapper.get('[data-testid="request-audit-force-settings"]');
     const enabled = card.get('[data-testid="request_audit_force_enabled"]');
     const messages = card.get('[data-testid="request_audit_force_messages"]');
-    const chat = card.get('[data-testid="request_audit_force_chat_completions"]');
+    const chat = card.get(
+      '[data-testid="request_audit_force_chat_completions"]',
+    );
     const responses = card.get('[data-testid="request_audit_force_responses"]');
     expect((enabled.element as HTMLInputElement).checked).toBe(false);
     expect((messages.element as HTMLInputElement).checked).toBe(true);
@@ -1722,7 +1967,10 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(payload.openai_ttft_mode).toBe("semantic");
   });
 
@@ -1732,18 +1980,32 @@ describe("admin SettingsView payment visible method controls", () => {
     await flushPromises();
     await openGatewayTab(wrapper);
 
-    const card = wrapper.get('[data-testid="ollama-cloud-usage-global-settings"]');
+    const card = wrapper.get(
+      '[data-testid="ollama-cloud-usage-global-settings"]',
+    );
     expect(card.isVisible()).toBe(true);
     expect(
-      (card.get('[data-testid="ollama-cloud-usage-global-enabled"]').element as HTMLInputElement)
-        .checked,
+      (
+        card.get('[data-testid="ollama-cloud-usage-global-enabled"]')
+          .element as HTMLInputElement
+      ).checked,
     ).toBe(false);
-    expect(card.find('[data-testid="ollama-cloud-usage-global-interval"]').exists()).toBe(false);
+    expect(
+      card.find('[data-testid="ollama-cloud-usage-global-interval"]').exists(),
+    ).toBe(false);
 
-    await card.get('[data-testid="ollama-cloud-usage-global-enabled"]').setValue(true);
-    await card.get('[data-testid="ollama-cloud-usage-global-debounce"]').setValue(3);
-    await card.get('[data-testid="ollama-cloud-usage-global-interval"]').setValue(90);
-    await card.get('[data-testid="ollama-cloud-usage-global-save"]').trigger("click");
+    await card
+      .get('[data-testid="ollama-cloud-usage-global-enabled"]')
+      .setValue(true);
+    await card
+      .get('[data-testid="ollama-cloud-usage-global-debounce"]')
+      .setValue(3);
+    await card
+      .get('[data-testid="ollama-cloud-usage-global-interval"]')
+      .setValue(90);
+    await card
+      .get('[data-testid="ollama-cloud-usage-global-save"]')
+      .trigger("click");
     await flushPromises();
 
     expect(updateOllamaCloudUsageSettings).toHaveBeenCalledWith({
@@ -1753,36 +2015,47 @@ describe("admin SettingsView payment visible method controls", () => {
     });
   });
 
-  it.each([false, true])("clears the OAuth rate without losing zero (weighted=%s)", async (weighted) => {
-    getSettings.mockResolvedValueOnce({
-      ...baseSettingsResponse,
-      openai_low_upstream_rate_priority_enabled: !weighted,
-      openai_advanced_scheduler_enabled: weighted,
-      openai_oauth_scheduling_rate_multiplier: 0.7,
-    });
-    const wrapper = mountView();
-    await flushPromises();
-    const input = wrapper.get('[data-testid="openai-oauth-scheduling-rate-multiplier"]');
-    expect(input.attributes("required")).toBeUndefined();
-    await input.setValue("");
-    await wrapper.find("form").trigger("submit.prevent");
-    await flushPromises();
-    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      openai_oauth_scheduling_rate_multiplier: null,
-    }));
-    await input.setValue("0");
-    await wrapper.find("form").trigger("submit.prevent");
-    await flushPromises();
-    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      openai_oauth_scheduling_rate_multiplier: 0,
-    }));
-    updateSettings.mockClear();
-    await input.setValue("-1");
-    await wrapper.find("form").trigger("submit.prevent");
-    await flushPromises();
-    expect(updateSettings).not.toHaveBeenCalled();
-    expect(showError).toHaveBeenCalledWith("OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。");
-  });
+  it.each([false, true])(
+    "clears the OAuth rate without losing zero (weighted=%s)",
+    async (weighted) => {
+      getSettings.mockResolvedValueOnce({
+        ...baseSettingsResponse,
+        openai_low_upstream_rate_priority_enabled: !weighted,
+        openai_advanced_scheduler_enabled: weighted,
+        openai_oauth_scheduling_rate_multiplier: 0.7,
+      });
+      const wrapper = mountView();
+      await flushPromises();
+      const input = wrapper.get(
+        '[data-testid="openai-oauth-scheduling-rate-multiplier"]',
+      );
+      expect(input.attributes("required")).toBeUndefined();
+      await input.setValue("");
+      await wrapper.find("form").trigger("submit.prevent");
+      await flushPromises();
+      expect(updateSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          openai_oauth_scheduling_rate_multiplier: null,
+        }),
+      );
+      await input.setValue("0");
+      await wrapper.find("form").trigger("submit.prevent");
+      await flushPromises();
+      expect(updateSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          openai_oauth_scheduling_rate_multiplier: 0,
+        }),
+      );
+      updateSettings.mockClear();
+      await input.setValue("-1");
+      await wrapper.find("form").trigger("submit.prevent");
+      await flushPromises();
+      expect(updateSettings).not.toHaveBeenCalled();
+      expect(showError).toHaveBeenCalledWith(
+        "OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。",
+      );
+    },
+  );
 
   it("loads and preserves an explicitly cleared OAuth rate", async () => {
     getSettings.mockResolvedValueOnce({
@@ -1792,13 +2065,17 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     const wrapper = mountView();
     await flushPromises();
-    const input = wrapper.get<HTMLInputElement>('[data-testid="openai-oauth-scheduling-rate-multiplier"]');
+    const input = wrapper.get<HTMLInputElement>(
+      '[data-testid="openai-oauth-scheduling-rate-multiplier"]',
+    );
     expect(input.element.value).toBe("");
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
-      openai_oauth_scheduling_rate_multiplier: null,
-    }));
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_oauth_scheduling_rate_multiplier: null,
+      }),
+    );
   });
 
   it("places and explains rate controls for both scheduling modes", async () => {
@@ -1806,10 +2083,14 @@ describe("admin SettingsView payment visible method controls", () => {
 
     await flushPromises();
     expect(
-      wrapper.find('[data-testid="openai-oauth-scheduling-rate-multiplier"]').exists(),
+      wrapper
+        .find('[data-testid="openai-oauth-scheduling-rate-multiplier"]')
+        .exists(),
     ).toBe(false);
 
-    const lowRateToggle = wrapper.get('[data-testid="openai-low-rate-priority-toggle"]');
+    const lowRateToggle = wrapper.get(
+      '[data-testid="openai-low-rate-priority-toggle"]',
+    );
     await lowRateToggle.setValue(true);
     const priorityModeText = wrapper.text();
     expect(priorityModeText).toContain(
@@ -1843,7 +2124,9 @@ describe("admin SettingsView payment visible method controls", () => {
       wrapper.find('[data-testid="openai-low-rate-priority-toggle"]').exists(),
     ).toBe(false);
     expect(
-      wrapper.find('[data-testid="openai-oauth-scheduling-rate-multiplier"]').exists(),
+      wrapper
+        .find('[data-testid="openai-oauth-scheduling-rate-multiplier"]')
+        .exists(),
     ).toBe(true);
     const weightedModeText = wrapper.text();
     expect(weightedModeText).toContain(
@@ -1871,12 +2154,18 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(imageUploads.length).toBeGreaterThan(0);
 
     const paymentHelpImageUpload = imageUploads.find(
-      (node) => node.attributes("data-placeholder") === "admin.settings.payment.helpImagePlaceholder",
+      (node) =>
+        node.attributes("data-placeholder") ===
+        "admin.settings.payment.helpImagePlaceholder",
     );
 
     expect(paymentHelpImageUpload).toBeDefined();
-    expect(paymentHelpImageUpload?.attributes("data-upload-label")).toBe("上传图片");
-    expect(paymentHelpImageUpload?.attributes("data-remove-label")).toBe("移除");
+    expect(paymentHelpImageUpload?.attributes("data-upload-label")).toBe(
+      "上传图片",
+    );
+    expect(paymentHelpImageUpload?.attributes("data-remove-label")).toBe(
+      "移除",
+    );
   });
 
   it("normalizes null supported_types from API so provider card stays visible", async () => {
@@ -1997,11 +2286,20 @@ describe("admin SettingsView wechat connect controls", () => {
       enabled: true,
       cooldown_seconds: 5,
     });
-    updateRateLimit429CooldownSettings.mockImplementation(async (payload) => payload);
+    updateRateLimit429CooldownSettings.mockImplementation(
+      async (payload) => payload,
+    );
     getRateLimit429AccountLimit.mockResolvedValue({ max_accounts: 2 });
-    updateRateLimit429AccountLimit.mockImplementation(async (payload) => payload);
-    getKeyBillingSnapshotSettings.mockResolvedValue({ enabled: false, max_stale_hours: 72 });
-    updateKeyBillingSnapshotSettings.mockImplementation(async (payload) => payload);
+    updateRateLimit429AccountLimit.mockImplementation(
+      async (payload) => payload,
+    );
+    getKeyBillingSnapshotSettings.mockResolvedValue({
+      enabled: false,
+      max_stale_hours: 72,
+    });
+    updateKeyBillingSnapshotSettings.mockImplementation(
+      async (payload) => payload,
+    );
     getStreamTimeoutSettings.mockResolvedValue({
       enabled: true,
       action: "temp_unsched",
@@ -2083,7 +2381,9 @@ describe("admin SettingsView wechat connect controls", () => {
 
     const link = wrapper.get('[data-testid="github-oauth-apps-guide-link"]');
     expect(link.text()).toContain("OAuth Apps");
-    expect(link.attributes("href")).toBe("https://github.com/settings/developers");
+    expect(link.attributes("href")).toBe(
+      "https://github.com/settings/developers",
+    );
     expect(link.attributes("target")).toBe("_blank");
     expect(link.attributes("rel")).toContain("noopener");
   });
@@ -2224,8 +2524,14 @@ describe("admin SettingsView platform quota matrix", () => {
       ...baseSettingsResponse,
       ...payload,
     }));
-    getWebSearchEmulationConfig.mockResolvedValue({ enabled: false, providers: [] });
-    updateWebSearchEmulationConfig.mockResolvedValue({ enabled: false, providers: [] });
+    getWebSearchEmulationConfig.mockResolvedValue({
+      enabled: false,
+      providers: [],
+    });
+    updateWebSearchEmulationConfig.mockResolvedValue({
+      enabled: false,
+      providers: [],
+    });
     getAdminApiKey.mockResolvedValue({ exists: false, masked_key: "" });
     getOverloadCooldownSettings.mockResolvedValue({});
     getRateLimit429CooldownSettings.mockResolvedValue({});
@@ -2268,7 +2574,10 @@ describe("admin SettingsView platform quota matrix", () => {
 
     // 应携带嵌套对象，而非扁平字段
     expect(payload).toHaveProperty("default_platform_quotas");
-    const quotas = payload["default_platform_quotas"] as Record<string, unknown>;
+    const quotas = payload["default_platform_quotas"] as Record<
+      string,
+      unknown
+    >;
     const platforms = ["anthropic", "openai", "gemini", "antigravity", "grok"];
     for (const p of platforms) {
       expect(quotas).toHaveProperty(p);
@@ -2279,7 +2588,9 @@ describe("admin SettingsView platform quota matrix", () => {
     }
 
     // 不应存在旧扁平字段
-    expect(payload).not.toHaveProperty("default_platform_quota_anthropic_daily");
+    expect(payload).not.toHaveProperty(
+      "default_platform_quota_anthropic_daily",
+    );
     expect(payload).not.toHaveProperty("default_platform_quota_openai_weekly");
   });
 
@@ -2288,7 +2599,7 @@ describe("admin SettingsView platform quota matrix", () => {
       ...baseSettingsResponse,
       default_platform_quotas: {
         anthropic: { daily: 5, weekly: null, monthly: null },
-        openai:    { daily: null, weekly: 12.5, monthly: null },
+        openai: { daily: null, weekly: 12.5, monthly: null },
         // gemini / antigravity 缺失 → 应被归一化为全 null
       },
     });
@@ -2300,24 +2611,38 @@ describe("admin SettingsView platform quota matrix", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    const payload = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
-    const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
+    const payload = updateSettings.mock.calls.at(-1)![0] as Record<
+      string,
+      unknown
+    >;
+    const quotas = payload["default_platform_quotas"] as Record<
+      string,
+      Record<string, unknown>
+    >;
 
     expect(quotas["anthropic"]?.["daily"]).toBe(5);
     expect(quotas["openai"]?.["weekly"]).toBe(12.5);
     // 缺失平台应补全为 null
-    expect(quotas["gemini"]).toEqual({ daily: null, weekly: null, monthly: null });
-    expect(quotas["antigravity"]).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(quotas["gemini"]).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
+    expect(quotas["antigravity"]).toEqual({
+      daily: null,
+      weekly: null,
+      monthly: null,
+    });
   });
 
-  it("空输入（v-model.number 产出 \"\"）在提交时清洗为 null 而非空字符串", async () => {
+  it('空输入（v-model.number 产出 ""）在提交时清洗为 null 而非空字符串', async () => {
     // 模拟后端返回带有 anthropic daily 值的配额
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
       default_platform_quotas: {
         anthropic: { daily: 10, weekly: null, monthly: null },
-        openai:    { daily: null, weekly: null, monthly: null },
-        gemini:    { daily: null, weekly: null, monthly: null },
+        openai: { daily: null, weekly: null, monthly: null },
+        gemini: { daily: null, weekly: null, monthly: null },
         antigravity: { daily: null, weekly: null, monthly: null },
       },
     });
@@ -2341,8 +2666,14 @@ describe("admin SettingsView platform quota matrix", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    const payload = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
-    const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
+    const payload = updateSettings.mock.calls.at(-1)![0] as Record<
+      string,
+      unknown
+    >;
+    const quotas = payload["default_platform_quotas"] as Record<
+      string,
+      Record<string, unknown>
+    >;
     // 不管输入是什么，提交值应为 null（而非 "" 或 NaN）
     expect(quotas["anthropic"]?.["daily"]).toBe(null);
   });

@@ -36,7 +36,9 @@ describe("groups image pricing platform support", () => {
     expect(imagePricingI18nKey("grok", "title")).toBe(
       "admin.groups.imagePricing.title",
     );
-    expect(videoPricingI18nKey("title")).toBe("admin.groups.videoPricing.title");
+    expect(videoPricingI18nKey("title")).toBe(
+      "admin.groups.videoPricing.title",
+    );
   });
 
   it("uses Grok media defaults instead of generic image fallback placeholders", () => {
@@ -52,6 +54,8 @@ describe("groups image pricing platform support", () => {
   it("keeps non-Grok image placeholders on the generic image card", () => {
     expect(getImagePricePlaceholder("openai", "image_price_1k")).toBe("0.134");
     expect(getDefaultImagePreviewPrice("openai", "image_price_2k")).toBe(0.201);
-    expect(getDefaultVideoPreviewPrice("openai", "video_price_480p")).toBeNull();
+    expect(
+      getDefaultVideoPreviewPrice("openai", "video_price_480p"),
+    ).toBeNull();
   });
 });

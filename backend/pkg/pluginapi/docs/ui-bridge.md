@@ -38,15 +38,15 @@ UI 到宿主：
 
 ## 方法
 
-| `type` | UI 参数 | 成功响应 |
-|---|---|---|
-| `sub2api.plugin.ready` | 无 | 无响应 |
-| `config.load` | 无 | `config` |
-| `config.save` | `config` 对象 | 规范化后的 `config` |
-| `config.test` | 无 | `result` |
-| `plugin.status` | 无 | `result`（`Health`：`{healthy, message, status_json}`） |
-| `ui.resize` | `height` | 无响应 |
-| `ui.notify` | `level`、`message` | 无响应 |
+| `type`                 | UI 参数            | 成功响应                                                |
+| ---------------------- | ------------------ | ------------------------------------------------------- |
+| `sub2api.plugin.ready` | 无                 | 无响应                                                  |
+| `config.load`          | 无                 | `config`                                                |
+| `config.save`          | `config` 对象      | 规范化后的 `config`                                     |
+| `config.test`          | 无                 | `result`                                                |
+| `plugin.status`        | 无                 | `result`（`Health`：`{healthy, message, status_json}`） |
+| `ui.resize`            | `height`           | 无响应                                                  |
+| `ui.notify`            | `level`、`message` | 无响应                                                  |
 
 `config.test` 在 v1 中测试已保存配置（需二次验证，可产生副作用）。UI 若要测试当前表单，应先调用 `config.save`。
 

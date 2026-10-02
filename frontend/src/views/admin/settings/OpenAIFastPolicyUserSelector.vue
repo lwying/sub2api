@@ -6,7 +6,10 @@
         :key="userId"
         class="inline-flex max-w-full items-center gap-1.5 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs text-gray-700 dark:bg-dark-600 dark:text-gray-200"
       >
-        <span class="max-w-64 truncate font-medium" :title="selectedUserLabel(userId)">
+        <span
+          class="max-w-64 truncate font-medium"
+          :title="selectedUserLabel(userId)"
+        >
           {{ selectedUserLabel(userId) }}
         </span>
         <span class="shrink-0 text-gray-400">#{{ userId }}</span>
@@ -39,7 +42,9 @@
         type="text"
         autocomplete="off"
         class="input input-sm w-full pl-9"
-        :placeholder="t('admin.settings.openaiFastPolicy.userSearchPlaceholder')"
+        :placeholder="
+          t('admin.settings.openaiFastPolicy.userSearchPlaceholder')
+        "
         @input="debounceSearch"
         @focus="showDropdown = true"
       />
@@ -49,7 +54,10 @@
       v-if="showDropdown && searchQuery.trim()"
       class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-600 dark:bg-dark-700"
     >
-      <div v-if="searchLoading" class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+      <div
+        v-if="searchLoading"
+        class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400"
+      >
         {{ t("common.loading") }}
       </div>
       <div
@@ -66,9 +74,14 @@
           class="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-dark-600"
           @click="selectUser(user)"
         >
-          <span class="min-w-0 truncate font-medium text-gray-900 dark:text-white">
+          <span
+            class="min-w-0 truncate font-medium text-gray-900 dark:text-white"
+          >
             {{ user.email }}
-            <span v-if="user.deleted" class="ml-1 text-xs font-normal text-gray-400">
+            <span
+              v-if="user.deleted"
+              class="ml-1 text-xs font-normal text-gray-400"
+            >
               {{ t("admin.settings.openaiFastPolicy.userDeleted") }}
             </span>
           </span>
@@ -105,7 +118,9 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchSequence = 0;
 
 const selectedUserIds = computed(() =>
-  Array.from(new Set(props.modelValue.filter((id) => Number.isInteger(id) && id > 0))),
+  Array.from(
+    new Set(props.modelValue.filter((id) => Number.isInteger(id) && id > 0)),
+  ),
 );
 
 const availableResults = computed(() => {
@@ -116,8 +131,10 @@ const availableResults = computed(() => {
 });
 
 function selectedUserLabel(userId: number): string {
-  return selectedUsers.value[userId]?.email ||
-    t("admin.settings.openaiFastPolicy.userIdFallback", { id: userId });
+  return (
+    selectedUsers.value[userId]?.email ||
+    t("admin.settings.openaiFastPolicy.userIdFallback", { id: userId })
+  );
 }
 
 function clearPendingSearch(): void {

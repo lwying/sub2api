@@ -26,13 +26,21 @@
     <div class="flex shrink-0 items-center gap-2 pt-0.5">
       <div class="flex shrink-0 flex-col items-end gap-1">
         <!-- Rate pill (platform color) -->
-        <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
+        <span
+          v-if="rateMultiplier !== undefined"
+          :class="[
+            'inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold',
+            ratePillClass,
+          ]"
+        >
           <template v-if="hasCustomRate">
-            <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
+            <span class="mr-1 line-through opacity-50"
+              >{{ rateMultiplier }}x</span
+            >
             <span class="font-bold">{{ userRateMultiplier }}x</span>
           </template>
           <template v-else>
-            {{ rateMultiplier }}x {{ t('admin.groups.rateLabel') }}
+            {{ rateMultiplier }}x {{ t("admin.groups.rateLabel") }}
           </template>
         </span>
         <span
@@ -52,44 +60,48 @@
         viewBox="0 0 24 24"
         stroke-width="2"
       >
-        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M5 13l4 4L19 7"
+        />
       </svg>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
-import GroupBadge from './GroupBadge.vue'
-import type { SubscriptionType, GroupPlatform } from '@/types'
-import { useAppStore } from '@/stores/app'
-import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import GroupBadge from "./GroupBadge.vue";
+import type { SubscriptionType, GroupPlatform } from "@/types";
+import { useAppStore } from "@/stores/app";
+import { formatPeakRateWindow, serverTimezoneLabel } from "@/utils/peak-rate";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 interface Props {
-  name: string
-  platform: GroupPlatform
-  subscriptionType?: SubscriptionType
-  rateMultiplier?: number
-  userRateMultiplier?: number | null
-  peakRateEnabled?: boolean
-  peakStart?: string
-  peakEnd?: string
-  peakRateMultiplier?: number
-  description?: string | null
-  selected?: boolean
-  showCheckmark?: boolean
+  name: string;
+  platform: GroupPlatform;
+  subscriptionType?: SubscriptionType;
+  rateMultiplier?: number;
+  userRateMultiplier?: number | null;
+  peakRateEnabled?: boolean;
+  peakStart?: string;
+  peakEnd?: string;
+  peakRateMultiplier?: number;
+  description?: string | null;
+  selected?: boolean;
+  showCheckmark?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  subscriptionType: 'standard',
+  subscriptionType: "standard",
   selected: false,
   showCheckmark: true,
   userRateMultiplier: null,
-  peakRateEnabled: false
-})
+  peakRateEnabled: false,
+});
 
 // Whether user has a custom rate different from default
 const hasCustomRate = computed(() => {
@@ -98,14 +110,14 @@ const hasCustomRate = computed(() => {
     props.userRateMultiplier !== undefined &&
     props.rateMultiplier !== undefined &&
     props.userRateMultiplier !== props.rateMultiplier
-  )
-})
+  );
+});
 
-const appStore = useAppStore()
+const appStore = useAppStore();
 
 const hasPeakRate = computed(() => {
-  return Boolean(props.peakRateEnabled && props.peakStart && props.peakEnd)
-})
+  return Boolean(props.peakRateEnabled && props.peakStart && props.peakEnd);
+});
 
 const peakRateText = computed(() => {
   return formatPeakRateWindow(
@@ -113,29 +125,29 @@ const peakRateText = computed(() => {
       peak_rate_enabled: props.peakRateEnabled,
       peak_start: props.peakStart,
       peak_end: props.peakEnd,
-      peak_rate_multiplier: props.peakRateMultiplier
+      peak_rate_multiplier: props.peakRateMultiplier,
     },
-    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
-  )
-})
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+  );
+});
 
 const peakRateTitle = computed(() => {
-  return t('common.peakRateTooltip', { window: peakRateText.value })
-})
+  return t("common.peakRateTooltip", { window: peakRateText.value });
+});
 
 // Rate pill color matches platform badge color
 const ratePillClass = computed(() => {
   switch (props.platform) {
-    case 'anthropic':
-      return 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
-    case 'openai':
-      return 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-    case 'gemini':
-      return 'bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400'
+    case "anthropic":
+      return "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400";
+    case "openai":
+      return "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400";
+    case "gemini":
+      return "bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400";
     default: // antigravity and others
-      return 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400'
+      return "bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400";
   }
-})
+});
 </script>
 
 <style scoped>
