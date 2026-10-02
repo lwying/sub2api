@@ -21,6 +21,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// 默认采集构造仅用于单元测试，生产路径始终使用请求入口冻结的配置。
+func newRequestTraceFlow() *requestTraceFlow {
+	return newRequestTraceFlowWithCapture(true, service.RequestTraceBodyLimit)
+}
+
 type countingTraceTransport struct{ base http.RoundTripper }
 
 func (t *countingTraceTransport) RoundTrip(req *http.Request) (*http.Response, error) {

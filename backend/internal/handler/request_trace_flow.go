@@ -53,11 +53,6 @@ type requestTraceDecisionEvent struct {
 	facts        service.RequestTraceDecisionFacts
 }
 
-// newRequestTraceFlow 是测试与只关心默认行为的调用方用的构造：正文采集开启、硬上限。
-func newRequestTraceFlow() *requestTraceFlow {
-	return newRequestTraceFlowWithCapture(true, service.RequestTraceBodyLimit)
-}
-
 // newRequestTraceFlowWithCapture 按入口快照冻结正文开关与单阶段体积上限。
 func newRequestTraceFlowWithCapture(captureBody bool, bodyMaxBytes int64) *requestTraceFlow {
 	return &requestTraceFlow{
