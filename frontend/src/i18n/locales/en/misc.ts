@@ -729,7 +729,9 @@ export default {
       serviceAccount: "Service Account",
     },
     columns: {
+      name: "Account",
       platform: "Platform",
+      status: "Status",
       accountType: "Account Type",
       email: "Upstream Email",
       username: "Upstream Username",
@@ -746,31 +748,35 @@ export default {
       title: "Account View Grant",
       hint: "Choose the accounts {email} may view read-only. Nothing is granted by default.",
       enableLabel: "Allow this user to view assigned accounts",
-      assignedTitle: "Assigned Accounts",
-      assignedCount: "{count} assigned",
-      noAssigned: "No account assigned yet",
-      searchPlaceholder: "Search accounts by name to add",
-      noCandidates: "No accounts available to add",
-      loadCandidatesFailed: "Failed to load candidate accounts",
-      loadMore: "Load more",
-      unknownAccount: "Account details unavailable",
-      add: "Add",
+      disabledHint:
+        "Viewing is paused. The selected accounts stay assigned and can be re-enabled anytime.",
+      // One table, two tabs: checkboxes edit the grant draft directly (no add step).
+      tabAll: "All accounts",
+      tabSelected: "Selected ({count})",
+      allSummary: "{count} accounts match · {selected} selected on this page",
+      draftSummary: "{count} account(s) in the draft",
+      selectAllMatching: "Select all {count} matching",
+      cancelSelectAll: "Cancel selecting all",
+      selectAllDone: "Added {count} matching account(s) to the draft.",
+      selectAllLimit:
+        "Stopped after {count} account(s) at the {pages}-page safety limit. Nothing was added — narrow the filters and try again.",
+      selectAllFailed:
+        "Could not select all matching accounts. Nothing was added.",
+      noSelected: "No account selected yet",
+      noCandidates: "No accounts available",
+      loadCandidatesFailed: "Failed to load accounts",
+      unknownAccount: "Details unavailable",
       remove: "Remove",
-      // Candidate multi-select: merging into the pending list only, nothing is granted before saving.
-      selectVisible: "Select all listed",
-      selectCandidate: "Select {name}",
       selectedCount: "{count} selected",
+      unsaved: "Unsaved changes",
       clearSelection: "Clear selection",
-      batchAdd: "Add selected",
-      batchAddSummary:
-        "Added {added} to the pending list · {skipped} already pending · {failed} could not be added",
-      batchAddPendingNotice: "Nothing is granted until you save.",
+      selectAccount: "Select {name}",
+      invalidPending: "Rejected by server",
       // The save was rejected as a whole: name the accounts the server reported, keep the draft.
       saveUnknownAccounts:
         "Save rejected: {count} selected account(s) no longer exist ({ids}).",
       saveUnknownAccountsHint:
         "Remove or replace the marked accounts and save again. Nothing has been granted.",
-      invalidPending: "Rejected by server",
       saveSuccess: "Account view grant updated",
       loadFailed: "Failed to load the account view grant",
       saveFailed: "Failed to save the account view grant",

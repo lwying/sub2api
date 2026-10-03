@@ -21,8 +21,22 @@ import (
 
 // ProvideVisibleAccountService 提供普通用户只读账号视图服务（票据 05）。
 // 该服务只读取分配关系与脱敏身份，不参与调度、计费或账号写路径。
-func ProvideVisibleAccountService(repo VisibleAccountRepository) *VisibleAccountService {
-	return NewVisibleAccountService(repo)
+//
+// 运行期只读读取器在这里显式注入，而不是留给调用方事后 setter：
+// wire 会据此把 AccountUsageService / ConcurrencyService 纳入依赖图并固定构造顺序，
+// 重新生成 wire_gen 不会丢依赖。两个读取器都被限定为只读窄接口
+// （VisibleAccountUsageReader / VisibleAccountConcurrencyReader），
+// 不暴露任何主动探测、刷新或写能力。
+// NewVisibleAccountService 仍保持单参数旧签名，供既有单元测试使用。
+func ProvideVisibleAccountService(
+	repo VisibleAccountRepository,
+	usageReader *AccountUsageService,
+	concurrencyReader *ConcurrencyService,
+) *VisibleAccountService {
+	svc := NewVisibleAccountService(repo)
+	svc.SetUsageReader(usageReader)
+	svc.SetConcurrencyReader(concurrencyReader)
+	return svc
 }
 
 func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, cfg *config.Config, redisClient *redis.Client) *GrokOAuthService {

@@ -1,27 +1,16 @@
 <template>
-  <div ref="rootRef" v-if="showUsageWindows">
-    <!-- Anthropic OAuth and Setup Token accounts: fetch real usage data -->
-    <template
-      v-if="
-        account.platform === 'anthropic' &&
-        (account.type === 'oauth' || account.type === 'setup-token')
-      "
-    >
-      <!-- Loading state -->
-      <div v-if="loading" class="space-y-1.5">
-        <!-- OAuth: 3 rows, Setup Token: 1 row -->
-        <div class="flex items-center gap-1">
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-        </div>
-        <template v-if="account.type === 'oauth'">
+  <template v-if="isAdminAccount(account)">
+    <div ref="rootRef" v-if="showUsageWindows">
+      <!-- Anthropic OAuth and Setup Token accounts: fetch real usage data -->
+      <template
+        v-if="
+          account.platform === 'anthropic' &&
+          (account.type === 'oauth' || account.type === 'setup-token')
+        "
+      >
+        <!-- Loading state -->
+        <div v-if="loading" class="space-y-1.5">
+          <!-- OAuth: 3 rows, Setup Token: 1 row -->
           <div class="flex items-center gap-1">
             <div
               class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
@@ -33,183 +22,106 @@
               class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
             ></div>
           </div>
-          <div class="flex items-center gap-1">
-            <div
-              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-            ></div>
-            <div
-              class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-            ></div>
-            <div
-              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-            ></div>
-          </div>
-        </template>
-      </div>
-
-      <!-- Error state -->
-      <div v-else-if="error" class="text-xs text-red-500">
-        {{ error }}
-      </div>
-
-      <!-- Usage data -->
-      <div v-else-if="usageInfo" class="space-y-1">
-        <!-- API error (degraded response) -->
-        <div
-          v-if="usageInfo.error"
-          class="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[200px]"
-          :title="usageInfo.error"
-        >
-          {{ usageInfo.error }}
+          <template v-if="account.type === 'oauth'">
+            <div class="flex items-center gap-1">
+              <div
+                class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              ></div>
+              <div
+                class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+              ></div>
+              <div
+                class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              ></div>
+            </div>
+            <div class="flex items-center gap-1">
+              <div
+                class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              ></div>
+              <div
+                class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+              ></div>
+              <div
+                class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              ></div>
+            </div>
+          </template>
         </div>
-        <!-- 5h Window -->
-        <UsageProgressBar
-          v-if="usageInfo.five_hour"
-          label="5h"
-          :utilization="usageInfo.five_hour.utilization"
-          :resets-at="usageInfo.five_hour.resets_at"
-          :window-stats="usageInfo.five_hour.window_stats"
-          color="indigo"
-        />
 
-        <!-- 7d Window (OAuth only) -->
-        <UsageProgressBar
-          v-if="usageInfo.seven_day"
-          label="7d"
-          :utilization="usageInfo.seven_day.utilization"
-          :resets-at="usageInfo.seven_day.resets_at"
-          color="emerald"
-        />
+        <!-- Error state -->
+        <div v-else-if="error" class="text-xs text-red-500">
+          {{ error }}
+        </div>
 
-        <!-- 7d Sonnet Window (OAuth only) -->
-        <UsageProgressBar
-          v-if="usageInfo.seven_day_sonnet"
-          label="7d S"
-          :utilization="usageInfo.seven_day_sonnet.utilization"
-          :resets-at="usageInfo.seven_day_sonnet.resets_at"
-          color="purple"
-        />
+        <!-- Usage data -->
+        <div v-else-if="usageInfo" class="space-y-1">
+          <!-- API error (degraded response) -->
+          <div
+            v-if="usageInfo.error"
+            class="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[200px]"
+            :title="usageInfo.error"
+          >
+            {{ usageInfo.error }}
+          </div>
+          <!-- 5h Window -->
+          <UsageProgressBar
+            v-if="usageInfo.five_hour"
+            label="5h"
+            :utilization="usageInfo.five_hour.utilization"
+            :resets-at="usageInfo.five_hour.resets_at"
+            :window-stats="usageInfo.five_hour.window_stats"
+            color="indigo"
+          />
 
-        <!-- 7d Fable Window (7d_oi) -->
-        <UsageProgressBar
-          v-if="usageInfo.seven_day_fable"
-          label="7d F"
-          :utilization="usageInfo.seven_day_fable.utilization"
-          :resets-at="usageInfo.seven_day_fable.resets_at"
-          color="amber"
-        />
-      </div>
+          <!-- 7d Window (OAuth only) -->
+          <UsageProgressBar
+            v-if="usageInfo.seven_day"
+            label="7d"
+            :utilization="usageInfo.seven_day.utilization"
+            :resets-at="usageInfo.seven_day.resets_at"
+            color="emerald"
+          />
 
-      <!-- No data yet -->
-      <div v-else class="space-y-1">
-        <div class="text-xs text-gray-400">-</div>
-      </div>
-      <!--
+          <!-- 7d Sonnet Window (OAuth only) -->
+          <UsageProgressBar
+            v-if="usageInfo.seven_day_sonnet"
+            label="7d S"
+            :utilization="usageInfo.seven_day_sonnet.utilization"
+            :resets-at="usageInfo.seven_day_sonnet.resets_at"
+            color="purple"
+          />
+
+          <!-- 7d Fable Window (7d_oi) -->
+          <UsageProgressBar
+            v-if="usageInfo.seven_day_fable"
+            label="7d F"
+            :utilization="usageInfo.seven_day_fable.utilization"
+            :resets-at="usageInfo.seven_day_fable.resets_at"
+            color="amber"
+          />
+        </div>
+
+        <!-- No data yet -->
+        <div v-else class="space-y-1">
+          <div class="text-xs text-gray-400">-</div>
+        </div>
+        <!--
         One stable instance for every usage state, so a reset-credit query started
         while usage is still loading survives the usage response. The local query
         button shares its row once usage data exists.
       -->
-      <ClaudeResetCreditsCell
-        :account="account"
-        class="mt-1"
-        @redeemed="loadActiveUsage"
-      >
-        <template v-if="usageInfo" #pre-actions>
-          <span
-            v-if="usageInfo.source === 'passive'"
-            class="text-[9px] text-gray-400 dark:text-gray-500 italic"
-          >
-            {{ t("admin.accounts.usageWindow.passiveSampled") }}
-          </span>
-          <button
-            type="button"
-            class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="activeQueryLoading"
-            @click="loadActiveUsage"
-          >
-            <svg
-              class="h-2.5 w-2.5"
-              :class="{ 'animate-spin': activeQueryLoading }"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            {{ t("admin.accounts.usageWindow.activeQuery") }}
-          </button>
-        </template>
-      </ClaudeResetCreditsCell>
-    </template>
-
-    <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
-    <template
-      v-else-if="
-        account.platform === 'openai' &&
-        (account.type === 'oauth' || account.type === 'setup-token')
-      "
-    >
-      <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
-        <div
-          v-for="ticket in codexTurnTickets"
-          :key="ticket.model"
-          class="flex items-center gap-1 text-[10px] leading-4"
-        >
-          <span
-            class="truncate font-medium text-gray-500 dark:text-gray-400"
-            :title="ticket.model"
-            >{{ shortCodexTicketModel(ticket.model) }}</span
-          >
-          <span
-            v-if="ticket.ready"
-            class="text-emerald-600 dark:text-emerald-400"
-            >{{ formatCodexTicketRemaining(ticket.remaining_seconds) }}</span
-          >
-          <span
-            v-else-if="ticket.blocked"
-            class="text-amber-600 dark:text-amber-400"
-            >{{ t("admin.accounts.openai.codexTurnTicketPaused") }}</span
-          >
-          <span v-else class="text-gray-500">{{
-            t("admin.accounts.openai.codexTurnTicketMissing")
-          }}</span>
-        </div>
-      </div>
-      <div v-if="hasOpenAIUsageFallback" class="space-y-1">
-        <UsageProgressBar
-          v-if="usageInfo?.five_hour"
-          label="5h"
-          :utilization="usageInfo.five_hour.utilization"
-          :resets-at="usageInfo.five_hour.resets_at"
-          :window-stats="usageInfo.five_hour.window_stats"
-          :show-now-when-idle="true"
-          color="indigo"
-        />
-        <UsageProgressBar
-          v-if="usageInfo?.seven_day"
-          label="7d"
-          :utilization="usageInfo.seven_day.utilization"
-          :resets-at="usageInfo.seven_day.resets_at"
-          :window-stats="usageInfo.seven_day.window_stats"
-          :estimated-total-cost="openAISevenDayEstimatedTotalCost"
-          :show-now-when-idle="true"
-          color="emerald"
-        />
-        <!--
-          Upstream codex /wham/usage quota query + reset. The local active-sampling
-          refresh button is rendered via the pre-actions slot so the user sees a
-          single row of related buttons instead of two stacked rows.
-        -->
-        <OpenAIQuotaResetCell
+        <ClaudeResetCreditsCell
           :account="account"
-          @account-updated="handleQuotaResetAccountUpdated"
+          class="mt-1"
+          @redeemed="loadActiveUsage"
         >
-          <template #pre-actions>
+          <template v-if="usageInfo" #pre-actions>
+            <span
+              v-if="usageInfo.source === 'passive'"
+              class="text-[9px] text-gray-400 dark:text-gray-500 italic"
+            >
+              {{ t("admin.accounts.usageWindow.passiveSampled") }}
+            </span>
             <button
               type="button"
               class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
@@ -233,365 +145,458 @@
               {{ t("admin.accounts.usageWindow.activeQuery") }}
             </button>
           </template>
-        </OpenAIQuotaResetCell>
-      </div>
-      <div v-else-if="loading" class="space-y-1.5">
-        <div class="flex items-center gap-1">
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-        </div>
-        <div class="flex items-center gap-1">
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-        </div>
-      </div>
-      <div v-else>
-        <div class="text-xs text-gray-400">-</div>
-        <!-- Always allow on-demand upstream quota query, even before local data exists. -->
-        <OpenAIQuotaResetCell
-          v-if="account.type === 'oauth'"
-          :account="account"
-          class="mt-1"
-          @account-updated="handleQuotaResetAccountUpdated"
-        />
-      </div>
-    </template>
+        </ClaudeResetCreditsCell>
+      </template>
 
-    <!-- Antigravity OAuth accounts: fetch usage from API -->
-    <template
-      v-else-if="account.platform === 'antigravity' && account.type === 'oauth'"
-    >
-      <!-- 账户类型徽章 -->
-      <div v-if="antigravityTierLabel" class="mb-1 flex items-center gap-1">
-        <span
-          :class="[
-            'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-            antigravityTierClass,
-          ]"
-        >
-          {{ antigravityTierLabel }}
-        </span>
-        <!-- 不合格账户警告图标 -->
-        <span v-if="hasIneligibleTiers" class="group relative cursor-help">
-          <svg
-            class="h-3.5 w-3.5 text-red-500"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          <span
-            class="pointer-events-none absolute left-0 top-full z-50 mt-1 w-80 whitespace-normal break-words rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-gray-700"
-          >
-            {{ t("admin.accounts.ineligibleWarning") }}
-          </span>
-        </span>
-      </div>
-
-      <!-- Forbidden state (403) -->
-      <div v-if="isForbidden" class="space-y-1">
-        <span
-          :class="[
-            'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-            forbiddenBadgeClass,
-          ]"
-        >
-          {{ forbiddenLabel }}
-        </span>
-        <div v-if="validationURL" class="flex items-center gap-1">
-          <a
-            :href="validationURL"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-[10px] text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
-            :title="t('admin.accounts.openVerification')"
-          >
-            {{ t("admin.accounts.openVerification") }}
-          </a>
-          <button
-            type="button"
-            class="text-[10px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            :title="t('admin.accounts.copyLink')"
-            @click="copyValidationURL"
-          >
-            {{
-              linkCopied
-                ? t("admin.accounts.linkCopied")
-                : t("admin.accounts.copyLink")
-            }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Needs reauth (401) -->
-      <div v-else-if="needsReauth" class="space-y-1">
-        <span
-          class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
-        >
-          {{ t("admin.accounts.needsReauth") }}
-        </span>
-      </div>
-
-      <!-- Degraded error (non-403, non-401) -->
-      <div v-else-if="usageInfo?.error" class="space-y-1">
-        <span
-          class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-        >
-          {{ usageErrorLabel }}
-        </span>
-      </div>
-
-      <!-- Loading state -->
-      <div v-else-if="loading" class="space-y-1.5">
-        <div class="flex items-center gap-1">
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-        </div>
-      </div>
-
-      <!-- Error state -->
-      <div v-else-if="error" class="text-xs text-red-500">
-        {{ error }}
-      </div>
-
-      <!-- Usage data from API -->
-      <div v-else-if="hasAntigravityQuotaFromAPI" class="space-y-1">
-        <!-- Gemini 3 Pro -->
-        <UsageProgressBar
-          v-if="antigravity3ProUsageFromAPI !== null"
-          :label="t('admin.accounts.usageWindow.gemini3Pro')"
-          :utilization="antigravity3ProUsageFromAPI.utilization"
-          :resets-at="antigravity3ProUsageFromAPI.resetTime"
-          color="indigo"
-        />
-
-        <!-- Gemini 3 Flash -->
-        <UsageProgressBar
-          v-if="antigravity3FlashUsageFromAPI !== null"
-          :label="t('admin.accounts.usageWindow.gemini3Flash')"
-          :utilization="antigravity3FlashUsageFromAPI.utilization"
-          :resets-at="antigravity3FlashUsageFromAPI.resetTime"
-          color="emerald"
-        />
-
-        <!-- Gemini 3 Image -->
-        <UsageProgressBar
-          v-if="antigravity3ImageUsageFromAPI !== null"
-          :label="t('admin.accounts.usageWindow.gemini3Image')"
-          :utilization="antigravity3ImageUsageFromAPI.utilization"
-          :resets-at="antigravity3ImageUsageFromAPI.resetTime"
-          color="purple"
-        />
-
-        <!-- Claude -->
-        <UsageProgressBar
-          v-if="antigravityClaudeUsageFromAPI !== null"
-          :label="t('admin.accounts.usageWindow.claude')"
-          :utilization="antigravityClaudeUsageFromAPI.utilization"
-          :resets-at="antigravityClaudeUsageFromAPI.resetTime"
-          color="amber"
-        />
-
-        <div
-          v-if="aiCreditsDisplay"
-          class="mt-1 text-[10px] text-gray-500 dark:text-gray-400"
-        >
-          💳 {{ t("admin.accounts.aiCreditsBalance") }}: {{ aiCreditsDisplay }}
-        </div>
-      </div>
-      <div
-        v-else-if="aiCreditsDisplay"
-        class="text-[10px] text-gray-500 dark:text-gray-400"
+      <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
+      <template
+        v-else-if="
+          account.platform === 'openai' &&
+          (account.type === 'oauth' || account.type === 'setup-token')
+        "
       >
-        💳 {{ t("admin.accounts.aiCreditsBalance") }}: {{ aiCreditsDisplay }}
-      </div>
-      <div v-else class="text-xs text-gray-400">-</div>
-    </template>
-
-    <!-- Grok OAuth accounts: passive xAI quota headers + local Sub2API usage -->
-    <template
-      v-else-if="account.platform === 'grok' && account.type === 'oauth'"
-    >
-      <div v-if="loading" class="space-y-1.5">
-        <div class="flex items-center gap-1">
+        <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
           <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-          ></div>
-          <div
-            class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-          ></div>
+            v-for="ticket in codexTurnTickets"
+            :key="ticket.model"
+            class="flex items-center gap-1 text-[10px] leading-4"
+          >
+            <span
+              class="truncate font-medium text-gray-500 dark:text-gray-400"
+              :title="ticket.model"
+              >{{ shortCodexTicketModel(ticket.model) }}</span
+            >
+            <span
+              v-if="ticket.ready"
+              class="text-emerald-600 dark:text-emerald-400"
+              >{{ formatCodexTicketRemaining(ticket.remaining_seconds) }}</span
+            >
+            <span
+              v-else-if="ticket.blocked"
+              class="text-amber-600 dark:text-amber-400"
+              >{{ t("admin.accounts.openai.codexTurnTicketPaused") }}</span
+            >
+            <span v-else class="text-gray-500">{{
+              t("admin.accounts.openai.codexTurnTicketMissing")
+            }}</span>
+          </div>
         </div>
-      </div>
-      <div v-else-if="error" class="text-xs text-red-500">
-        {{ error }}
-      </div>
-      <div v-else-if="needsReauth" class="space-y-1">
-        <span
-          class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
-        >
-          {{ t("admin.accounts.needsReauth") }}
-        </span>
-      </div>
-      <div v-else-if="isForbidden" class="space-y-1">
-        <span
-          class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-        >
-          {{
-            usageInfo?.grok_entitlement_status || t("admin.accounts.forbidden")
-          }}
-        </span>
-      </div>
-      <div v-else-if="usageInfo" class="space-y-1">
-        <!-- Free: only rolling 24h soft-gate bar. Paid: 7d + 30d + prepaid money. -->
-        <template v-if="grokIsFree">
+        <div v-if="hasOpenAIUsageFallback" class="space-y-1">
           <UsageProgressBar
-            v-if="grokFreeTokenBar"
-            label="24h"
-            :title="
-              t('admin.accounts.usageWindow.grokFreeQuota24hHint', {
-                limit: formatCompactNumber(grokFreeTokenBar.limit),
-              })
-            "
-            :utilization="grokFreeTokenBar.utilization"
-            :window-stats="grokFreeQuotaUsage"
+            v-if="usageInfo?.five_hour"
+            label="5h"
+            :utilization="usageInfo.five_hour.utilization"
+            :resets-at="usageInfo.five_hour.resets_at"
+            :window-stats="usageInfo.five_hour.window_stats"
+            :show-now-when-idle="true"
+            color="indigo"
+          />
+          <UsageProgressBar
+            v-if="usageInfo?.seven_day"
+            label="7d"
+            :utilization="usageInfo.seven_day.utilization"
+            :resets-at="usageInfo.seven_day.resets_at"
+            :window-stats="usageInfo.seven_day.window_stats"
+            :estimated-total-cost="openAISevenDayEstimatedTotalCost"
             :show-now-when-idle="true"
             color="emerald"
           />
-          <div
-            v-else-if="grokQuotaUnknown"
-            class="text-[10px] text-gray-500 dark:text-gray-400"
+          <!--
+          Upstream codex /wham/usage quota query + reset. The local active-sampling
+          refresh button is rendered via the pre-actions slot so the user sees a
+          single row of related buttons instead of two stacked rows.
+        -->
+          <OpenAIQuotaResetCell
+            :account="account"
+            @account-updated="handleQuotaResetAccountUpdated"
           >
-            {{ grokQuotaUnknownLabel }}
-          </div>
-        </template>
-        <template v-else>
-          <UsageProgressBar
-            v-if="grokWeeklyBillingBar"
-            label="7d"
-            :utilization="grokWeeklyBillingBar.utilization"
-            :resets-at="grokWeeklyBillingBar.resetsAt"
-            :window-stats="grokWeeklyBillingBar.windowStats"
-            :show-now-when-idle="true"
-            color="indigo"
-          />
-          <UsageProgressBar
-            v-if="grokMonthlyBillingBar"
-            label="30d"
-            :utilization="grokMonthlyBillingBar.utilization"
-            :resets-at="grokMonthlyBillingBar.resetsAt"
-            :window-stats="grokMonthlyBillingBar.windowStats"
-            :show-now-when-idle="true"
-            color="indigo"
-          />
-          <div
-            v-if="grokPrepaidMoneyLine"
-            class="flex flex-wrap items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400"
-          >
-            <span
-              v-if="grokPrepaidMoneyLine.showPrepaid"
-              class="rounded bg-emerald-50 px-1 py-0.5 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-              :title="t('admin.accounts.usageWindow.grokPrepaid')"
-            >
-              {{ t("admin.accounts.usageWindow.grokPrepaid") }} ${{
-                grokPrepaidMoneyLine.prepaid
-              }}
-            </span>
-            <span
-              v-if="grokPrepaidMoneyLine.showUsedLimit"
-              :title="t('admin.accounts.usageWindow.grokMonthlyLimit')"
-            >
-              {{ t("admin.accounts.usageWindow.grokUsed") }}
-              {{ grokPrepaidMoneyLine.used }}/{{ grokPrepaidMoneyLine.limit }}
-            </span>
-          </div>
-          <div
-            v-if="grokQuotaUnknown"
-            class="text-[10px] text-gray-500 dark:text-gray-400"
-          >
-            {{ grokQuotaUnknownLabel }}
-          </div>
-        </template>
-        <div
-          v-if="usageInfo.error"
-          class="truncate text-xs text-amber-600 dark:text-amber-400 max-w-[200px]"
-          :title="usageInfo.error"
-        >
-          {{ usageErrorLabel }}
+            <template #pre-actions>
+              <button
+                type="button"
+                class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="activeQueryLoading"
+                @click="loadActiveUsage"
+              >
+                <svg
+                  class="h-2.5 w-2.5"
+                  :class="{ 'animate-spin': activeQueryLoading }"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                {{ t("admin.accounts.usageWindow.activeQuery") }}
+              </button>
+            </template>
+          </OpenAIQuotaResetCell>
         </div>
-        <div
-          v-if="grokRetryAfterLabel"
-          class="text-[10px] text-amber-600 dark:text-amber-400"
-        >
-          {{
-            t("admin.accounts.usageWindow.grokRetryAfter", {
-              time: grokRetryAfterLabel,
-            })
-          }}
+        <div v-else-if="loading" class="space-y-1.5">
+          <div class="flex items-center gap-1">
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+          </div>
+          <div class="flex items-center gap-1">
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+          </div>
         </div>
-        <GrokQuotaProbeCell
-          :account="account"
-          compact
-          @probed="handleGrokProbed"
-        />
-      </div>
-      <div v-else class="space-y-1">
-        <div class="text-xs text-gray-400">-</div>
-        <GrokQuotaProbeCell
-          :account="account"
-          compact
-          @probed="handleGrokProbed"
-        />
-      </div>
-    </template>
+        <div v-else>
+          <div class="text-xs text-gray-400">-</div>
+          <!-- Always allow on-demand upstream quota query, even before local data exists. -->
+          <OpenAIQuotaResetCell
+            v-if="account.type === 'oauth'"
+            :account="account"
+            class="mt-1"
+            @account-updated="handleQuotaResetAccountUpdated"
+          />
+        </div>
+      </template>
 
-    <!-- CN providers (Kimi / Zhipu / DeepSeek): coding-plan quota or payg balance -->
-    <template
-      v-else-if="
-        account.platform === 'kimi' ||
-        account.platform === 'zhipu' ||
-        account.platform === 'deepseek' ||
-        account.platform === 'minimax' ||
-        account.platform === 'opencode_go'
-      "
-    >
-      <!-- 挂在 CN 平台下的 Ollama Cloud 账号（资格由后端下发 eligible）：用量由
+      <!-- Antigravity OAuth accounts: fetch usage from API -->
+      <template
+        v-else-if="
+          account.platform === 'antigravity' && account.type === 'oauth'
+        "
+      >
+        <!-- 账户类型徽章 -->
+        <div v-if="antigravityTierLabel" class="mb-1 flex items-center gap-1">
+          <span
+            :class="[
+              'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
+              antigravityTierClass,
+            ]"
+          >
+            {{ antigravityTierLabel }}
+          </span>
+          <!-- 不合格账户警告图标 -->
+          <span v-if="hasIneligibleTiers" class="group relative cursor-help">
+            <svg
+              class="h-3.5 w-3.5 text-red-500"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                clip-rule="evenodd"
+              />
+            </svg>
+            <span
+              class="pointer-events-none absolute left-0 top-full z-50 mt-1 w-80 whitespace-normal break-words rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-gray-700"
+            >
+              {{ t("admin.accounts.ineligibleWarning") }}
+            </span>
+          </span>
+        </div>
+
+        <!-- Forbidden state (403) -->
+        <div v-if="isForbidden" class="space-y-1">
+          <span
+            :class="[
+              'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
+              forbiddenBadgeClass,
+            ]"
+          >
+            {{ forbiddenLabel }}
+          </span>
+          <div v-if="validationURL" class="flex items-center gap-1">
+            <a
+              :href="validationURL"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-[10px] text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+              :title="t('admin.accounts.openVerification')"
+            >
+              {{ t("admin.accounts.openVerification") }}
+            </a>
+            <button
+              type="button"
+              class="text-[10px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              :title="t('admin.accounts.copyLink')"
+              @click="copyValidationURL"
+            >
+              {{
+                linkCopied
+                  ? t("admin.accounts.linkCopied")
+                  : t("admin.accounts.copyLink")
+              }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Needs reauth (401) -->
+        <div v-else-if="needsReauth" class="space-y-1">
+          <span
+            class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+          >
+            {{ t("admin.accounts.needsReauth") }}
+          </span>
+        </div>
+
+        <!-- Degraded error (non-403, non-401) -->
+        <div v-else-if="usageInfo?.error" class="space-y-1">
+          <span
+            class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+          >
+            {{ usageErrorLabel }}
+          </span>
+        </div>
+
+        <!-- Loading state -->
+        <div v-else-if="loading" class="space-y-1.5">
+          <div class="flex items-center gap-1">
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+          </div>
+        </div>
+
+        <!-- Error state -->
+        <div v-else-if="error" class="text-xs text-red-500">
+          {{ error }}
+        </div>
+
+        <!-- Usage data from API -->
+        <div v-else-if="hasAntigravityQuotaFromAPI" class="space-y-1">
+          <!-- Gemini 3 Pro -->
+          <UsageProgressBar
+            v-if="antigravity3ProUsageFromAPI !== null"
+            :label="t('admin.accounts.usageWindow.gemini3Pro')"
+            :utilization="antigravity3ProUsageFromAPI.utilization"
+            :resets-at="antigravity3ProUsageFromAPI.resetTime"
+            color="indigo"
+          />
+
+          <!-- Gemini 3 Flash -->
+          <UsageProgressBar
+            v-if="antigravity3FlashUsageFromAPI !== null"
+            :label="t('admin.accounts.usageWindow.gemini3Flash')"
+            :utilization="antigravity3FlashUsageFromAPI.utilization"
+            :resets-at="antigravity3FlashUsageFromAPI.resetTime"
+            color="emerald"
+          />
+
+          <!-- Gemini 3 Image -->
+          <UsageProgressBar
+            v-if="antigravity3ImageUsageFromAPI !== null"
+            :label="t('admin.accounts.usageWindow.gemini3Image')"
+            :utilization="antigravity3ImageUsageFromAPI.utilization"
+            :resets-at="antigravity3ImageUsageFromAPI.resetTime"
+            color="purple"
+          />
+
+          <!-- Claude -->
+          <UsageProgressBar
+            v-if="antigravityClaudeUsageFromAPI !== null"
+            :label="t('admin.accounts.usageWindow.claude')"
+            :utilization="antigravityClaudeUsageFromAPI.utilization"
+            :resets-at="antigravityClaudeUsageFromAPI.resetTime"
+            color="amber"
+          />
+
+          <div
+            v-if="aiCreditsDisplay"
+            class="mt-1 text-[10px] text-gray-500 dark:text-gray-400"
+          >
+            💳 {{ t("admin.accounts.aiCreditsBalance") }}:
+            {{ aiCreditsDisplay }}
+          </div>
+        </div>
+        <div
+          v-else-if="aiCreditsDisplay"
+          class="text-[10px] text-gray-500 dark:text-gray-400"
+        >
+          💳 {{ t("admin.accounts.aiCreditsBalance") }}: {{ aiCreditsDisplay }}
+        </div>
+        <div v-else class="text-xs text-gray-400">-</div>
+      </template>
+
+      <!-- Grok OAuth accounts: passive xAI quota headers + local Sub2API usage -->
+      <template
+        v-else-if="account.platform === 'grok' && account.type === 'oauth'"
+      >
+        <div v-if="loading" class="space-y-1.5">
+          <div class="flex items-center gap-1">
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+          </div>
+        </div>
+        <div v-else-if="error" class="text-xs text-red-500">
+          {{ error }}
+        </div>
+        <div v-else-if="needsReauth" class="space-y-1">
+          <span
+            class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+          >
+            {{ t("admin.accounts.needsReauth") }}
+          </span>
+        </div>
+        <div v-else-if="isForbidden" class="space-y-1">
+          <span
+            class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+          >
+            {{
+              usageInfo?.grok_entitlement_status ||
+              t("admin.accounts.forbidden")
+            }}
+          </span>
+        </div>
+        <div v-else-if="usageInfo" class="space-y-1">
+          <!-- Free: only rolling 24h soft-gate bar. Paid: 7d + 30d + prepaid money. -->
+          <template v-if="grokIsFree">
+            <UsageProgressBar
+              v-if="grokFreeTokenBar"
+              label="24h"
+              :title="
+                t('admin.accounts.usageWindow.grokFreeQuota24hHint', {
+                  limit: formatCompactNumber(grokFreeTokenBar.limit),
+                })
+              "
+              :utilization="grokFreeTokenBar.utilization"
+              :window-stats="grokFreeQuotaUsage"
+              :show-now-when-idle="true"
+              color="emerald"
+            />
+            <div
+              v-else-if="grokQuotaUnknown"
+              class="text-[10px] text-gray-500 dark:text-gray-400"
+            >
+              {{ grokQuotaUnknownLabel }}
+            </div>
+          </template>
+          <template v-else>
+            <UsageProgressBar
+              v-if="grokWeeklyBillingBar"
+              label="7d"
+              :utilization="grokWeeklyBillingBar.utilization"
+              :resets-at="grokWeeklyBillingBar.resetsAt"
+              :window-stats="grokWeeklyBillingBar.windowStats"
+              :show-now-when-idle="true"
+              color="indigo"
+            />
+            <UsageProgressBar
+              v-if="grokMonthlyBillingBar"
+              label="30d"
+              :utilization="grokMonthlyBillingBar.utilization"
+              :resets-at="grokMonthlyBillingBar.resetsAt"
+              :window-stats="grokMonthlyBillingBar.windowStats"
+              :show-now-when-idle="true"
+              color="indigo"
+            />
+            <div
+              v-if="grokPrepaidMoneyLine"
+              class="flex flex-wrap items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400"
+            >
+              <span
+                v-if="grokPrepaidMoneyLine.showPrepaid"
+                class="rounded bg-emerald-50 px-1 py-0.5 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                :title="t('admin.accounts.usageWindow.grokPrepaid')"
+              >
+                {{ t("admin.accounts.usageWindow.grokPrepaid") }} ${{
+                  grokPrepaidMoneyLine.prepaid
+                }}
+              </span>
+              <span
+                v-if="grokPrepaidMoneyLine.showUsedLimit"
+                :title="t('admin.accounts.usageWindow.grokMonthlyLimit')"
+              >
+                {{ t("admin.accounts.usageWindow.grokUsed") }}
+                {{ grokPrepaidMoneyLine.used }}/{{ grokPrepaidMoneyLine.limit }}
+              </span>
+            </div>
+            <div
+              v-if="grokQuotaUnknown"
+              class="text-[10px] text-gray-500 dark:text-gray-400"
+            >
+              {{ grokQuotaUnknownLabel }}
+            </div>
+          </template>
+          <div
+            v-if="usageInfo.error"
+            class="truncate text-xs text-amber-600 dark:text-amber-400 max-w-[200px]"
+            :title="usageInfo.error"
+          >
+            {{ usageErrorLabel }}
+          </div>
+          <div
+            v-if="grokRetryAfterLabel"
+            class="text-[10px] text-amber-600 dark:text-amber-400"
+          >
+            {{
+              t("admin.accounts.usageWindow.grokRetryAfter", {
+                time: grokRetryAfterLabel,
+              })
+            }}
+          </div>
+          <GrokQuotaProbeCell
+            :account="account"
+            compact
+            @probed="handleGrokProbed"
+          />
+        </div>
+        <div v-else class="space-y-1">
+          <div class="text-xs text-gray-400">-</div>
+          <GrokQuotaProbeCell
+            :account="account"
+            compact
+            @probed="handleGrokProbed"
+          />
+        </div>
+      </template>
+
+      <!-- CN providers (Kimi / Zhipu / DeepSeek): coding-plan quota or payg balance -->
+      <template
+        v-else-if="
+          account.platform === 'kimi' ||
+          account.platform === 'zhipu' ||
+          account.platform === 'deepseek' ||
+          account.platform === 'minimax' ||
+          account.platform === 'opencode_go'
+        "
+      >
+        <!-- 挂在 CN 平台下的 Ollama Cloud 账号（资格由后端下发 eligible）：用量由
            Ollama 用量窗口负责。这类账号不是国产厂商订阅，CN 的额度/余额探测端点由
            base_url 衍生，对 ollama.com 会被后端出站 URL 白名单拒绝，渲染出来只会
            给用户一行探测报错，因此不再渲染 CN 子单元格与占位符。 -->
-      <OllamaCloudUsageCell
-        v-if="account.ollama_cloud_usage?.eligible"
-        :account="account"
-        @updated="handleOllamaCloudUsageUpdated"
-      />
-      <!-- 挂在 CN 平台下的 OpenCode Go 账号（资格由后端下发 eligible）：用量展示与
+        <OllamaCloudUsageCell
+          v-if="account.ollama_cloud_usage?.eligible"
+          :account="account"
+          @updated="handleOllamaCloudUsageUpdated"
+        />
+        <!-- 挂在 CN 平台下的 OpenCode Go 账号（资格由后端下发 eligible）：用量展示与
            刷新由本分支的 OpenCode 用量窗口独占。对 platform=opencode_go：上游 CN
            配额链路原生支持该平台（cnQuotaCellVisible 对它返回 true），但其探测
            端点（base_url + "/usage"，默认 base 即官方 Go 基址）与本 cell 刷新的
@@ -600,86 +605,197 @@
            探测端点由 base_url 衍生，对 opencode.ai 会被后端出站 URL 白名单拒绝，
            渲染出来只会给用户一行探测报错。两种情况都不再渲染 CN 子单元格与
            占位符（调度停调仍由上游 CN 触发各自驱动）。 -->
-      <OpenCodeGoUsageCell
-        v-else-if="account.opencode_go_usage?.eligible"
-        :account="account"
-        @updated="handleOpenCodeGoUsageUpdated"
-      />
-      <div v-else class="space-y-1">
-        <!-- 子单元格各自按 模式×平台 判定可见；两者都不可见时（智谱 payg 无公开
+        <OpenCodeGoUsageCell
+          v-else-if="account.opencode_go_usage?.eligible"
+          :account="account"
+          @updated="handleOpenCodeGoUsageUpdated"
+        />
+        <div v-else class="space-y-1">
+          <!-- 子单元格各自按 模式×平台 判定可见；两者都不可见时（智谱 payg 无公开
              余额端点、coding 探测也不适用）才回落到占位符。 -->
-        <div
-          v-if="!cnQuotaCellVisible && !cnBalanceCellVisible"
-          class="text-xs text-gray-400"
-          :title="t('admin.accounts.cnProviders.noBalanceEndpoint')"
-        >
-          -
+          <div
+            v-if="!cnQuotaCellVisible && !cnBalanceCellVisible"
+            class="text-xs text-gray-400"
+            :title="t('admin.accounts.cnProviders.noBalanceEndpoint')"
+          >
+            -
+          </div>
+          <CNProviderQuotaCell :account="account" />
+          <CNProviderBalanceCell :account="account" />
         </div>
-        <CNProviderQuotaCell :account="account" />
-        <CNProviderBalanceCell :account="account" />
-      </div>
-    </template>
+      </template>
 
-    <!-- Gemini platform: show quota + local usage window -->
-    <template v-else-if="account.platform === 'gemini'">
-      <!-- Auth Type + Tier Badge (first line) -->
-      <div v-if="geminiAuthTypeLabel" class="mb-1 flex items-center gap-1">
-        <span
-          :class="[
-            'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-            geminiTierClass,
-          ]"
-        >
-          {{ geminiAuthTypeLabel }}
-        </span>
-        <!-- Help icon -->
-        <span class="group relative cursor-help">
-          <svg
-            class="h-3.5 w-3.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
-              clip-rule="evenodd"
-            />
-          </svg>
+      <!-- Gemini platform: show quota + local usage window -->
+      <template v-else-if="account.platform === 'gemini'">
+        <!-- Auth Type + Tier Badge (first line) -->
+        <div v-if="geminiAuthTypeLabel" class="mb-1 flex items-center gap-1">
           <span
-            class="pointer-events-none absolute left-0 top-full z-50 mt-1 w-80 whitespace-normal break-words rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-gray-700"
+            :class="[
+              'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
+              geminiTierClass,
+            ]"
           >
-            <div class="font-semibold mb-1">
-              {{ t("admin.accounts.gemini.quotaPolicy.title") }}
-            </div>
-            <div class="mb-2 text-gray-300">
-              {{ t("admin.accounts.gemini.quotaPolicy.note") }}
-            </div>
-            <div class="space-y-1">
-              <div>
-                <strong>{{ geminiQuotaPolicyChannel }}:</strong>
-              </div>
-              <div class="pl-2">• {{ geminiQuotaPolicyLimits }}</div>
-              <div class="mt-2">
-                <a
-                  :href="geminiQuotaPolicyDocsUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="text-blue-400 hover:text-blue-300 underline"
-                >
-                  {{ t("admin.accounts.gemini.quotaPolicy.columns.docs") }} →
-                </a>
-              </div>
-            </div>
+            {{ geminiAuthTypeLabel }}
           </span>
-        </span>
-      </div>
+          <!-- Help icon -->
+          <span class="group relative cursor-help">
+            <svg
+              class="h-3.5 w-3.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
+                clip-rule="evenodd"
+              />
+            </svg>
+            <span
+              class="pointer-events-none absolute left-0 top-full z-50 mt-1 w-80 whitespace-normal break-words rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-gray-700"
+            >
+              <div class="font-semibold mb-1">
+                {{ t("admin.accounts.gemini.quotaPolicy.title") }}
+              </div>
+              <div class="mb-2 text-gray-300">
+                {{ t("admin.accounts.gemini.quotaPolicy.note") }}
+              </div>
+              <div class="space-y-1">
+                <div>
+                  <strong>{{ geminiQuotaPolicyChannel }}:</strong>
+                </div>
+                <div class="pl-2">• {{ geminiQuotaPolicyLimits }}</div>
+                <div class="mt-2">
+                  <a
+                    :href="geminiQuotaPolicyDocsUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-blue-400 hover:text-blue-300 underline"
+                  >
+                    {{ t("admin.accounts.gemini.quotaPolicy.columns.docs") }} →
+                  </a>
+                </div>
+              </div>
+            </span>
+          </span>
+        </div>
 
-      <!-- Usage data or unlimited flow -->
-      <div class="space-y-1">
-        <div
-          v-if="showGeminiTodayStats && todayStats"
-          class="mb-0.5 flex items-center"
-        >
+        <!-- Usage data or unlimited flow -->
+        <div class="space-y-1">
+          <div
+            v-if="showGeminiTodayStats && todayStats"
+            class="mb-0.5 flex items-center"
+          >
+            <div
+              class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400"
+            >
+              <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+                {{ formatKeyRequests }} req
+              </span>
+              <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+                {{ formatKeyTokens }}
+              </span>
+              <span
+                class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
+                :title="t('usage.accountBilled')"
+              >
+                A ${{ formatKeyCost }}
+              </span>
+              <span
+                v-if="todayStats.user_cost != null"
+                class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
+                :title="t('usage.userBilled')"
+              >
+                U ${{ formatKeyUserCost }}
+              </span>
+            </div>
+          </div>
+          <div
+            v-else-if="showGeminiTodayStats && todayStatsLoading"
+            class="mb-0.5 flex items-center gap-1"
+          >
+            <div
+              class="h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-3 w-8 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+            <div
+              class="h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+            ></div>
+          </div>
+          <div v-if="loading" class="space-y-1">
+            <div class="flex items-center gap-1">
+              <div
+                class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              ></div>
+              <div
+                class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
+              ></div>
+              <div
+                class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+              ></div>
+            </div>
+          </div>
+          <div v-else-if="error" class="text-xs text-red-500">
+            {{ error }}
+          </div>
+          <!-- Gemini: show daily usage bars when available -->
+          <div v-else-if="geminiUsageAvailable" class="space-y-1">
+            <UsageProgressBar
+              v-for="bar in geminiUsageBars"
+              :key="bar.key"
+              :label="bar.label"
+              :utilization="bar.utilization"
+              :resets-at="bar.resetsAt"
+              :window-stats="bar.windowStats"
+              :color="bar.color"
+            />
+            <p
+              class="mt-1 text-[9px] leading-tight text-gray-400 dark:text-gray-500 italic"
+            >
+              *
+              {{
+                t("admin.accounts.gemini.quotaPolicy.simulatedNote") ||
+                "Simulated quota"
+              }}
+            </p>
+          </div>
+          <!-- AI Studio Client OAuth: show unlimited flow (no usage tracking) -->
+          <div v-else class="text-xs text-gray-400">
+            {{ t("admin.accounts.gemini.rateLimit.unlimited") }}
+          </div>
+        </div>
+      </template>
+
+      <!-- Other accounts: no usage window -->
+      <template v-else>
+        <div class="text-xs text-gray-400">-</div>
+      </template>
+    </div>
+
+    <!-- Non-OAuth/Setup-Token accounts -->
+    <div ref="rootRef" v-else>
+      <!-- Gemini API Key accounts: show quota info -->
+      <AccountQuotaInfo
+        v-if="account.platform === 'gemini'"
+        :account="account"
+      />
+      <!-- Key/Bedrock accounts: show today stats + optional quota bars -->
+      <div v-else class="space-y-1">
+        <OllamaCloudUsageCell
+          v-if="account.ollama_cloud_usage?.eligible"
+          :account="account"
+          @updated="handleOllamaCloudUsageUpdated"
+        />
+        <!-- 与上方 CN 分支结构对齐：Ollama 与 OpenCode 用量身份互斥（基址 host 不同），
+           v-else-if 提供结构性互斥保证，不改变实际渲染结果。 -->
+        <OpenCodeGoUsageCell
+          v-else-if="account.opencode_go_usage?.eligible"
+          :account="account"
+          @updated="handleOpenCodeGoUsageUpdated"
+        />
+        <!-- Today stats row (requests, tokens, cost, user_cost) -->
+        <div v-if="todayStats" class="mb-0.5 flex items-center">
           <div
             class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400"
           >
@@ -704,8 +820,9 @@
             </span>
           </div>
         </div>
+        <!-- Loading skeleton for today stats -->
         <div
-          v-else-if="showGeminiTodayStats && todayStatsLoading"
+          v-else-if="todayStatsLoading"
           class="mb-0.5 flex items-center gap-1"
         >
           <div
@@ -718,150 +835,97 @@
             class="h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
           ></div>
         </div>
-        <div v-if="loading" class="space-y-1">
-          <div class="flex items-center gap-1">
-            <div
-              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-            ></div>
-            <div
-              class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"
-            ></div>
-            <div
-              class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-            ></div>
-          </div>
-        </div>
-        <div v-else-if="error" class="text-xs text-red-500">
-          {{ error }}
-        </div>
-        <!-- Gemini: show daily usage bars when available -->
-        <div v-else-if="geminiUsageAvailable" class="space-y-1">
-          <UsageProgressBar
-            v-for="bar in geminiUsageBars"
-            :key="bar.key"
-            :label="bar.label"
-            :utilization="bar.utilization"
-            :resets-at="bar.resetsAt"
-            :window-stats="bar.windowStats"
-            :color="bar.color"
-          />
-          <p
-            class="mt-1 text-[9px] leading-tight text-gray-400 dark:text-gray-500 italic"
-          >
-            *
-            {{
-              t("admin.accounts.gemini.quotaPolicy.simulatedNote") ||
-              "Simulated quota"
-            }}
-          </p>
-        </div>
-        <!-- AI Studio Client OAuth: show unlimited flow (no usage tracking) -->
-        <div v-else class="text-xs text-gray-400">
-          {{ t("admin.accounts.gemini.rateLimit.unlimited") }}
-        </div>
-      </div>
-    </template>
 
-    <!-- Other accounts: no usage window -->
-    <template v-else>
-      <div class="text-xs text-gray-400">-</div>
-    </template>
-  </div>
+        <!-- API Key accounts with quota limits: show progress bars -->
+        <UsageProgressBar
+          v-if="quotaDailyBar"
+          label="1d"
+          :utilization="quotaDailyBar.utilization"
+          :resets-at="quotaDailyBar.resetsAt"
+          color="indigo"
+        />
+        <UsageProgressBar
+          v-if="quotaWeeklyBar"
+          label="7d"
+          :utilization="quotaWeeklyBar.utilization"
+          :resets-at="quotaWeeklyBar.resetsAt"
+          color="emerald"
+        />
+        <UsageProgressBar
+          v-if="quotaTotalBar"
+          label="total"
+          :utilization="quotaTotalBar.utilization"
+          color="purple"
+        />
 
-  <!-- Non-OAuth/Setup-Token accounts -->
-  <div ref="rootRef" v-else>
-    <!-- Gemini API Key accounts: show quota info -->
-    <AccountQuotaInfo v-if="account.platform === 'gemini'" :account="account" />
-    <!-- Key/Bedrock accounts: show today stats + optional quota bars -->
-    <div v-else class="space-y-1">
-      <OllamaCloudUsageCell
-        v-if="account.ollama_cloud_usage?.eligible"
-        :account="account"
-        @updated="handleOllamaCloudUsageUpdated"
-      />
-      <!-- 与上方 CN 分支结构对齐：Ollama 与 OpenCode 用量身份互斥（基址 host 不同），
-           v-else-if 提供结构性互斥保证，不改变实际渲染结果。 -->
-      <OpenCodeGoUsageCell
-        v-else-if="account.opencode_go_usage?.eligible"
-        :account="account"
-        @updated="handleOpenCodeGoUsageUpdated"
-      />
-      <!-- Today stats row (requests, tokens, cost, user_cost) -->
-      <div v-if="todayStats" class="mb-0.5 flex items-center">
+        <!-- No data at all -->
         <div
-          class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400"
+          v-if="
+            !todayStats &&
+            !todayStatsLoading &&
+            !hasApiKeyQuota &&
+            !account.ollama_cloud_usage?.eligible &&
+            !account.opencode_go_usage?.eligible
+          "
+          class="text-xs text-gray-400"
         >
-          <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
-            {{ formatKeyRequests }} req
-          </span>
-          <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
-            {{ formatKeyTokens }}
-          </span>
-          <span
-            class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
-            :title="t('usage.accountBilled')"
-          >
-            A ${{ formatKeyCost }}
-          </span>
-          <span
-            v-if="todayStats.user_cost != null"
-            class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
-            :title="t('usage.userBilled')"
-          >
-            U ${{ formatKeyUserCost }}
-          </span>
+          -
         </div>
-      </div>
-      <!-- Loading skeleton for today stats -->
-      <div v-else-if="todayStatsLoading" class="mb-0.5 flex items-center gap-1">
-        <div
-          class="h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-        ></div>
-        <div
-          class="h-3 w-8 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-        ></div>
-        <div
-          class="h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700"
-        ></div>
-      </div>
-
-      <!-- API Key accounts with quota limits: show progress bars -->
-      <UsageProgressBar
-        v-if="quotaDailyBar"
-        label="1d"
-        :utilization="quotaDailyBar.utilization"
-        :resets-at="quotaDailyBar.resetsAt"
-        color="indigo"
-      />
-      <UsageProgressBar
-        v-if="quotaWeeklyBar"
-        label="7d"
-        :utilization="quotaWeeklyBar.utilization"
-        :resets-at="quotaWeeklyBar.resetsAt"
-        color="emerald"
-      />
-      <UsageProgressBar
-        v-if="quotaTotalBar"
-        label="total"
-        :utilization="quotaTotalBar.utilization"
-        color="purple"
-      />
-
-      <!-- No data at all -->
-      <div
-        v-if="
-          !todayStats &&
-          !todayStatsLoading &&
-          !hasApiKeyQuota &&
-          !account.ollama_cloud_usage?.eligible &&
-          !account.opencode_go_usage?.eligible
-        "
-        class="text-xs text-gray-400"
-      >
-        -
       </div>
     </div>
-  </div>
+  </template>
+
+  <!-- 只读模式：只消费 batchedUsage / usageFetcher，不挂载任何管理动作控件。 -->
+  <template v-else>
+    <div class="space-y-1">
+      <div v-if="readOnlyLoading" class="space-y-1.5">
+        <div
+          class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+        ></div>
+        <div
+          class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"
+        ></div>
+      </div>
+      <template v-else>
+        <UsageProgressBar
+          v-for="window in readOnlyWindows"
+          :key="window.label"
+          :label="window.label"
+          :utilization="window.progress.utilization"
+          :resets-at="window.progress.resets_at"
+          :window-stats="window.progress.window_stats"
+          :show-now-when-idle="true"
+          :color="window.color"
+        />
+        <UsageProgressBar
+          v-if="quotaDailyBar"
+          label="1d"
+          :utilization="quotaDailyBar.utilization"
+          :resets-at="quotaDailyBar.resetsAt"
+          color="indigo"
+        />
+        <UsageProgressBar
+          v-if="quotaWeeklyBar"
+          label="7d"
+          :utilization="quotaWeeklyBar.utilization"
+          :resets-at="quotaWeeklyBar.resetsAt"
+          color="emerald"
+        />
+        <UsageProgressBar
+          v-if="quotaTotalBar"
+          label="total"
+          :utilization="quotaTotalBar.utilization"
+          color="purple"
+        />
+        <div
+          v-if="!readOnlyHasData"
+          class="text-xs text-gray-400 dark:text-dark-500"
+        >
+          {{ t("admin.accounts.stats.noData") }}
+        </div>
+      </template>
+    </div>
+  </template>
 </template>
 
 <script setup lang="ts">
@@ -879,8 +943,13 @@ import type {
   Account,
   AccountUsageInfo,
   GeminiCredentials,
+  UsageProgress,
   WindowStats,
 } from "@/types";
+import type {
+  AccountUsageFetcher,
+  ReadonlyUsageAccount,
+} from "./accountCellTypes";
 import { buildOpenAIUsageRefreshKey } from "@/utils/accountUsageRefresh";
 import { enqueueUsageRequest } from "@/utils/usageLoadQueue";
 import { formatCompactNumber } from "@/utils/format";
@@ -904,7 +973,8 @@ const USAGE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 const props = withDefaults(
   defineProps<{
-    account: Account;
+    // 管理端传完整 Account；用户只读模式传脱敏窄投影，不伪造完整账号。
+    account: Account | ReadonlyUsageAccount;
     todayStats?: WindowStats | null;
     todayStatsLoading?: boolean;
     manualRefreshToken?: number;
@@ -913,6 +983,10 @@ const props = withDefaults(
     batchedUsageLoading?: boolean;
     requestBatchedUsage?:
       ((account: Account, options?: { force?: boolean }) => void) | null;
+    /** 只读模式：只消费 batchedUsage / usageFetcher，绝不调用管理端接口。 */
+    readOnly?: boolean;
+    /** 注入的被动用量读取器（只读模式使用）。 */
+    usageFetcher?: AccountUsageFetcher | null;
   }>(),
   {
     todayStats: null,
@@ -922,7 +996,27 @@ const props = withDefaults(
     batchedUsageError: null,
     batchedUsageLoading: false,
     requestBatchedUsage: null,
+    readOnly: false,
+    usageFetcher: null,
   },
+);
+
+/**
+ * 类型守卫：管理端完整账号。只读投影不含 credentials／extra／运行时快照，
+ * admin 专属分支只在完整账号下访问这些字段。
+ */
+function isAdminAccount(
+  _account: Account | ReadonlyUsageAccount,
+): _account is Account {
+  return !props.readOnly;
+}
+
+// admin 专属凭据／Extra 访问的单一入口：只读模式一律 undefined，不泄露也不伪造。
+const adminCredentials = computed<Account["credentials"]>(() =>
+  isAdminAccount(props.account) ? props.account.credentials : undefined,
+);
+const adminExtra = computed<Account["extra"]>(() =>
+  isAdminAccount(props.account) ? props.account.extra : undefined,
 );
 
 const emit = defineEmits<{
@@ -1002,7 +1096,7 @@ const shouldFetchUsage = computed(() => {
 // CN 供应商子单元格可见性（与 CNProviderQuotaCell / CNProviderBalanceCell 共用
 // credentialsBuilder 的单一实现）：都不可见时显示 `-` 占位符。
 const cnAccountMode = computed(() => {
-  const mode = props.account.credentials?.account_mode;
+  const mode = adminCredentials.value?.account_mode;
   return typeof mode === "string" ? mode : "";
 });
 const cnQuotaCellVisible = computed(() =>
@@ -1040,7 +1134,9 @@ const hasOpenAIUsageFallback = computed(() => {
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day;
 });
 
-const codexTurnTickets = computed(() => props.account.codex_turn_tickets ?? []);
+const codexTurnTickets = computed(() =>
+  isAdminAccount(props.account) ? (props.account.codex_turn_tickets ?? []) : [],
+);
 
 function shortCodexTicketModel(model: string) {
   if (model === "gpt-6-astra") return "astra";
@@ -1075,7 +1171,9 @@ const openAISevenDayEstimatedTotalCost = computed(() => {
 });
 
 const openAIUsageRefreshKey = computed(() =>
-  buildOpenAIUsageRefreshKey(props.account),
+  isAdminAccount(props.account)
+    ? buildOpenAIUsageRefreshKey(props.account)
+    : "",
 );
 
 const shouldAutoLoadUsageOnMount = computed(() => {
@@ -1186,7 +1284,7 @@ const aiCreditsDisplay = computed(() => {
 
 // Antigravity 账户类型（从 load_code_assist 响应中提取）
 const antigravityTier = computed(() => {
-  const extra = props.account.extra as Record<string, unknown> | undefined;
+  const extra = adminExtra.value as Record<string, unknown> | undefined;
   if (!extra) return null;
 
   const loadCodeAssist = extra.load_code_assist as
@@ -1212,20 +1310,20 @@ const antigravityTier = computed(() => {
 // Gemini 账户类型（从 credentials 中提取）
 const geminiTier = computed(() => {
   if (props.account.platform !== "gemini") return null;
-  const creds = props.account.credentials as GeminiCredentials | undefined;
+  const creds = adminCredentials.value as GeminiCredentials | undefined;
   return creds?.tier_id || null;
 });
 
 const geminiOAuthType = computed(() => {
   if (props.account.platform !== "gemini") return null;
-  const creds = props.account.credentials as GeminiCredentials | undefined;
+  const creds = adminCredentials.value as GeminiCredentials | undefined;
   return (creds?.oauth_type || "").trim() || null;
 });
 
 // Gemini 是否为 Code Assist OAuth
 const isGeminiCodeAssist = computed(() => {
   if (props.account.platform !== "gemini") return false;
-  const creds = props.account.credentials as GeminiCredentials | undefined;
+  const creds = adminCredentials.value as GeminiCredentials | undefined;
   return (
     creds?.oauth_type === "code_assist" ||
     (!creds?.oauth_type && !!creds?.project_id)
@@ -1655,7 +1753,7 @@ const antigravityTierClass = computed(() => {
 
 // 检测账户是否有不合格状态（ineligibleTiers）
 const hasIneligibleTiers = computed(() => {
-  const extra = props.account.extra as Record<string, unknown> | undefined;
+  const extra = adminExtra.value as Record<string, unknown> | undefined;
   if (!extra) return false;
 
   const loadCodeAssist = extra.load_code_assist as
@@ -1724,6 +1822,7 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
 });
 
 const requestParentBatchUsage = (options?: { force?: boolean }) => {
+  if (!isAdminAccount(props.account)) return;
   if (!isBatchManaged.value || !shouldFetchUsage.value) return;
   props.requestBatchedUsage?.(props.account, options);
 };
@@ -1739,6 +1838,7 @@ const loadUsage = async (options?: {
   source?: "passive" | "active";
   bypassCache?: boolean;
 }) => {
+  if (!isAdminAccount(props.account)) return;
   if (!shouldFetchUsage.value) return;
   if (isBatchManaged.value) {
     requestParentBatchUsage({ force: options?.bypassCache === true });
@@ -1839,6 +1939,7 @@ const attachVisibilityObserver = () => {
 };
 
 const loadActiveUsage = async () => {
+  if (!isAdminAccount(props.account)) return;
   activeQueryLoading.value = true;
   try {
     usageInfo.value = await adminAPI.accounts.getUsage(
@@ -1874,7 +1975,7 @@ const makeQuotaBar = (
   const utilization = limit > 0 ? (used / limit) * 100 : 0;
   let resetsAt: string | null = null;
   if (startKey) {
-    const extra = props.account.extra as Record<string, unknown> | undefined;
+    const extra = adminExtra.value as Record<string, unknown> | undefined;
     const isDaily = startKey.includes("daily");
     const mode = isDaily
       ? (extra?.quota_daily_reset_mode as string) || "rolling"
@@ -1937,6 +2038,85 @@ const quotaTotalBar = computed((): QuotaBarInfo | null => {
   return makeQuotaBar(props.account.quota_used ?? 0, limit);
 });
 
+// ===== 只读被动用量 =====
+// 只消费父组件批量注入（batchedUsage）或注入的被动读取器（usageFetcher），
+// 两者皆无时展示「暂无可用数据」，绝不回退管理端接口。
+const readOnlyUsageLoading = ref(false);
+
+interface ReadOnlyUsageWindow {
+  label: string;
+  progress: UsageProgress;
+  color: "indigo" | "emerald" | "purple" | "amber";
+}
+
+const readOnlyWindows = computed<ReadOnlyUsageWindow[]>(() => {
+  const usage = usageInfo.value;
+  if (!usage) return [];
+  const windows: ReadOnlyUsageWindow[] = [];
+  if (usage.five_hour) {
+    windows.push({ label: "5h", progress: usage.five_hour, color: "indigo" });
+  }
+  if (usage.seven_day) {
+    windows.push({ label: "7d", progress: usage.seven_day, color: "emerald" });
+  }
+  if (usage.seven_day_sonnet) {
+    windows.push({
+      label: "7d S",
+      progress: usage.seven_day_sonnet,
+      color: "purple",
+    });
+  }
+  if (usage.seven_day_fable) {
+    windows.push({
+      label: "7d F",
+      progress: usage.seven_day_fable,
+      color: "amber",
+    });
+  }
+  return windows;
+});
+
+const readOnlyLoading = computed(
+  () =>
+    readOnlyUsageLoading.value ||
+    (props.readOnly && props.batchedUsageLoading === true && !usageInfo.value),
+);
+
+const readOnlyHasData = computed(
+  () =>
+    readOnlyWindows.value.length > 0 ||
+    !!quotaDailyBar.value ||
+    !!quotaWeeklyBar.value ||
+    !!quotaTotalBar.value,
+);
+
+const loadReadOnlyUsage = async () => {
+  if (props.batchedUsage) {
+    usageInfo.value = props.batchedUsage;
+    return;
+  }
+  if (!props.usageFetcher) return;
+
+  readOnlyUsageLoading.value = true;
+  loading.value = true;
+  error.value = null;
+  try {
+    const result = await props.usageFetcher(props.account);
+    if (!unmounted.value) usageInfo.value = result;
+  } catch (e) {
+    if (!unmounted.value) {
+      usageInfo.value = null;
+      error.value = t("common.error");
+      console.error("Failed to load read-only usage:", e);
+    }
+  } finally {
+    if (!unmounted.value) {
+      readOnlyUsageLoading.value = false;
+      loading.value = false;
+    }
+  }
+};
+
 const handleQuotaResetAccountUpdated = (account: Account) => {
   emit("account-updated", account);
 };
@@ -1944,12 +2124,14 @@ const handleQuotaResetAccountUpdated = (account: Account) => {
 const handleOllamaCloudUsageUpdated = (
   state: NonNullable<Account["ollama_cloud_usage"]>,
 ) => {
+  if (!isAdminAccount(props.account)) return;
   emit("account-updated", { ...props.account, ollama_cloud_usage: state });
 };
 
 const handleOpenCodeGoUsageUpdated = (
   state: NonNullable<Account["opencode_go_usage"]>,
 ) => {
+  if (!isAdminAccount(props.account)) return;
   emit("account-updated", { ...props.account, opencode_go_usage: state });
 };
 
@@ -1994,6 +2176,12 @@ onMounted(() => {
     }
   }
 
+  // 只读模式：只消费注入数据，绝不触发管理端接口或批量请求。
+  if (props.readOnly) {
+    void loadReadOnlyUsage();
+    return;
+  }
+
   if (isBatchManaged.value) {
     syncManagedUsageState();
     requestParentBatchUsage();
@@ -2004,6 +2192,15 @@ onMounted(() => {
   const source = isAnthropicOAuthOrSetupToken.value ? "passive" : undefined;
   requestAutoLoad(source);
 });
+
+// 只读模式：父组件批量数据晚到／变化时同步（不触发任何请求）。
+watch(
+  () => props.batchedUsage,
+  (value) => {
+    if (!props.readOnly) return;
+    usageInfo.value = value ?? null;
+  },
+);
 
 watch(
   () =>

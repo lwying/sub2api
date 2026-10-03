@@ -1,6 +1,7 @@
 <template>
   <div class="flex flex-wrap items-center gap-3">
     <SearchInput
+      data-test="filter-search"
       :model-value="searchQuery"
       :placeholder="t('admin.accounts.searchAccounts')"
       class="w-full sm:w-64"
@@ -8,6 +9,8 @@
       @search="$emit('change')"
     />
     <Select
+      v-if="visible('platform')"
+      data-test="filter-platform"
       :model-value="filters.platform"
       class="w-40"
       :options="pOpts"
@@ -15,6 +18,8 @@
       @change="$emit('change')"
     />
     <Select
+      v-if="visible('type')"
+      data-test="filter-account-type"
       :model-value="filters.type"
       class="w-40"
       :options="tOpts"
@@ -22,6 +27,8 @@
       @change="$emit('change')"
     />
     <Select
+      v-if="visible('status')"
+      data-test="filter-status"
       :model-value="filters.status"
       class="w-40"
       :options="sOpts"
@@ -29,6 +36,7 @@
       @change="$emit('change')"
     />
     <Select
+      v-if="visible('privacy_mode')"
       :model-value="filters.privacy_mode"
       class="w-40"
       :options="privacyOpts"
@@ -36,6 +44,8 @@
       @change="$emit('change')"
     />
     <Select
+      v-if="visible('group')"
+      data-test="filter-group"
       :model-value="filters.group"
       class="w-40"
       :options="gOpts"
@@ -50,15 +60,23 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import Select from "@/components/common/Select.vue";
 import SearchInput from "@/components/common/SearchInput.vue";
-import type { AdminGroup } from "@/types";
+import type { SelectOption } from "@/components/common/Select.vue";
 import { CONCRETE_PLATFORM_OPTIONS } from "@/constants/platforms";
 const props = defineProps<{
   searchQuery: string;
   filters: Record<string, any>;
-  groups?: AdminGroup[];
+  groups?: { id: number; name: string }[];
+  visibleFields?: ("platform" | "type" | "status" | "privacy_mode" | "group")[];
+  platformOptions?: SelectOption[];
+  typeOptions?: SelectOption[];
+  statusOptions?: SelectOption[];
+  showUngrouped?: boolean;
 }>();
 const emit = defineEmits(["update:searchQuery", "update:filters", "change"]);
 const { t } = useI18n();
+const visible = (
+  field: "platform" | "type" | "status" | "privacy_mode" | "group",
+) => !props.visibleFields || props.visibleFields.includes(field);
 const updatePlatform = (value: string | number | boolean | null) => {
   emit("update:filters", { ...props.filters, platform: value });
 };
@@ -74,29 +92,41 @@ const updatePrivacyMode = (value: string | number | boolean | null) => {
 const updateGroup = (value: string | number | boolean | null) => {
   emit("update:filters", { ...props.filters, group: value });
 };
-const pOpts = computed(() => [
-  { value: "", label: t("admin.accounts.allPlatforms") },
-  ...CONCRETE_PLATFORM_OPTIONS,
-]);
-const tOpts = computed(() => [
-  { value: "", label: t("admin.accounts.allTypes") },
-  { value: "oauth", label: t("admin.accounts.oauthType") },
-  { value: "setup-token", label: t("admin.accounts.setupToken") },
-  { value: "apikey", label: t("admin.accounts.apiKey") },
-  { value: "bedrock", label: "AWS Bedrock" },
-]);
-const sOpts = computed(() => [
-  { value: "", label: t("admin.accounts.allStatus") },
-  { value: "active", label: t("admin.accounts.status.active") },
-  { value: "inactive", label: t("admin.accounts.status.inactive") },
-  { value: "error", label: t("admin.accounts.status.error") },
-  { value: "rate_limited", label: t("admin.accounts.status.rateLimited") },
-  {
-    value: "temp_unschedulable",
-    label: t("admin.accounts.status.tempUnschedulable"),
-  },
-  { value: "unschedulable", label: t("admin.accounts.status.unschedulable") },
-]);
+const pOpts = computed(
+  () =>
+    props.platformOptions ?? [
+      { value: "", label: t("admin.accounts.allPlatforms") },
+      ...CONCRETE_PLATFORM_OPTIONS,
+    ],
+);
+const tOpts = computed(
+  () =>
+    props.typeOptions ?? [
+      { value: "", label: t("admin.accounts.allTypes") },
+      { value: "oauth", label: t("admin.accounts.oauthType") },
+      { value: "setup-token", label: t("admin.accounts.setupToken") },
+      { value: "apikey", label: t("admin.accounts.apiKey") },
+      { value: "bedrock", label: "AWS Bedrock" },
+    ],
+);
+const sOpts = computed(
+  () =>
+    props.statusOptions ?? [
+      { value: "", label: t("admin.accounts.allStatus") },
+      { value: "active", label: t("admin.accounts.status.active") },
+      { value: "inactive", label: t("admin.accounts.status.inactive") },
+      { value: "error", label: t("admin.accounts.status.error") },
+      { value: "rate_limited", label: t("admin.accounts.status.rateLimited") },
+      {
+        value: "temp_unschedulable",
+        label: t("admin.accounts.status.tempUnschedulable"),
+      },
+      {
+        value: "unschedulable",
+        label: t("admin.accounts.status.unschedulable"),
+      },
+    ],
+);
 const privacyOpts = computed(() => [
   { value: "", label: t("admin.accounts.allPrivacyModes") },
   { value: "__unset__", label: t("admin.accounts.privacyUnset") },
@@ -106,7 +136,9 @@ const privacyOpts = computed(() => [
 ]);
 const gOpts = computed(() => [
   { value: "", label: t("admin.accounts.allGroups") },
-  { value: "ungrouped", label: t("admin.accounts.ungroupedGroup") },
+  ...(props.showUngrouped !== false
+    ? [{ value: "ungrouped", label: t("admin.accounts.ungroupedGroup") }]
+    : []),
   ...(props.groups || []).map((g) => ({ value: String(g.id), label: g.name })),
 ]);
 </script>

@@ -1,40 +1,35 @@
-/**
- * Dedicated read-only API for accounts an administrator explicitly assigned to
- * the current (non-admin) user.
- *
- * These endpoints are intentionally separate from the admin account APIs: the
- * server returns an allowlist of already-masked upstream identity fields and
- * enforces the per-user assignment on every list and detail read. The client
- * never computes a mask and never expects credentials, proxy data, notes or
- * scheduler state here.
- */
-
 import { apiClient } from "./client";
-import type { PaginatedResponse } from "@/types";
+import type {
+  Account,
+  AccountUsageStatsResponse,
+  PaginatedResponse,
+} from "@/types";
+import type {
+  AccountDisplayRow,
+  AccountRuntimeSnapshot,
+} from "@/components/account/accountDisplay";
+import type { AccountCellGroup } from "@/components/account/accountCellTypes";
 
-/**
- * One assigned account as the customer is allowed to see it.
- *
- * Identity fields are masked server-side; an unavailable identity is returned
- * as an empty string (never as a raw account name or credential).
- */
-export interface AssignedAccount {
-  id: number;
-  platform: string;
-  account_type: string;
+/** 用户专属安全投影；与管理端显示共用组件，不共用管理员接口或完整 DTO。 */
+export interface AssignedAccount extends Omit<AccountDisplayRow, "type"> {
+  account_type: Account["type"];
   email_masked: string;
   username_masked: string;
   upstream_account_id_masked: string;
 }
 
-/**
- * List the accounts currently assigned to the signed-in user.
- * Disabled and revoked accounts are absent from `items` and `total` alike.
- */
+export interface AssignedAccountFilters {
+  platform?: string;
+  account_type?: string;
+  status?: string;
+  group?: string;
+  search?: string;
+}
+
 export async function list(
-  page: number = 1,
-  pageSize: number = 20,
-  filters: { platform?: string; account_type?: string; search?: string } = {},
+  page = 1,
+  pageSize = 20,
+  filters: AssignedAccountFilters = {},
   options?: { signal?: AbortSignal },
 ): Promise<PaginatedResponse<AssignedAccount>> {
   const { data } = await apiClient.get<PaginatedResponse<AssignedAccount>>(
@@ -47,12 +42,6 @@ export async function list(
   return data;
 }
 
-/**
- * Read a single assigned account.
- *
- * The server answers 404 for unassigned, disabled or deleted accounts, so a
- * guessed id cannot be distinguished from a nonexistent one.
- */
 export async function getById(
   id: number,
   options?: { signal?: AbortSignal },
@@ -63,37 +52,60 @@ export async function getById(
   return data;
 }
 
+export async function getGroups(options?: {
+  signal?: AbortSignal;
+}): Promise<AccountCellGroup[]> {
+  const { data } = await apiClient.get<AccountCellGroup[]>("/accounts/groups", {
+    signal: options?.signal,
+  });
+  return data;
+}
+
+export async function getRuntime(
+  accountIDs: number[],
+  options?: { signal?: AbortSignal },
+): Promise<Record<string, AccountRuntimeSnapshot>> {
+  const { data } = await apiClient.post<{
+    accounts: Record<string, AccountRuntimeSnapshot>;
+  }>(
+    "/accounts/runtime/batch",
+    {
+      account_ids: accountIDs,
+    },
+    { signal: options?.signal },
+  );
+  return data.accounts;
+}
+
+export async function getStats(
+  id: number,
+  days = 30,
+): Promise<AccountUsageStatsResponse> {
+  const { data } = await apiClient.get<
+    Omit<AccountUsageStatsResponse, "upstream_endpoints">
+  >(`/accounts/${id}/stats`, { params: { days } });
+  return { ...data, upstream_endpoints: [] };
+}
+
 export const assignedAccountsAPI = {
   list,
   getById,
+  getGroups,
+  getRuntime,
+  getStats,
 };
 
-/**
- * True when the backend refused the read-only account view itself (capability
- * revoked or never granted), as opposed to a transient failure or a 404 for a
- * single account.
- */
 export function isAssignedAccountsAccessDenied(error: unknown): boolean {
   const candidate = error as
     { status?: number; code?: string | number } | null | undefined;
-  if (!candidate) {
-    return false;
-  }
-
-  return candidate.status === 403 || candidate.code === "ACCOUNT_VIEW_DISABLED";
+  return (
+    candidate?.status === 403 || candidate?.code === "ACCOUNT_VIEW_DISABLED"
+  );
 }
 
-/**
- * True when a single account is not visible to this user. The server answers
- * the same 404 for unassigned, disabled, deleted and nonexistent accounts, so
- * callers must not try to distinguish those cases.
- *
- * Anything else (network failure, 5xx) is a real error and must not be shown as
- * "not visible".
- */
+/** 不存在、未授权与已删除统一为 404，不通过错误推断账号是否存在。 */
 export function isAssignedAccountNotFound(error: unknown): boolean {
-  const candidate = error as { status?: number } | null | undefined;
-  return candidate?.status === 404;
+  return (error as { status?: number } | null | undefined)?.status === 404;
 }
 
 export default assignedAccountsAPI;

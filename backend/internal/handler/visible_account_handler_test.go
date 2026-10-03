@@ -12,9 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -22,7 +24,7 @@ import (
 )
 
 // visibleAccountHTTPRepoFake 复刻真实仓储的可见性约束（能力开关 + 显式分配 +
-// 账号未软删除 + 非手动禁用），用于 HTTP 级验收；真实 PostgreSQL 的迁移与
+// 账号未软删除；手动停用保持可见），用于 HTTP 级验收；真实 PostgreSQL 的迁移与
 // 级联由 repository 的集成测试覆盖。
 type visibleAccountHTTPRepoFake struct {
 	enabled     map[int64]bool
@@ -190,7 +192,7 @@ func (f *visibleAccountHTTPRepoFake) visible(userID int64) []*service.Account {
 	out := []*service.Account{}
 	for _, id := range f.assigned[userID] {
 		account, ok := f.accounts[id]
-		if !ok || testManuallyDisabled(account.Status) {
+		if !ok {
 			continue
 		}
 		out = append(out, account)
@@ -198,14 +200,39 @@ func (f *visibleAccountHTTPRepoFake) visible(userID int64) []*service.Account {
 	return out
 }
 
-// testManuallyDisabled 与服务层同口径：大小写与首尾空白不敏感。
-func testManuallyDisabled(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "disabled", "inactive":
-		return true
-	default:
-		return false
+// ListVisibleAccountsByIDs 复刻批量范围查询：只在授权集合内命中。
+func (f *visibleAccountHTTPRepoFake) ListVisibleAccountsByIDs(_ context.Context, userID int64, accountIDs []int64) ([]*service.Account, error) {
+	want := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		want[id] = struct{}{}
 	}
+	out := []*service.Account{}
+	for _, account := range f.visible(userID) {
+		if _, ok := want[account.ID]; ok {
+			out = append(out, account)
+		}
+	}
+	return out, nil
+}
+
+// ListVisibleAccountGroups 只从可见账号所属分组派生。
+func (f *visibleAccountHTTPRepoFake) ListVisibleAccountGroups(_ context.Context, userID int64) ([]service.VisibleAccountGroup, error) {
+	seen := map[int64]struct{}{}
+	out := []service.VisibleAccountGroup{}
+	for _, account := range f.visible(userID) {
+		for _, group := range account.Groups {
+			if _, ok := seen[group.ID]; ok {
+				continue
+			}
+			seen[group.ID] = struct{}{}
+			out = append(out, service.VisibleAccountGroup{
+				ID: group.ID, Name: group.Name, Platform: group.Platform,
+				SubscriptionType: group.SubscriptionType,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 // visibleAccountTestRouter 用与生产一致的路径注册被测路由，并按请求头注入用户身份。
@@ -232,7 +259,11 @@ func visibleAccountTestRouter(repo *visibleAccountHTTPRepoFake, currentUser *int
 		c.Next()
 	})
 	engine.GET("/api/v1/accounts", accountHandler.List)
+	engine.GET("/api/v1/accounts/groups", accountHandler.Groups)
+	engine.POST("/api/v1/accounts/runtime/batch", accountHandler.RuntimeBatch)
 	engine.GET("/api/v1/accounts/:id", accountHandler.Get)
+	engine.GET("/api/v1/accounts/:id/stats", accountHandler.Stats)
+	engine.GET("/api/v1/accounts/:id/usage", accountHandler.Usage)
 	engine.GET("/api/v1/admin/users/:id/account-view", adminUserHandler.GetAccountView)
 	engine.PUT("/api/v1/admin/users/:id/account-view", adminUserHandler.UpdateAccountView)
 	return engine
@@ -332,16 +363,17 @@ func TestVisibleAccountHTTP_DefaultNoAccessThenAdminGrantThenRevoke(t *testing.T
 	require.Contains(t, adminRec.Body.String(), `"account_type"`)
 	require.NotContains(t, adminRec.Body.String(), `"type":`)
 
-	// 2) 授权后：详情与列表可见（手动禁用的 11/12 不可见，error/expired 仍可见）。
+	// 2) 授权后：详情与列表可见（含手动停用与故障/过期账号）。
 	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/10", "", 1)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 	body := rec.Body.String()
+	require.Contains(t, body, `"name":"sentinel-account-name"`, "名称现在是可展示字段")
 	require.Contains(t, body, "o***@e***")
 	require.Contains(t, body, "ow***me")
 	require.Contains(t, body, "ac***90")
 	for _, sentinel := range []string{
-		"sentinel-account-name", "sentinel-access-token", "sentinel-refresh-token",
+		"sentinel-access-token", "sentinel-refresh-token",
 		"sk-sentinel", "sentinel-base-url", "sentinel-fallback-credit-token",
 		"sentinel-proxy", "sentinel-error", "sentinel-notes", "sentinel-error-message",
 		"owner-username", "owner@example.com", "acct-1234567890",
@@ -353,7 +385,11 @@ func TestVisibleAccountHTTP_DefaultNoAccessThenAdminGrantThenRevoke(t *testing.T
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &detail))
 	require.ElementsMatch(t,
-		[]string{"id", "platform", "account_type", "email_masked", "username_masked", "upstream_account_id_masked"},
+		[]string{
+			"id", "name", "platform", "account_type", "status", "schedulable", "concurrency",
+			"groups", "rate_limit_reset_at", "overload_until", "temp_unschedulable_until",
+			"email_masked", "username_masked", "upstream_account_id_masked",
+		},
 		keysOf(detail.Data))
 
 	items := decodeAccountItems(t, doJSON(t, engine, http.MethodGet, "/api/v1/accounts", "", 1))
@@ -361,7 +397,7 @@ func TestVisibleAccountHTTP_DefaultNoAccessThenAdminGrantThenRevoke(t *testing.T
 	for _, item := range items {
 		ids = append(ids, item["id"].(float64))
 	}
-	require.ElementsMatch(t, []float64{10, 13, 14, 15}, ids, "手动禁用账号必须消失，故障/过期账号仍可见")
+	require.ElementsMatch(t, []float64{10, 11, 12, 13, 14, 15}, ids, "已授权账号全部可见（含手动停用与故障/过期）")
 
 	// 短身份不得原样暴露。
 	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/15", "", 1)
@@ -423,24 +459,28 @@ func TestVisibleAccountHTTP_AccountStatusChangesTakeEffectImmediately(t *testing
 		`{"enabled":true,"account_ids":[11,12,13,14]}`, 99)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	// error / expired 可见；disabled / inactive 不可见。
-	require.Equal(t, http.StatusOK, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/13", "", 1).Code)
-	require.Equal(t, http.StatusOK, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/14", "", 1).Code)
-	require.Equal(t, http.StatusNotFound, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/11", "", 1).Code)
-	require.Equal(t, http.StatusNotFound, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/12", "", 1).Code)
-
-	// 手动禁用后立刻从列表与详情消失（含历史大小写/空白变体）。
-	for _, status := range []string{"disabled", "inactive", " Inactive ", "DISABLED"} {
-		repo.accounts[13].Status = status
-		require.Equal(t, http.StatusNotFound, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/13", "", 1).Code,
-			"status %q must hide the account", status)
-		items := decodeAccountItems(t, doJSON(t, engine, http.MethodGet, "/api/v1/accounts", "", 1))
-		for _, item := range items {
-			require.NotEqual(t, float64(13), item["id"])
-		}
+	// 停用、故障、过期全部保持可见（不再按手动禁用隐藏）。
+	for _, id := range []int64{11, 12, 13, 14} {
+		require.Equal(t, http.StatusOK, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/"+strconv.FormatInt(id, 10), "", 1).Code,
+			"account %d must stay visible", id)
 	}
 
-	// 故障状态重新出现（不是手动禁用）。
+	// 切换到历史停用变体（含大小写/空白）后仍然可见。
+	for _, status := range []string{"disabled", "inactive", " Inactive ", "DISABLED"} {
+		repo.accounts[13].Status = status
+		require.Equal(t, http.StatusOK, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/13", "", 1).Code,
+			"status %q must stay visible", status)
+		items := decodeAccountItems(t, doJSON(t, engine, http.MethodGet, "/api/v1/accounts", "", 1))
+		found := false
+		for _, item := range items {
+			if item["id"] == float64(13) {
+				found = true
+			}
+		}
+		require.True(t, found, "account 13 must stay in the list for status %q", status)
+	}
+
+	// 故障状态照旧可见。
 	repo.accounts[13].Status = service.StatusError
 	require.Equal(t, http.StatusOK, doJSON(t, engine, http.MethodGet, "/api/v1/accounts/13", "", 1).Code)
 }
@@ -714,6 +754,204 @@ func TestVisibleAccountHTTP_SearchStaysUTF8Safe(t *testing.T) {
 }
 
 func keysOf(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// visibleAccountHTTPUsageFake 是 VisibleAccountUsageReader 的 HTTP 级替身。
+type visibleAccountHTTPUsageFake struct {
+	today   map[int64]*service.WindowStats
+	passive map[int64]*service.UsageInfo
+	stats   *usagestats.AccountUsageStatsResponse
+}
+
+func (f *visibleAccountHTTPUsageFake) GetTodayStats(_ context.Context, accountID int64) (*service.WindowStats, error) {
+	return f.today[accountID], nil
+}
+
+func (f *visibleAccountHTTPUsageFake) GetTodayStatsBatch(_ context.Context, accountIDs []int64) (map[int64]*service.WindowStats, error) {
+	out := make(map[int64]*service.WindowStats, len(accountIDs))
+	for _, id := range accountIDs {
+		if stats, ok := f.today[id]; ok {
+			out[id] = stats
+		}
+	}
+	return out, nil
+}
+
+func (f *visibleAccountHTTPUsageFake) GetAccountUsageStats(_ context.Context, _ int64, _, _ time.Time) (*usagestats.AccountUsageStatsResponse, error) {
+	return f.stats, nil
+}
+
+func (f *visibleAccountHTTPUsageFake) GetPassiveUsage(_ context.Context, accountID int64) (*service.UsageInfo, error) {
+	return f.passive[accountID], nil
+}
+
+// visibleAccountHTTPConcurrencyFake 是 VisibleAccountConcurrencyReader 的 HTTP 级替身。
+type visibleAccountHTTPConcurrencyFake struct {
+	counts map[int64]int
+}
+
+func (f *visibleAccountHTTPConcurrencyFake) GetAccountConcurrencyBatch(_ context.Context, accountIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(accountIDs))
+	for _, id := range accountIDs {
+		out[id] = f.counts[id]
+	}
+	return out, nil
+}
+
+// newVisibleAccountRuntimeRouter 注册扩展后的只读路由并注入只读读取器。
+func newVisibleAccountRuntimeRouter(
+	repo *visibleAccountHTTPRepoFake,
+	usage service.VisibleAccountUsageReader,
+	concurrency service.VisibleAccountConcurrencyReader,
+) *gin.Engine {
+	visibleAccountService := service.NewVisibleAccountService(repo)
+	visibleAccountService.SetUsageReader(usage)
+	visibleAccountService.SetConcurrencyReader(concurrency)
+	accountHandler := NewVisibleAccountHandler(visibleAccountService)
+
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		identity := int64(0)
+		if raw := c.GetHeader("X-Test-User"); raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				identity = parsed
+			}
+		}
+		if identity > 0 {
+			c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: identity})
+		}
+		c.Next()
+	})
+	engine.GET("/api/v1/accounts", accountHandler.List)
+	engine.GET("/api/v1/accounts/groups", accountHandler.Groups)
+	engine.POST("/api/v1/accounts/runtime/batch", accountHandler.RuntimeBatch)
+	engine.GET("/api/v1/accounts/:id", accountHandler.Get)
+	engine.GET("/api/v1/accounts/:id/stats", accountHandler.Stats)
+	engine.GET("/api/v1/accounts/:id/usage", accountHandler.Usage)
+	return engine
+}
+
+// TestVisibleAccountHTTP_GroupsRuntimeBatchStatsAndUsage 覆盖新增只读端点：
+// 分组候选来自已授权账号、运行时批量只回授权 id、统计不含原始上游端点明细、
+// 被动用量只对 Anthropic 账号有数据，且全部 no-store。
+func TestVisibleAccountHTTP_GroupsRuntimeBatchStatsAndUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newVisibleAccountHTTPRepoFake()
+	repo.addUser(1, true, true)
+	sessionStart := time.Now().Add(-time.Hour)
+	sessionEnd := time.Now().Add(time.Hour)
+	repo.addAccount(&service.Account{
+		ID: 10, Name: "claude", Platform: "anthropic", Type: "oauth", Status: service.StatusActive,
+		SessionWindowStart: &sessionStart, SessionWindowEnd: &sessionEnd,
+		Groups: []*service.Group{{ID: 201, Name: "team-a", Platform: "anthropic", SubscriptionType: "pro"}},
+	})
+	repo.addAccount(&service.Account{
+		ID: 11, Name: "openai", Platform: "openai", Type: "apikey", Status: service.StatusDisabled,
+	})
+	repo.assign(1, 10, 11)
+
+	usage := &visibleAccountHTTPUsageFake{
+		today: map[int64]*service.WindowStats{10: {Requests: 3, Tokens: 30}},
+		passive: map[int64]*service.UsageInfo{
+			10: {Source: "passive", FiveHour: &service.UsageProgress{Utilization: 20}},
+		},
+		stats: &usagestats.AccountUsageStatsResponse{
+			Summary:   usagestats.AccountUsageSummary{TotalRequests: 7},
+			Models:    []usagestats.ModelStat{{Model: "claude-3"}},
+			Endpoints: []usagestats.EndpointStat{{Endpoint: "/v1/messages"}},
+			UpstreamEndpoints: []usagestats.EndpointStat{
+				{Endpoint: "https://sentinel-upstream.example/v1/messages"},
+			},
+		},
+	}
+	concurrency := &visibleAccountHTTPConcurrencyFake{counts: map[int64]int{10: 4}}
+	engine := newVisibleAccountRuntimeRouter(repo, usage, concurrency)
+
+	// 分组候选：数组，只含已授权账号所属分组。
+	rec := doJSON(t, engine, http.MethodGet, "/api/v1/accounts/groups", "", 1)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+	var groups struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &groups))
+	require.Len(t, groups.Data, 1)
+	require.Equal(t, "team-a", groups.Data[0]["name"])
+	require.Equal(t, "pro", groups.Data[0]["subscription_type"])
+	require.ElementsMatch(t, []string{"id", "name", "platform", "subscription_type"}, keysOf(groups.Data[0]))
+
+	// 运行时批量：只回授权 id，未授权 999 静默缺席。
+	rec = doJSON(t, engine, http.MethodPost, "/api/v1/accounts/runtime/batch",
+		`{"account_ids":[10,11,999]}`, 1)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+	require.NotContains(t, rec.Body.String(), "999")
+	var batch struct {
+		Data struct {
+			Accounts map[string]map[string]any `json:"accounts"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &batch))
+	require.ElementsMatch(t, []string{"10", "11"}, keysOfAny(batch.Data.Accounts))
+	require.NotNil(t, batch.Data.Accounts["10"]["usage"], "Anthropic 账号有被动用量")
+	require.Nil(t, batch.Data.Accounts["11"]["usage"], "非 Anthropic 账号用量为 null")
+	require.NotNil(t, batch.Data.Accounts["10"]["today_stats"])
+	require.Equal(t, float64(4), batch.Data.Accounts["10"]["current_concurrency"])
+
+	// 超限：直接 400，不静默截断。
+	oversized := make([]int64, 101)
+	for i := range oversized {
+		oversized[i] = int64(i + 1)
+	}
+	payload, err := json.Marshal(map[string]any{"account_ids": oversized})
+	require.NoError(t, err)
+	rec = doJSON(t, engine, http.MethodPost, "/api/v1/accounts/runtime/batch", string(payload), 1)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// 统计：授权账号返回安全汇总，不含原始上游端点明细；未授权 404。
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/10/stats?days=30", "", 1)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+	require.Contains(t, rec.Body.String(), `"model":"claude-3"`)
+	require.NotContains(t, rec.Body.String(), "upstream_endpoints")
+	require.NotContains(t, rec.Body.String(), "sentinel-upstream.example")
+
+	// days 显式提供但非法一律 400（不静默回退）；省略默认 30；边界 1/90 合法。
+	for _, bad := range []string{"0", "91", "-1", "abc", "1.5"} {
+		rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/10/stats?days="+bad, "", 1)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "days=%q must be rejected", bad)
+	}
+	for _, good := range []string{"1", "90"} {
+		rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/10/stats?days="+good, "", 1)
+		require.Equal(t, http.StatusOK, rec.Code, "days=%q must be accepted", good)
+	}
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/10/stats", "", 1)
+	require.Equal(t, http.StatusOK, rec.Code, "omitted days defaults to 30")
+
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/999/stats", "", 1)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	// 被动用量详情：Anthropic 有数据，其它平台为 null。
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/10/usage", "", 1)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"source":"passive"`)
+	require.NotContains(t, rec.Body.String(), "error")
+
+	rec = doJSON(t, engine, http.MethodGet, "/api/v1/accounts/11/usage", "", 1)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var nullUsage struct {
+		Data any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &nullUsage))
+	require.Nil(t, nullUsage.Data)
+}
+
+func keysOfAny[T any](m map[string]T) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

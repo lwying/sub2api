@@ -24,6 +24,7 @@
     <template v-else>
       <div v-if="isTempUnschedulable" class="flex flex-col items-center gap-1">
         <button
+          v-if="!readOnly"
           type="button"
           :class="['badge text-xs', statusClass, 'cursor-pointer']"
           :title="t('admin.accounts.status.viewTempUnschedDetails')"
@@ -31,6 +32,9 @@
         >
           {{ statusText }}
         </button>
+        <span v-else :class="['badge text-xs', statusClass]">
+          {{ statusText }}
+        </span>
         <span
           class="max-w-[180px] text-center text-[11px] leading-4 text-gray-500 dark:text-gray-400"
         >
@@ -42,8 +46,11 @@
       </span>
     </template>
 
-    <!-- Error Info Indicator -->
-    <div v-if="hasError && account.error_message" class="group/error relative">
+    <!-- Error Info Indicator（只读模式不暴露原始错误文本） -->
+    <div
+      v-if="hasError && isAdminAccount(account) && account.error_message"
+      class="group/error relative"
+    >
       <svg
         class="h-4 w-4 cursor-help text-red-500 transition-colors hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
         fill="none"
@@ -201,6 +208,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import Icon from "@/components/icons/Icon.vue";
 import type { Account } from "@/types";
+import type { ReadonlyStatusAccount } from "./accountCellTypes";
 import {
   formatCountdown,
   formatDateTime,
@@ -211,13 +219,26 @@ import {
 
 const { t } = useI18n();
 
-const props = defineProps<{
-  account: Account;
-}>();
+const props = withDefaults(
+  defineProps<{
+    account: Account | ReadonlyStatusAccount;
+    /** 只读模式：禁止查看原始错误、禁止 emit 临时停用详情。 */
+    readOnly?: boolean;
+  }>(),
+  { readOnly: false },
+);
 
 const emit = defineEmits<{
   (e: "show-temp-unsched", account: Account): void;
 }>();
+
+/**
+ * 类型守卫：管理端完整账号。只读投影不含 `extra`／`error_message`，
+ * 因此错误提示与模型级限流明细只在 admin 分支可用。
+ */
+function isAdminAccount(_account: typeof props.account): _account is Account {
+  return !props.readOnly;
+}
 
 // Computed: is rate limited (429)
 const isRateLimited = computed(() => {
@@ -233,6 +254,8 @@ type AccountModelStatusItem = {
 
 // Computed: active model statuses (普通模型限流 + 积分耗尽 + 走积分中)
 const activeModelStatuses = computed<AccountModelStatusItem[]>(() => {
+  // 模型级限流明细来自 admin `extra`，只读投影不提供，也不应展示。
+  if (!isAdminAccount(props.account)) return [];
   const extra = props.account.extra as Record<string, unknown> | undefined;
   const modelLimits = extra?.model_rate_limits as
     | Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
@@ -421,6 +444,7 @@ const statusText = computed(() => {
 
 const handleTempUnschedClick = () => {
   if (!isTempUnschedulable.value) return;
+  if (!isAdminAccount(props.account)) return;
   emit("show-temp-unsched", props.account);
 };
 </script>

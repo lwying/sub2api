@@ -7,6 +7,8 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
+	dbaccountgroup "github.com/Wei-Shaw/sub2api/ent/accountgroup"
+	dbgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	dbpredicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	dbuvaccount "github.com/Wei-Shaw/sub2api/ent/uservisibleaccount"
@@ -19,8 +21,9 @@ import (
 // user_visible_account_repo.go 实现普通用户「已分配账号只读查看」的数据访问。
 //
 // 所有面向普通用户的读取都在 SQL 层强制：用户存在且未禁用、能力开关已开启、
-// 存在显式分配关系、账号未软删除且未被手动禁用。授权撤销、用户禁用与账号禁用
-// 在下一次请求即生效；不复用任何调度过滤（限流／过载／临时不可调度账号仍可见）。
+// 存在显式分配关系、账号未软删除。手动停用账号保持可见（按状态展示）；
+// 授权撤销、用户禁用与账号软删除在下一次请求即生效；
+// 不复用任何调度过滤（限流／过载／临时不可调度账号仍可见）。
 
 // userVisibleAccountRepository 是 service.VisibleAccountRepository 的 Ent 实现。
 type userVisibleAccountRepository struct {
@@ -382,14 +385,94 @@ func (r *userVisibleAccountRepository) ListVisibleAccounts(
 	if err != nil {
 		return nil, 0, err
 	}
-	out := make([]*service.Account, 0, len(accounts))
-	for _, account := range accounts {
-		out = append(out, accountEntityToService(account))
-	}
+	out := r.accountsToService(ctx, accounts)
 	return out, int64(total), nil
 }
 
-// GetVisibleAccount 返回单个可见账号；不可见（未分配／已删除／已禁用）时返回 (nil, nil)。
+// ListVisibleAccountsByIDs 返回授权集合内命中给定 id 的可见账号（一次范围查询）。
+//
+// 未授权、对应账号已软删除、用户已禁用或资格已关闭的 id 一律不出现在结果里；
+// 调用方据此只回传授权 id，不会通过错误详情暴露未授权 id 是否存在。
+func (r *userVisibleAccountRepository) ListVisibleAccountsByIDs(
+	ctx context.Context,
+	userID int64,
+	accountIDs []int64,
+) ([]*service.Account, error) {
+	ids := uniquePositiveIDs(accountIDs)
+	if userID <= 0 || len(ids) == 0 {
+		return []*service.Account{}, nil
+	}
+	accounts, err := r.visibleAccountsQuery(userID, service.VisibleAccountFilter{}).
+		Where(dbaccount.IDIn(ids...)).
+		Order(dbaccount.ByID()).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.accountsToService(ctx, accounts), nil
+}
+
+// ListVisibleAccountGroups 返回该用户可见账号实际所属的分组去重集合。
+//
+// 只从已授权账号的 account_groups 派生，不读取全局分组目录，也不混用用户 API Key
+// 的可用分组。分组顺序按 id 升序，便于前端稳定渲染。
+func (r *userVisibleAccountRepository) ListVisibleAccountGroups(
+	ctx context.Context,
+	userID int64,
+) ([]service.VisibleAccountGroup, error) {
+	if userID <= 0 {
+		return []service.VisibleAccountGroup{}, nil
+	}
+	visible, err := r.visibleAccountsQuery(userID, service.VisibleAccountFilter{}).
+		Select(dbaccount.FieldID).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accountIDs := make([]int64, 0, len(visible))
+	for _, account := range visible {
+		accountIDs = append(accountIDs, account.ID)
+	}
+	if len(accountIDs) == 0 {
+		return []service.VisibleAccountGroup{}, nil
+	}
+	entries, err := r.client.AccountGroup.Query().
+		Where(dbaccountgroup.AccountIDIn(accountIDs...)).
+		Select(dbaccountgroup.FieldGroupID).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groupIDs := make([]int64, 0, len(entries))
+	for _, entry := range entries {
+		groupIDs = append(groupIDs, entry.GroupID)
+	}
+	groupIDs = uniquePositiveIDs(groupIDs)
+	if len(groupIDs) == 0 {
+		return []service.VisibleAccountGroup{}, nil
+	}
+	groups, err := r.client.Group.Query().
+		Where(dbgroup.IDIn(groupIDs...), dbgroup.DeletedAtIsNil()).
+		Order(dbgroup.ByID()).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.VisibleAccountGroup, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, service.VisibleAccountGroup{
+			ID:               group.ID,
+			Name:             group.Name,
+			Platform:         group.Platform,
+			SubscriptionType: group.SubscriptionType,
+		})
+	}
+	return out, nil
+}
+
+// GetVisibleAccount 返回单个可见账号；不可见（未分配／已删除／资格关闭）时返回 (nil, nil)。
+//
+// 注意：手动停用（disabled/inactive）不再使账号不可见——管理员已授权即应看到停用状态。
 func (r *userVisibleAccountRepository) GetVisibleAccount(
 	ctx context.Context,
 	userID, accountID int64,
@@ -406,23 +489,101 @@ func (r *userVisibleAccountRepository) GetVisibleAccount(
 		}
 		return nil, err
 	}
-	return accountEntityToService(account), nil
+	out := r.accountsToService(ctx, []*dbent.Account{account})
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out[0], nil
+}
+
+// accountsToService 把 ent 账号投影为 service 账号并附加所属分组摘要。
+//
+// 分组通过 account_groups 一次批量加载（不是逐账号 N+1）；加载失败时保持
+// 返回账号但分组为空——列表的主体字段不应因为分组联查失败而整页报错。
+func (r *userVisibleAccountRepository) accountsToService(
+	ctx context.Context,
+	accounts []*dbent.Account,
+) []*service.Account {
+	out := make([]*service.Account, 0, len(accounts))
+	if len(accounts) == 0 {
+		return out
+	}
+	ids := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		out = append(out, accountEntityToService(account))
+		ids = append(ids, account.ID)
+	}
+	groupsByAccount, err := r.loadVisibleGroupsByAccount(ctx, ids)
+	if err != nil {
+		return out
+	}
+	for _, account := range out {
+		if groups, ok := groupsByAccount[account.ID]; ok {
+			account.Groups = groups
+		}
+	}
+	return out
+}
+
+// loadVisibleGroupsByAccount 一次查询 account_groups 与 groups，返回按账号归并的分组。
+func (r *userVisibleAccountRepository) loadVisibleGroupsByAccount(
+	ctx context.Context,
+	accountIDs []int64,
+) (map[int64][]*service.Group, error) {
+	out := make(map[int64][]*service.Group)
+	ids := uniquePositiveIDs(accountIDs)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	entries, err := r.client.AccountGroup.Query().
+		Where(dbaccountgroup.AccountIDIn(ids...)).
+		Order(dbaccountgroup.ByAccountID(), dbaccountgroup.ByPriority()).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return out, nil
+	}
+	groupIDs := make([]int64, 0, len(entries))
+	for _, entry := range entries {
+		groupIDs = append(groupIDs, entry.GroupID)
+	}
+	groups, err := r.client.Group.Query().
+		Where(dbgroup.IDIn(uniquePositiveIDs(groupIDs)...), dbgroup.DeletedAtIsNil()).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groupMap := make(map[int64]*service.Group, len(groups))
+	for _, group := range groups {
+		groupMap[group.ID] = groupEntityToService(group)
+	}
+	for _, entry := range entries {
+		if group := groupMap[entry.GroupID]; group != nil {
+			out[entry.AccountID] = append(out[entry.AccountID], group)
+		}
+	}
+	return out, nil
 }
 
 // visibleAccountsQuery 构造「当前用户可见账号」的查询：
-// 账号未软删除且未被手动禁用 + 该用户能力已开启、未禁用且持有显式分配。
+// 账号未软删除 + 该用户能力已开启、未禁用且持有显式分配。
 //
-// search 只匹配对用户已公开的字段（数字账号 ID、平台、类型），
-// 不匹配管理员专有的账号名称，避免额外的信息探知通道。
+// 手动停用（disabled/inactive）不再排除：管理员已授权的账号即使被停用也保持可见，
+// 只是以停用状态展示。撤权、用户禁用、资格关闭与账号软删除仍然即时生效。
+//
+// search 匹配对用户已公开的字段（数字账号 ID、名称、平台、类型），全部在已授权
+// 集合内部执行，不会扩大或探测范围。
 func (r *userVisibleAccountRepository) visibleAccountsQuery(
 	userID int64,
 	filter service.VisibleAccountFilter,
 ) *dbent.AccountQuery {
 	query := r.client.Account.Query().Where(
 		dbaccount.DeletedAtIsNil(),
-		// 手动禁用判定必须与服务层同口径：大小写与首尾空白都不改变结论，
-		// 否则列表计数会与过滤后的内容不一致。
-		dbaccountNotManuallyDisabled(),
 		dbaccount.HasVisibleUsersWith(
 			dbuser.IDEQ(userID),
 			dbuser.DeletedAtIsNil(),
@@ -436,11 +597,18 @@ func (r *userVisibleAccountRepository) visibleAccountsQuery(
 	if filter.AccountType != "" {
 		query = query.Where(dbaccount.TypeEQ(filter.AccountType))
 	}
+	if filter.Status != "" {
+		query = query.Where(dbaccountStatusEquals(filter.Status))
+	}
+	if filter.GroupID > 0 {
+		query = query.Where(dbaccount.HasAccountGroupsWith(dbaccountgroup.GroupIDEQ(filter.GroupID)))
+	}
 	if filter.Search != "" {
 		if numeric, err := strconv.ParseInt(filter.Search, 10, 64); err == nil {
 			query = query.Where(dbaccount.IDEQ(numeric))
 		} else {
 			query = query.Where(dbaccount.Or(
+				dbaccount.NameContainsFold(filter.Search),
 				dbaccount.PlatformContainsFold(filter.Search),
 				dbaccount.TypeContainsFold(filter.Search),
 			))
@@ -449,18 +617,20 @@ func (r *userVisibleAccountRepository) visibleAccountsQuery(
 	return query
 }
 
-// dbaccountNotManuallyDisabled 在 SQL 层排除手动禁用账号：
-// LOWER(BTRIM(status, <与 Go strings.TrimSpace 同集合的空白>)) 不属于
-// {disabled, inactive}。
+// dbaccountStatusEquals 在 SQL 层做状态过滤：
+// LOWER(BTRIM(status, <与 Go strings.TrimSpace 同集合的空白>)) 与过滤值比较。
 //
-// 与 service.accountManuallyDisabled 必须严格同口径：计数的 SQL 与返回内容的 DTO
-// 过滤是两处实现，空白定义若不一致（例如 SQL 只裁空格、Go 还裁制表符），
-// 页面 total 就会把 DTO 过滤掉的账号算进去，出现「计数 1、列表为空」。
-// 反方向（SQL 裁得比 Go 少）不会造成计数不一致，但会把一个判为手动的账号继续
-// 展示给用户；因此这里取 Go 的完整空白集合。
+// 与展示脱敏使用的空白口径一致：大小写与首尾空白（含 NBSP、全角空格等）都不改变结论，
+// 否则同一状态的账号会因空白差异漏出列表。过滤值已由服务层归一为小写去空白。
 //
-// error／expired／限流等状态不在此列，保持可见。
-func dbaccountNotManuallyDisabled() dbpredicate.Account {
+// inactive 是归一化后的「停用」语义：历史库同时存在 disabled 与 inactive 两种写法，
+// 面向用户的筛选只暴露 inactive，因此 status=inactive 必须同时命中两者；
+// 其余状态保持精确等值匹配。
+func dbaccountStatusEquals(status string) dbpredicate.Account {
+	values := []string{status}
+	if status == domain.StatusInactive {
+		values = []string{domain.StatusInactive, domain.StatusDisabled}
+	}
 	return dbpredicate.Account(func(s *entsql.Selector) {
 		col := s.C(dbaccount.FieldStatus)
 		s.Where(entsql.P(func(b *entsql.Builder) {
@@ -468,11 +638,16 @@ func dbaccountNotManuallyDisabled() dbpredicate.Account {
 				WriteString(col).
 				WriteString(", ''), ").
 				WriteString(postgresTrimSpaceChars).
-				WriteString(")) NOT IN (").
-				Arg(domain.StatusDisabled).
-				WriteString(", ").
-				Arg(domain.StatusInactive).
-				WriteString(")")
+				WriteString("))")
+			if len(values) == 1 {
+				b.WriteString(" = ").Arg(values[0])
+				return
+			}
+			b.WriteString(" IN (")
+			b.Arg(values[0])
+			b.WriteString(", ")
+			b.Arg(values[1])
+			b.WriteString(")")
 		}))
 	})
 }

@@ -10,6 +10,16 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/account/__tests__/OpenAIQuotaResetCell.spark_shadow.spec.ts \
 	src/components/keys/__tests__/BulkEditKeysModal.spec.ts \
 	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
+	src/components/admin/user/__tests__/UserAssignedAccountsModal.spec.ts \
+	src/components/admin/account/__tests__/AccountTableFilters.spec.ts \
+	src/components/account/__tests__/AccountTable.spec.ts \
+	src/components/account/__tests__/AccountCapacityCell.readonly.spec.ts \
+	src/components/account/__tests__/AccountUsageCell.readonly.spec.ts \
+	src/components/account/__tests__/AccountStatusIndicator.readonly.spec.ts \
+	src/components/account/__tests__/AccountStatsModal.readonly.spec.ts \
+	src/views/user/__tests__/AssignedAccountsView.spec.ts \
+	src/router/__tests__/assignedAccountsAccess.spec.ts \
+	src/components/layout/__tests__/AppSidebar.assignedAccounts.spec.ts \
 	src/views/user/__tests__/KeysView.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \

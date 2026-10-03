@@ -93,10 +93,11 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
 import GroupBadge from "@/components/common/GroupBadge.vue";
-import type { Group } from "@/types";
+import type { AccountCellGroup } from "./accountCellTypes";
 
 interface Props {
-  groups: Group[] | null | undefined;
+  // 安全子集：管理端完整 Group[] 与用户只读分组摘要都可传入。
+  groups: AccountCellGroup[] | null | undefined;
   maxDisplay?: number;
 }
 

@@ -4,14 +4,25 @@ import { flushPromises, mount } from "@vue/test-utils";
 import type { AssignedAccount } from "@/api/assignedAccounts";
 import AssignedAccountsView from "../AssignedAccountsView.vue";
 
-const { listAccounts, getAccount, showError, refreshUser, routerReplace } =
-  vi.hoisted(() => ({
-    listAccounts: vi.fn(),
-    getAccount: vi.fn(),
-    showError: vi.fn(),
-    refreshUser: vi.fn(),
-    routerReplace: vi.fn(),
-  }));
+const {
+  listAccounts,
+  getAccount,
+  getGroups,
+  getRuntime,
+  getStats,
+  showError,
+  refreshUser,
+  routerReplace,
+} = vi.hoisted(() => ({
+  listAccounts: vi.fn(),
+  getAccount: vi.fn(),
+  getGroups: vi.fn(),
+  getRuntime: vi.fn(),
+  getStats: vi.fn(),
+  showError: vi.fn(),
+  refreshUser: vi.fn(),
+  routerReplace: vi.fn(),
+}));
 
 // 保留真实的 403 判定（isAssignedAccountsAccessDenied），只替换网络调用。
 vi.mock("@/api/assignedAccounts", async () => {
@@ -23,6 +34,9 @@ vi.mock("@/api/assignedAccounts", async () => {
     default: {
       list: listAccounts,
       getById: getAccount,
+      getGroups,
+      getRuntime,
+      getStats,
     },
   };
 });
@@ -95,6 +109,25 @@ const mountView = () =>
             '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
         },
         DataTable: DataTableStub,
+        AccountStatsModal: true,
+        AccountStatusIndicator: true,
+        AccountUsageCell: true,
+        AccountCapacityCell: true,
+        AccountGroupsCell: true,
+        AccountTodayStatsCell: true,
+        PlatformTypeBadge: true,
+        SearchInput: {
+          props: ["modelValue"],
+          emits: ["update:modelValue"],
+          template:
+            '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+        },
+        Select: {
+          props: ["modelValue", "options"],
+          emits: ["update:modelValue", "change"],
+          template:
+            '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value); $emit(\'change\')"><option value=""></option><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
+        },
         BaseDialog: BaseDialogStub,
         Pagination: PaginationStub,
         EmptyState: {
@@ -138,7 +171,11 @@ function hostileAccount(
     email_masked: "a***@example.com",
     username_masked: "u***r",
     upstream_account_id_masked: "a***7",
-    name: "RAW-SENTINEL-NAME",
+    name: "已授权的账号名称",
+    status: "inactive",
+    schedulable: false,
+    concurrency: 3,
+    groups: [],
     credentials: { access_token: "SECRET-SENTINEL" },
     ...overrides,
   };
@@ -149,6 +186,20 @@ describe("AssignedAccountsView", () => {
     localStorage.clear();
     listAccounts.mockReset();
     getAccount.mockReset();
+    getGroups.mockReset().mockResolvedValue([]);
+    getRuntime.mockReset().mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [
+          String(id),
+          {
+            usage: null,
+            today_stats: null,
+            current_concurrency: null,
+          },
+        ]),
+      ),
+    );
+    getStats.mockReset();
     showError.mockReset();
     refreshUser.mockReset();
     routerReplace.mockReset();
@@ -167,11 +218,13 @@ describe("AssignedAccountsView", () => {
     vi.useRealTimers();
   });
 
-  it("renders only the masked identity fields returned by the dedicated API", async () => {
+  it("reuses account display and shows assigned names while identity stays masked", async () => {
     const wrapper = mountView();
     await flushPromises();
 
     expect(listAccounts).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("已授权的账号名称");
+    expect(wrapper.findComponent({ name: "AccountTable" }).exists()).toBe(true);
     expect(wrapper.get('[data-test="cell-email"]').text()).toBe(
       "a***@example.com",
     );
@@ -181,6 +234,82 @@ describe("AssignedAccountsView", () => {
     const html = wrapper.html();
     expect(html).not.toContain("RAW-SENTINEL-NAME");
     expect(html).not.toContain("SECRET-SENTINEL");
+    wrapper.unmount();
+  });
+
+  it("drops rows that lose authorization between list and runtime reads", async () => {
+    getRuntime.mockResolvedValueOnce({});
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="row-7"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="table-empty"]').exists()).toBe(true);
+    expect(routerReplace).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("does not repopulate the list after a groups request revokes access", async () => {
+    const slowList = createDeferred<ReturnType<typeof accountPage>>();
+    listAccounts.mockImplementationOnce(() => slowList.promise);
+    getGroups.mockRejectedValueOnce({
+      status: 403,
+      code: "ACCOUNT_VIEW_DISABLED",
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    slowList.resolve(accountPage([hostileAccount()]));
+    await flushPromises();
+
+    expect(routerReplace).toHaveBeenCalledWith("/dashboard");
+    expect(wrapper.find('[data-test="row-7"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("lets the reader retry groups and ignores a groups denial after unmount", async () => {
+    getGroups.mockRejectedValueOnce(new Error("network down"));
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find('[data-test="groups-error"]').exists()).toBe(true);
+
+    const slowGroups = createDeferred<[]>();
+    getGroups.mockImplementationOnce(() => slowGroups.promise);
+    await wrapper.get('[data-test="retry-groups"]').trigger("click");
+    wrapper.unmount();
+    slowGroups.reject({ status: 403, code: "ACCOUNT_VIEW_DISABLED" });
+    await flushPromises();
+    expect(routerReplace).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late stats denial after the stats panel has closed", async () => {
+    const slowStats = createDeferred<never>();
+    getStats.mockImplementationOnce(() => slowStats.promise);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.get('[data-test="view-stats"]').trigger("click");
+    const modal = wrapper.findComponent({ name: "AccountStatsModal" });
+    const request = modal
+      .props("statsFetcher")(modal.props("account"))
+      .catch(() => undefined);
+    modal.vm.$emit("close");
+    await flushPromises();
+    slowStats.reject({ status: 403, code: "ACCOUNT_VIEW_DISABLED" });
+    await request;
+    await flushPromises();
+    expect(routerReplace).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("offers only supported stored status filters", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const values = wrapper
+      .get('[data-test="filter-status"]')
+      .findAll("option")
+      .map((option) => option.element.value);
+    expect(values).toContain("inactive");
+    expect(values).toContain("expired");
+    expect(values).not.toContain("rate_limited");
+    expect(values).not.toContain("temp_unschedulable");
     wrapper.unmount();
   });
 
@@ -209,6 +338,8 @@ describe("AssignedAccountsView", () => {
       {
         platform: "openai",
         account_type: "upstream",
+        status: "",
+        group: "",
         search: "client",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -291,14 +422,16 @@ describe("AssignedAccountsView", () => {
 
     expect(getAccount).toHaveBeenCalledWith(7);
     expect(wrapper.find('[data-test="detail-dialog"]').exists()).toBe(true);
-    expect(wrapper.get('[data-test="detail-email"]').text()).toBe(
-      "b***@example.com",
-    );
+    expect(
+      wrapper
+        .get('[data-test="detail-fields"] [data-test="cell-email"]')
+        .text(),
+    ).toBe("b***@example.com");
     expect(wrapper.html()).not.toContain("RAW-SENTINEL-NAME");
     wrapper.unmount();
   });
 
-  it("collapses an unassigned or disabled account into one indistinguishable notice", async () => {
+  it("collapses an unassigned or deleted account into one indistinguishable notice", async () => {
     getAccount.mockRejectedValue({ status: 404, message: "not found" });
 
     const wrapper = mountView();
@@ -310,6 +443,7 @@ describe("AssignedAccountsView", () => {
       true,
     );
     expect(wrapper.find('[data-test="detail-fields"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="row-7"]').exists()).toBe(false);
     expect(routerReplace).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -353,9 +487,11 @@ describe("AssignedAccountsView", () => {
     await flushPromises();
 
     expect(getAccount).toHaveBeenLastCalledWith(7);
-    expect(wrapper.get('[data-test="detail-email"]').text()).toBe(
-      "c***d@example.com",
-    );
+    expect(
+      wrapper
+        .get('[data-test="detail-fields"] [data-test="cell-email"]')
+        .text(),
+    ).toBe("c***d@example.com");
     expect(wrapper.find('[data-test="detail-failed"]').exists()).toBe(false);
     wrapper.unmount();
   });
@@ -431,18 +567,22 @@ describe("AssignedAccountsView", () => {
     await wrapper.findAll('[data-test="view-detail"]')[1].trigger("click");
     await flushPromises();
 
-    expect(wrapper.get('[data-test="detail-email"]').text()).toBe(
-      "o***r@example.com",
-    );
+    expect(
+      wrapper
+        .get('[data-test="detail-fields"] [data-test="cell-email"]')
+        .text(),
+    ).toBe("o***r@example.com");
 
     slowDetail.resolve(
       hostileAccount({ id: 7, email_masked: "s***t@example.com" }),
     );
     await flushPromises();
 
-    expect(wrapper.get('[data-test="detail-email"]').text()).toBe(
-      "o***r@example.com",
-    );
+    expect(
+      wrapper
+        .get('[data-test="detail-fields"] [data-test="cell-email"]')
+        .text(),
+    ).toBe("o***r@example.com");
     wrapper.unmount();
   });
 
@@ -503,9 +643,11 @@ describe("AssignedAccountsView", () => {
     );
     await wrapper.findAll('[data-test="view-detail"]')[1].trigger("click");
     await flushPromises();
-    expect(wrapper.get('[data-test="detail-email"]').text()).toBe(
-      "o***r@example.com",
-    );
+    expect(
+      wrapper
+        .get('[data-test="detail-fields"] [data-test="cell-email"]')
+        .text(),
+    ).toBe("o***r@example.com");
 
     slowDetail.reject({ status: 403, code: "ACCOUNT_VIEW_DISABLED" });
     await flushPromises();
@@ -513,9 +655,11 @@ describe("AssignedAccountsView", () => {
     expect(routerReplace).not.toHaveBeenCalled();
     expect(refreshUser).not.toHaveBeenCalled();
     expect(wrapper.find('[data-test="detail-dialog"]').exists()).toBe(true);
-    expect(wrapper.get('[data-test="detail-email"]').text()).toBe(
-      "o***r@example.com",
-    );
+    expect(
+      wrapper
+        .get('[data-test="detail-fields"] [data-test="cell-email"]')
+        .text(),
+    ).toBe("o***r@example.com");
     wrapper.unmount();
   });
 });

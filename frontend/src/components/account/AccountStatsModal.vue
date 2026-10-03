@@ -550,7 +550,9 @@
           :title="t('usage.inboundEndpoint')"
         />
 
+        <!-- 只读模式隐藏原始上游地址分布图 -->
         <EndpointDistributionChart
+          v-if="!readOnly"
           :endpoint-stats="stats.upstream_endpoints || []"
           :loading="false"
           :title="t('usage.upstreamEndpoint')"
@@ -586,7 +588,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Chart as ChartJS,
@@ -607,6 +609,10 @@ import EndpointDistributionChart from "@/components/charts/EndpointDistributionC
 import Icon from "@/components/icons/Icon.vue";
 import { adminAPI } from "@/api/admin";
 import type { Account, AccountUsageStatsResponse } from "@/types";
+import type {
+  AccountStatsFetcher,
+  ReadonlyStatsAccount,
+} from "./accountCellTypes";
 
 ChartJS.register(
   CategoryScale,
@@ -621,10 +627,16 @@ ChartJS.register(
 
 const { t } = useI18n();
 
-const props = defineProps<{
-  show: boolean;
-  account: Account | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    show: boolean;
+    account: Account | ReadonlyStatsAccount | null;
+    /** 只读模式：必须注入 statsFetcher，缺失时 fail-closed。 */
+    readOnly?: boolean;
+    statsFetcher?: AccountStatsFetcher | null;
+  }>(),
+  { readOnly: false, statsFetcher: null },
+);
 
 const emit = defineEmits<{
   (e: "close"): void;
@@ -780,31 +792,61 @@ const lineChartOptions = computed(() => ({
   },
 }));
 
-// Load stats when modal opens
+// 请求代次：关闭弹窗、切换账号或卸载都会自增，使旧响应／旧 finally 失效，
+// 避免 A 关闭后重开 B 时 A 的迟到响应覆盖 B 的结果。
+let statsGeneration = 0;
+
+const invalidateStats = () => {
+  statsGeneration += 1;
+};
+
+// 打开或账号变更时重新加载；关闭时清空并使在途请求失效。
 watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      await loadStats();
+  () => [props.show, props.account?.id] as const,
+  ([show]) => {
+    invalidateStats();
+    const generation = statsGeneration;
+    if (show && props.account) {
+      void loadStats(generation);
     } else {
       stats.value = null;
+      loading.value = false;
     }
   },
 );
 
-const loadStats = async () => {
-  if (!props.account) return;
+const loadStats = async (generation: number) => {
+  const account = props.account;
+  if (!account) return;
 
   loading.value = true;
   try {
-    stats.value = await adminAPI.accounts.getStats(props.account.id, 30);
+    let result: AccountUsageStatsResponse | null = null;
+    if (props.readOnly) {
+      // 只读模式只消费注入读取器；缺失时 fail-closed，绝不回退管理端接口。
+      if (!props.statsFetcher) {
+        if (generation === statsGeneration) {
+          stats.value = null;
+          loading.value = false;
+        }
+        return;
+      }
+      result = await props.statsFetcher(account);
+    } else {
+      result = await adminAPI.accounts.getStats(account.id, 30);
+    }
+    if (generation !== statsGeneration) return; // 已被关闭／切号／卸载取代
+    stats.value = result;
   } catch (error) {
+    if (generation !== statsGeneration) return;
     console.error("Failed to load account stats:", error);
     stats.value = null;
   } finally {
-    loading.value = false;
+    if (generation === statsGeneration) loading.value = false;
   }
 };
+
+onBeforeUnmount(invalidateStats);
 
 const handleClose = () => {
   emit("close");

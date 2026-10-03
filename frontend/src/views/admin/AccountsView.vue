@@ -280,12 +280,11 @@
           ref="accountTableRef"
           class="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <DataTable
+          <AccountTable
             ref="dataTableRef"
             :columns="cols"
-            :data="accounts"
+            :data="tableRows"
             :loading="loading"
-            row-key="id"
             :server-side-sort="true"
             @sort="handleSort"
             default-sort-key="name"
@@ -294,6 +293,10 @@
             :estimate-row-height="156"
             :overscan="5"
             :virtualize-threshold="50"
+            :read-only="false"
+            :runtime-by-id="runtimeById"
+            :runtime-loading="todayStatsLoading"
+            :runtime-error="todayStatsError !== null"
           >
             <template #header-select>
               <input
@@ -410,9 +413,6 @@
                 </div>
               </div>
             </template>
-            <template #cell-capacity="{ row }">
-              <AccountCapacityCell :account="row" />
-            </template>
             <template #cell-status="{ row }">
               <div class="flex items-center gap-1.5">
                 <AccountStatusIndicator
@@ -442,19 +442,6 @@
                   :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']"
                 />
               </button>
-            </template>
-            <template #cell-today_stats="{ row }">
-              <AccountTodayStatsCell
-                :stats="todayStatsByAccountId[String(row.id)] ?? null"
-                :loading="todayStatsLoading"
-                :error="todayStatsError"
-              />
-            </template>
-            <template #cell-groups="{ row }">
-              <AccountGroupsCell
-                :groups="accountGroupsForRow(row)"
-                :max-display="4"
-              />
             </template>
             <template #header-usage="{ column }">
               <div class="flex items-center">
@@ -711,7 +698,7 @@
                 </button>
               </div>
             </template>
-          </DataTable>
+          </AccountTable>
         </div>
       </template>
       <template #pagination
@@ -887,7 +874,13 @@ import {
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
-import DataTable from "@/components/common/DataTable.vue";
+import AccountTable from "@/components/account/AccountTable.vue";
+import type DataTable from "@/components/common/DataTable.vue";
+import {
+  accountReadColumns,
+  type AccountRuntimeSnapshot,
+} from "@/components/account/accountDisplay";
+import type { Column } from "@/components/common/types";
 import HelpTooltip from "@/components/common/HelpTooltip.vue";
 import Pagination from "@/components/common/Pagination.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -910,9 +903,6 @@ import ScheduledTestsPanel from "@/components/admin/account/ScheduledTestsPanel.
 import type { SelectOption } from "@/components/common/Select.vue";
 import AccountStatusIndicator from "@/components/account/AccountStatusIndicator.vue";
 import AccountUsageCell from "@/components/account/AccountUsageCell.vue";
-import AccountTodayStatsCell from "@/components/account/AccountTodayStatsCell.vue";
-import AccountGroupsCell from "@/components/account/AccountGroupsCell.vue";
-import AccountCapacityCell from "@/components/account/AccountCapacityCell.vue";
 import UpstreamBillingRateCell from "@/components/account/UpstreamBillingRateCell.vue";
 import PlatformTypeBadge from "@/components/common/PlatformTypeBadge.vue";
 import Icon from "@/components/icons/Icon.vue";
@@ -1603,6 +1593,29 @@ const {
 } = useTableSelection<AccountListItem>({
   rows: accounts,
   getId: (account) => account.id,
+});
+
+// 共享表格（AccountTable）默认单元格所需的数据装配：
+// - 行携带分组对象：AccountListItem 只有 group_ids，默认分组单元格读 row.groups；
+// - runtimeById：默认今日统计单元格消费 today_stats（& 被动用量快照）。
+const tableRows = computed(() =>
+  accounts.value.map((account) => ({
+    ...account,
+    groups: accountGroupsForRow(account),
+  })),
+);
+
+const runtimeById = computed<Record<string, AccountRuntimeSnapshot>>(() => {
+  const map: Record<string, AccountRuntimeSnapshot> = {};
+  for (const account of accounts.value) {
+    const key = String(account.id);
+    map[key] = {
+      usage: usageBatchByAccountId.value[key] ?? null,
+      today_stats: todayStatsByAccountId.value[key] ?? null,
+      current_concurrency: account.current_concurrency ?? null,
+    };
+  }
+  return map;
 });
 
 const selectingAllResults = ref(false);
@@ -2377,49 +2390,34 @@ function getAntigravityTierClass(row: any): string {
 }
 
 // All available columns
-const allColumns = computed(() => {
-  const c = [
+const allColumns = computed<Column[]>(() => {
+  // 共有只读列（name/platform_type/status/capacity/today_stats/groups/usage）
+  // 统一来自 accountDisplay.accountReadColumns，管理页只按既有顺序组装并叠加
+  // admin 专属列，不再平行重复列定义。
+  const shared = new Map(accountReadColumns(t).map((col) => [col.key, col]));
+  const read = (key: string, overrides: Partial<Column> = {}): Column => ({
+    ...(shared.get(key) ?? { key, label: key }),
+    ...overrides,
+  });
+
+  const c: Column[] = [
     { key: "select", label: "", sortable: false },
-    { key: "name", label: t("admin.accounts.columns.name"), sortable: true },
+    read("name", { sortable: true }),
     { key: "id", label: t("admin.accounts.columns.id"), sortable: true },
-    {
-      key: "platform_type",
-      label: t("admin.accounts.columns.platformType"),
-      sortable: false,
-    },
-    {
-      key: "capacity",
-      label: t("admin.accounts.columns.capacity"),
-      sortable: false,
-    },
-    {
-      key: "status",
-      label: t("admin.accounts.columns.status"),
-      sortable: true,
-    },
+    read("platform_type", { sortable: false }),
+    read("capacity", { sortable: false }),
+    read("status", { sortable: true }),
     {
       key: "schedulable",
       label: t("admin.accounts.columns.schedulable"),
       sortable: true,
     },
-    {
-      key: "today_stats",
-      label: t("admin.accounts.columns.todayStats"),
-      sortable: false,
-    },
+    read("today_stats", { sortable: false }),
   ];
   if (!authStore.isSimpleMode) {
-    c.push({
-      key: "groups",
-      label: t("admin.accounts.columns.groups"),
-      sortable: false,
-    });
+    c.push(read("groups", { sortable: false }));
   }
-  c.push({
-    key: "usage",
-    label: t("admin.accounts.columns.usageWindows"),
-    sortable: false,
-  });
+  c.push(read("usage", { sortable: false }));
   c.push(
     { key: "proxy", label: t("admin.accounts.columns.proxy"), sortable: false },
     {

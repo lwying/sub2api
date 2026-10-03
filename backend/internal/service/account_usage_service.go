@@ -599,6 +599,26 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 		return nil, fmt.Errorf("passive usage only supported for Anthropic OAuth/SetupToken accounts")
 	}
 
+	info := s.buildPassiveUsageInfo(account)
+	// 添加窗口统计
+	s.addWindowStats(ctx, account, info)
+	if account.IsSyntheticUITest() {
+		applySyntheticWindowStats(info, account.Extra)
+	}
+
+	return info, nil
+}
+
+// buildPassiveUsageInfo 从已加载账号只读 Extra 构建被动用量（不含窗口统计）。
+//
+// 纯函数式：不查库、不外呼、不写回。窗口统计由调用方补齐——单账号走 addWindowStats，
+// 批量走 GetPassiveUsageBatch 的同窗口批量查询。这样单账号与批量两条路径对
+// 同一个账号会得到完全一致的 5h/7d 窗口与采样时间。
+func (s *AccountUsageService) buildPassiveUsageInfo(account *Account) *UsageInfo {
+	if account == nil {
+		return &UsageInfo{}
+	}
+
 	// 复用 estimateSetupTokenUsage 构建 5h 窗口（OAuth 和 SetupToken 逻辑一致）
 	info := s.estimateSetupTokenUsage(account)
 	info.Source = "passive"
@@ -618,13 +638,154 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 	// 构建 7d Fable 窗口（从被动采样的 7d_oi 响应头数据）
 	info.SevenDayFable = buildPassiveUsageWindow(account.Extra, "passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset")
 
-	// 添加窗口统计
-	s.addWindowStats(ctx, account, info)
-	if account.IsSyntheticUITest() {
-		applySyntheticWindowStats(info, account.Extra)
+	return info
+}
+
+// hasPassiveUsageFacts 判断已加载账号是否带有真实被动事实。
+//
+// estimateSetupTokenUsage 在没有 session 窗口时也会合成一个 FiveHour{Utilization:0}，
+// 那是「无采样」而不是「5h 用量为 0」；5h 事实只以真实的 SessionWindowEnd 为准。
+// 7d / Sonnet / Fable 窗口由 Extra 采样值构建，非 nil 即为事实。
+func hasPassiveUsageFacts(account *Account, info *UsageInfo) bool {
+	if info == nil {
+		return false
+	}
+	if account != nil && account.SessionWindowEnd != nil && info.FiveHour != nil {
+		return true
+	}
+	return info.SevenDay != nil || info.SevenDaySonnet != nil || info.SevenDayFable != nil
+}
+
+// sanitizePassiveUsageForRead 为「浏览器只读展示」收敛被动快照：
+//   - 无真实 session 窗口时去掉 estimate 合成的空 5h，避免未采样的 Anthropic 账号
+//     显示成 5h=0；只有 7d/Sonnet/Fable 事实时不再带假的 5h 窗口；
+//   - 去掉后没有任何被动事实时返回 nil（未知），让调用方按「暂无可用数据」处理。
+//
+// 只作用于只读展示路径；管理员历史行为（GetPassiveUsage 原样返回合成窗口）不变。
+func sanitizePassiveUsageForRead(account *Account, info *UsageInfo) *UsageInfo {
+	if info == nil {
+		return nil
+	}
+	if account == nil || account.SessionWindowEnd == nil {
+		info.FiveHour = nil
+	}
+	if !hasPassiveUsageFacts(account, info) {
+		return nil
+	}
+	return info
+}
+
+// GetPassiveUsageBatch 批量构建被动用量快照，复用调用方已加载的账号，不逐账号回表。
+//
+// 与 GetPassiveUsage 的差别只在取数路径，语义逐项一致：
+//   - 账号对象由调用方一次性加载传入，不再逐个 GetByID；
+//   - 窗口统计按「窗口起点」分组，每组走一次 GetAccountWindowStatsBatch；
+//     批量读取不可用或整体失败时才退回单账号查询（与 GetTodayStatsBatch 同一回退口径）。
+//
+// 仍然只读 Extra 与数据库，绝不发起外部查询、Token 刷新或任何写操作。
+// 非 Anthropic OAuth/SetupToken 账号不出现在结果里。
+func (s *AccountUsageService) GetPassiveUsageBatch(ctx context.Context, accounts []*Account) (map[int64]*UsageInfo, error) {
+	result := make(map[int64]*UsageInfo)
+	if s == nil || len(accounts) == 0 {
+		return result, nil
 	}
 
-	return info, nil
+	type pendingStats struct {
+		id    int64
+		info  *UsageInfo
+		start time.Time
+	}
+	todo := make([]pendingStats, 0, len(accounts))
+	for _, account := range accounts {
+		if !supportsAnthropicPassiveUsage(account) {
+			continue
+		}
+		info := s.buildPassiveUsageInfo(account)
+		if account.IsSyntheticUITest() {
+			applySyntheticWindowStats(info, account.Extra)
+		}
+		// 丢弃 estimateSetupTokenUsage 在无真实 session 窗口时合成的空 5h，
+		// 没有任何被动事实的账号整体不返回（未知，而不是 5h=0）。
+		info = sanitizePassiveUsageForRead(account, info)
+		if info == nil {
+			continue
+		}
+		if info.FiveHour == nil {
+			// 只有 7d / Sonnet / Fable 事实：addWindowStats 只服务 5h 窗口，
+			// 这里没有可补的窗口统计，直接返回，避免无谓查询。
+			result[account.ID] = info
+			continue
+		}
+		// 未过期缓存直接复用，避免重复查询。
+		if cached, ok := s.cache.windowStatsCache.Load(account.ID); ok {
+			if cache, ok := cached.(*windowStatsCache); ok && time.Since(cache.timestamp) < windowStatsCacheTTL {
+				info.FiveHour.WindowStats = cache.stats
+				result[account.ID] = info
+				continue
+			}
+		}
+		todo = append(todo, pendingStats{id: account.ID, info: info, start: account.GetCurrentWindowStartTime()})
+	}
+	if len(todo) == 0 {
+		return result, nil
+	}
+
+	// 按窗口起点分组：同一小时的账号共享一次批量查询。
+	groups := make(map[time.Time][]pendingStats)
+	order := make([]time.Time, 0, len(todo))
+	for _, item := range todo {
+		if _, seen := groups[item.start]; !seen {
+			order = append(order, item.start)
+		}
+		groups[item.start] = append(groups[item.start], item)
+	}
+
+	batchReader, batchOK := s.usageLogRepo.(accountWindowStatsBatchReader)
+	for _, start := range order {
+		items := groups[start]
+		ids := make([]int64, 0, len(items))
+		for _, item := range items {
+			ids = append(ids, item.id)
+		}
+
+		batchSucceeded := false
+		var statsByAccount map[int64]*usagestats.AccountStats
+		if batchOK {
+			stats, err := batchReader.GetAccountWindowStatsBatch(ctx, ids, start)
+			if err == nil {
+				statsByAccount = stats
+				batchSucceeded = true
+			}
+		}
+
+		for _, item := range items {
+			var stats *usagestats.AccountStats
+			if batchSucceeded {
+				// 批量成功时，缺失行即「本窗口无使用」，按零值统计（与 GetTodayStatsBatch 同口径），
+				// 不再逐账号回表。
+				stats = statsByAccount[item.id]
+			} else {
+				single, err := s.usageLogRepo.GetAccountWindowStats(ctx, item.id, start)
+				if err != nil {
+					log.Printf("Failed to get window stats for account %d: %v", item.id, err)
+					result[item.id] = item.info
+					continue
+				}
+				stats = single
+			}
+
+			windowStats := windowStatsFromAccountStats(stats)
+			s.cache.windowStatsCache.Store(item.id, &windowStatsCache{
+				stats:     windowStats,
+				timestamp: time.Now(),
+			})
+			if item.info.FiveHour != nil {
+				item.info.FiveHour.WindowStats = windowStats
+			}
+			result[item.id] = item.info
+		}
+	}
+	return result, nil
 }
 
 func applySyntheticWindowStats(info *UsageInfo, extra map[string]any) {

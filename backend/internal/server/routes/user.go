@@ -82,13 +82,17 @@ func RegisterUserRoutes(
 			keys.DELETE("/:id", h.APIKey.Delete)
 		}
 
-		// 账号只读查看（票据 05）：仅显示管理员逐用户分配且当前未手动禁用的账号。
+		// 账号只读查看（票据 05）：仅显示管理员逐用户分配的账号（含手动停用，按状态展示）。
 		// 这是与 /admin/accounts 完全独立的只读入口，服务端对象级鉴权；
-		// 菜单隐藏不是安全边界。
+		// 菜单隐藏不是安全边界。静态路由必须注册在 /:id 之前。
 		accounts := authenticated.Group("/accounts")
 		{
 			accounts.GET("", h.VisibleAccount.List)
+			accounts.GET("/groups", h.VisibleAccount.Groups)
+			accounts.POST("/runtime/batch", h.VisibleAccount.RuntimeBatch)
 			accounts.GET("/:id", h.VisibleAccount.Get)
+			accounts.GET("/:id/stats", h.VisibleAccount.Stats)
+			accounts.GET("/:id/usage", h.VisibleAccount.Usage)
 		}
 
 		// 用户可用分组（非管理员接口）

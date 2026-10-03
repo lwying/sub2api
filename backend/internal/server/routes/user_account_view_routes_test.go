@@ -188,6 +188,52 @@ func TestUserAccountRoutesRequireJWTAndReflectAdminAssignment(t *testing.T) {
 	require.True(t, repo.enabled[1])
 }
 
+// TestUserAccountViewExtendedRoutesAreJWTGuardedAndResolvable 确认新增的只读端点
+// （groups / runtime/batch / :id/stats / :id/usage）都注册在用户 JWT 之下，
+// 且静态路径 /groups 不会被 /:id 通配符误捕获。未认证一律 401。
+func TestUserAccountViewExtendedRoutesAreJWTGuardedAndResolvable(t *testing.T) {
+	router, repo := newAccountViewTestRouter(t)
+
+	extended := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/accounts/groups", ""},
+		{http.MethodPost, "/api/v1/accounts/runtime/batch", `{"account_ids":[1]}`},
+		{http.MethodGet, "/api/v1/accounts/1/stats", ""},
+		{http.MethodGet, "/api/v1/accounts/1/usage", ""},
+	}
+	for _, route := range extended {
+		recorder := doRouteRequest(router, route.method, route.path, route.body, "")
+		require.Equal(t, http.StatusUnauthorized, recorder.Code, "%s %s must require JWT", route.method, route.path)
+	}
+
+	// 打开能力后：集合类端点返回空结果；详情类端点因该账号未分配而 404
+	// （不是 500/401，证明路由已注册且鉴权已通过）。
+	enabled := true
+	require.NoError(t, repo.UpdateAccountView(context.Background(), 1, &enabled, &[]int64{}, nil))
+	for _, route := range []struct {
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{http.MethodGet, "/api/v1/accounts/groups", "", http.StatusOK},
+		{http.MethodPost, "/api/v1/accounts/runtime/batch", `{"account_ids":[1]}`, http.StatusOK},
+		{http.MethodGet, "/api/v1/accounts/1/stats", "", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/accounts/1/usage", "", http.StatusNotFound},
+	} {
+		recorder := doRouteRequest(router, route.method, route.path, route.body, "Bearer user-token")
+		require.Equal(t, route.wantStatus, recorder.Code, "%s %s status", route.method, route.path)
+		require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	}
+
+	// /groups 是静态路由，必须命中分组目录而不是被 /:id 当成非法 id（400/404）。
+	recorder := doRouteRequest(router, http.MethodGet, "/api/v1/accounts/groups", "", "Bearer user-token")
+	require.Contains(t, recorder.Body.String(), `"data":[]`)
+}
+
 func TestAccountViewAdminRoutesRequireAdminAuthentication(t *testing.T) {
 	router, repo := newAccountViewTestRouter(t)
 

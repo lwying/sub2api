@@ -26,7 +26,9 @@
       v-if="showWindowCost"
       :color-class="windowCostClass"
       :tooltip="windowCostTooltip"
-      :current="'$' + formatCost(currentWindowCost)"
+      :current="
+        readOnly && !windowCostKnown ? '-' : '$' + formatCost(currentWindowCost)
+      "
       :max="'$' + formatCost(account.window_cost_limit)"
     >
       <svg
@@ -49,7 +51,7 @@
       v-if="showSessionLimit"
       :color-class="sessionLimitClass"
       :tooltip="sessionLimitTooltip"
-      :current="activeSessions"
+      :current="readOnly && !activeSessionsKnown ? '-' : activeSessions"
       :max="account.max_sessions!"
     >
       <svg
@@ -72,7 +74,7 @@
       v-if="showRpmLimit"
       :color-class="rpmClass"
       :tooltip="rpmTooltip"
-      :current="currentRPM"
+      :current="readOnly && !currentRpmKnown ? '-' : currentRPM"
       :max="account.base_rpm!"
       :suffix="rpmStrategyTag"
     >
@@ -115,27 +117,37 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import type { Account } from "@/types";
+import type { ReadonlyCapacityAccount } from "./accountCellTypes";
 import CapacityBadge from "@/components/account/CapacityBadge.vue";
 import QuotaBadge from "@/components/account/QuotaBadge.vue";
 
-const props = defineProps<{
-  account: Account;
-}>();
+const props = withDefaults(
+  defineProps<{
+    // 结构窄类型：管理端完整 Account 与用户只读容量投影都可传入。
+    account: ReadonlyCapacityAccount;
+    // 只读模式：并发读数缺失时明确显示不可用，而不是伪造为 0。
+    readOnly?: boolean;
+  }>(),
+  { readOnly: false },
+);
 
 const { t } = useI18n();
 
 // ====== 并发 ======
-const currentConcurrency = computed(
-  () => props.account.current_concurrency || 0,
-);
+const currentConcurrency = computed<string | number>(() => {
+  const value = props.account.current_concurrency;
+  if (value === undefined || value === null) {
+    return props.readOnly ? "-" : 0;
+  }
+  return value;
+});
 
 const concurrencyClass = computed(() => {
   const current = currentConcurrency.value;
   const max = props.account.concurrency;
-  if (current >= max)
+  if (typeof current === "number" && current >= max)
     return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
-  if (current > 0)
+  if (typeof current === "number" && current > 0)
     return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400";
   return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
 });
@@ -154,12 +166,18 @@ const showWindowCost = computed(
     props.account.window_cost_limit > 0,
 );
 
+// 只读投影不含实时读数：字段缺失即「未知」，不用 0 冒充已知（只读模式显示 -）。
+const windowCostKnown = computed(
+  () => props.account.current_window_cost != null,
+);
 const currentWindowCost = computed(
   () => props.account.current_window_cost ?? 0,
 );
 
 const windowCostClass = computed(() => {
   if (!showWindowCost.value) return "";
+  if (props.readOnly && !windowCostKnown.value)
+    return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
   const current = currentWindowCost.value;
   const limit = props.account.window_cost_limit || 0;
   const reserve = props.account.window_cost_sticky_reserve || 10;
@@ -174,6 +192,7 @@ const windowCostClass = computed(() => {
 
 const windowCostTooltip = computed(() => {
   if (!showWindowCost.value) return "";
+  if (props.readOnly && !windowCostKnown.value) return "";
   const current = currentWindowCost.value;
   const limit = props.account.window_cost_limit || 0;
   const reserve = props.account.window_cost_sticky_reserve || 10;
@@ -192,10 +211,16 @@ const showSessionLimit = computed(
     props.account.max_sessions > 0,
 );
 
+// 只读投影不含实时会话数：缺失显示 -，不补 0。
+const activeSessionsKnown = computed(
+  () => props.account.active_sessions != null,
+);
 const activeSessions = computed(() => props.account.active_sessions ?? 0);
 
 const sessionLimitClass = computed(() => {
   if (!showSessionLimit.value) return "";
+  if (props.readOnly && !activeSessionsKnown.value)
+    return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
   const current = activeSessions.value;
   const max = props.account.max_sessions || 0;
   if (current >= max)
@@ -207,6 +232,7 @@ const sessionLimitClass = computed(() => {
 
 const sessionLimitTooltip = computed(() => {
   if (!showSessionLimit.value) return "";
+  if (props.readOnly && !activeSessionsKnown.value) return "";
   const current = activeSessions.value;
   const max = props.account.max_sessions || 0;
   const idle = props.account.session_idle_timeout_minutes || 5;
@@ -223,6 +249,8 @@ const showRpmLimit = computed(
     props.account.base_rpm > 0,
 );
 
+// 只读投影不含实时 RPM：缺失显示 -，不补 0。
+const currentRpmKnown = computed(() => props.account.current_rpm != null);
 const currentRPM = computed(() => props.account.current_rpm ?? 0);
 const rpmStrategy = computed(() => props.account.rpm_strategy || "tiered");
 const rpmStrategyTag = computed(() =>
@@ -239,6 +267,8 @@ const rpmBuffer = computed(() => {
 
 const rpmClass = computed(() => {
   if (!showRpmLimit.value) return "";
+  if (props.readOnly && !currentRpmKnown.value)
+    return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
   const current = currentRPM.value;
   const base = props.account.base_rpm ?? 0;
   const buffer = rpmBuffer.value;
@@ -258,6 +288,7 @@ const rpmClass = computed(() => {
 
 const rpmTooltip = computed(() => {
   if (!showRpmLimit.value) return "";
+  if (props.readOnly && !currentRpmKnown.value) return "";
   const current = currentRPM.value;
   const base = props.account.base_rpm ?? 0;
   const buffer = rpmBuffer.value;

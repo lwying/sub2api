@@ -249,8 +249,8 @@ func TestUserVisibleAccountsGrantedByIsAccountabilityOnly(t *testing.T) {
 }
 
 // 可见范围的 fixture 验收（走真实仓储 ListVisibleAccounts／GetVisibleAccount）：
-// 手动禁用（inactive／disabled，含大小写与首尾空白等兼容写法）与软删除不可见，
-// 非手动的 error／expired／限流／临时不可调度必须保持可见；列表计数与按 ID 详情同口径；
+// 手动停用（inactive／disabled，含大小写与首尾空白等兼容写法）仍可见，软删除不可见；
+// error／expired／限流／临时不可调度同样保持可见；列表计数与按 ID 详情同口径；
 // 直接沿用管理员调度口径会错误隐藏 error／expired。
 func TestUserVisibleAccountScopeFixtures(t *testing.T) {
 	ctx := context.Background()
@@ -322,19 +322,23 @@ WHERE id = $1
 
 	visible := visibleAccountIDsViaRepository(t, ctx, repo, viewer.ID)
 	require.Equal(t,
-		sortedIDs(active.ID, failed.ID, expired.ID, rateLimited.ID, tempUnschedulable.ID),
+		sortedIDs(active.ID, inactive.ID, disabled.ID, mixedCaseInactive.ID, upperDisabled.ID,
+			failed.ID, expired.ID, rateLimited.ID, tempUnschedulable.ID),
 		visible,
-		"可见范围应排除手动禁用与软删除账号，但保留 error／expired／限流／临时不可调度")
+		"可见范围只排除软删除或未授权账号；手动停用与非调度状态仍应可见")
 
-	// 列表与详情同一可见范围：隐藏账号连按 ID 查询也不可见（猜 ID 不泄露存在性）。
-	for _, hidden := range []*service.Account{inactive, disabled, mixedCaseInactive, upperDisabled, softDeleted, unassigned} {
+	// 列表与详情同一可见范围：删除或未授权账号连按 ID 查询也不可见。
+	for _, hidden := range []*service.Account{softDeleted, unassigned} {
 		account, err := repo.GetVisibleAccount(ctx, viewer.ID, hidden.ID)
 		require.NoError(t, err, "GetVisibleAccount(hidden)")
 		require.Nil(t, account, "不可见账号 %d (%s) 不得按 ID 读取", hidden.ID, hidden.Status)
 	}
 
-	// 非手动状态账号可以通过详情读取。
-	for _, expected := range []*service.Account{active, failed, expired, rateLimited, tempUnschedulable} {
+	// 手动停用、错误、过期或限流都不等于撤销查看授权。
+	for _, expected := range []*service.Account{
+		active, inactive, disabled, mixedCaseInactive, upperDisabled,
+		failed, expired, rateLimited, tempUnschedulable,
+	} {
 		account, err := repo.GetVisibleAccount(ctx, viewer.ID, expected.ID)
 		require.NoError(t, err, "GetVisibleAccount(visible)")
 		require.NotNil(t, account, "可见账号 %d 必须能按 ID 读取", expected.ID)

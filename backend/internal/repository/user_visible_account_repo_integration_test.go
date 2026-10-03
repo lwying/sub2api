@@ -20,8 +20,8 @@ import (
 )
 
 // TestUserVisibleAccountRepository_RealQuery 在真实 PostgreSQL 上验证普通用户
-// 只读账号视图的可见范围：能力开关、显式分配、账号状态（只有手动禁用才隐藏）、
-// 软删除与分页计数必须在同一 SQL 范围内。
+// 只读账号视图的可见范围：能力开关、显式分配、账号状态（已授权即保持可见，
+// 含手动停用）、软删除与分页计数必须在同一 SQL 范围内。
 func TestUserVisibleAccountRepository_RealQuery(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -58,23 +58,26 @@ func TestUserVisibleAccountRepository_RealQuery(t *testing.T) {
 	_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1`, softDeleted.ID)
 	require.NoError(t, err)
 
-	// 1) 只有「非手动禁用且未软删除」的账号可见。
+	// 1) 已授权账号保持可见（含手动停用）；只有软删除账号消失。
 	accounts, total, err := repo.ListVisibleAccounts(ctx, userA.ID, service.VisibleAccountFilter{Page: 1, PageSize: 50})
 	require.NoError(t, err)
 	visibleIDs := make([]int64, 0, len(accounts))
 	for _, account := range accounts {
 		visibleIDs = append(visibleIDs, account.ID)
 	}
-	require.ElementsMatch(t, []int64{active.ID, reserved.ID, failed.ID, expired.ID}, visibleIDs,
-		"手动禁用/软删除账号必须隐藏，error/expired 必须保留")
+	require.ElementsMatch(t, []int64{active.ID, reserved.ID, failed.ID, expired.ID, manualDisabled.ID, inactive.ID, oddCasing.ID}, visibleIDs,
+		"已授权账号（含手动停用）必须保持可见，软删除账号必须隐藏")
 	require.EqualValues(t, len(visibleIDs), total, "计数必须与过滤后的内容同范围")
 
-	// 2) 详情与列表同范围；不可见账号返回 (nil, nil)。
-	for _, id := range []int64{manualDisabled.ID, inactive.ID, oddCasing.ID, softDeleted.ID} {
+	// 2) 详情与列表同范围；软删除账号返回 (nil, nil)，停用账号仍可读且状态原样。
+	for _, id := range []int64{manualDisabled.ID, inactive.ID, oddCasing.ID} {
 		account, err := repo.GetVisibleAccount(ctx, userA.ID, id)
 		require.NoError(t, err)
-		require.Nil(t, account, "account %d must be invisible", id)
+		require.NotNil(t, account, "account %d must stay visible", id)
 	}
+	account, err := repo.GetVisibleAccount(ctx, userA.ID, softDeleted.ID)
+	require.NoError(t, err)
+	require.Nil(t, account, "soft-deleted account must be invisible")
 	detail, err := repo.GetVisibleAccount(ctx, userA.ID, failed.ID)
 	require.NoError(t, err)
 	require.NotNil(t, detail)
@@ -84,7 +87,7 @@ func TestUserVisibleAccountRepository_RealQuery(t *testing.T) {
 	page, total, err := repo.ListVisibleAccounts(ctx, userA.ID, service.VisibleAccountFilter{Page: 2, PageSize: 2})
 	require.NoError(t, err)
 	require.Len(t, page, 2)
-	require.EqualValues(t, 4, total)
+	require.EqualValues(t, 7, total)
 
 	// 4) 跨用户隔离：能力开启但未分配的用户什么都看不到。
 	require.NoError(t, repo.UpdateAccountView(ctx, userB.ID, &enabled, nil, nil))
@@ -92,7 +95,7 @@ func TestUserVisibleAccountRepository_RealQuery(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, accounts)
 	require.EqualValues(t, 0, total)
-	account, err := repo.GetVisibleAccount(ctx, userB.ID, active.ID)
+	account, err = repo.GetVisibleAccount(ctx, userB.ID, active.ID)
 	require.NoError(t, err)
 	require.Nil(t, account)
 
@@ -129,7 +132,7 @@ func TestUserVisibleAccountRepository_RealQuery(t *testing.T) {
 	require.NoError(t, repo.UpdateAccountView(ctx, userA.ID, &enabled, nil, nil))
 	accounts, _, err = repo.ListVisibleAccounts(ctx, userA.ID, service.VisibleAccountFilter{Page: 1, PageSize: 50})
 	require.NoError(t, err)
-	require.Len(t, accounts, 4)
+	require.Len(t, accounts, 7)
 
 	// 7) 撤销（清空分配）后立即不可见，能力开关不受影响。
 	empty := []int64{}
@@ -163,10 +166,11 @@ func TestUserVisibleAccountRepository_TypeFilterKeepsCountAndScope(t *testing.T)
 	enabled := true
 	ids := []int64{want.ID, other.ID, disabled.ID}
 	require.NoError(t, repo.UpdateAccountView(ctx, userA.ID, &enabled, &ids, nil))
+	// 停用账号不再隐藏：type=upstream 命中 want 与 disabled 两个，分页 size=1 仍返回最新的 total。
 	filter := service.VisibleAccountFilter{Platform: service.PlatformOpenAI, AccountType: service.AccountTypeUpstream, Page: 1, PageSize: 1}
 	rows, total, err := repo.ListVisibleAccounts(ctx, userA.ID, filter)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, total)
+	require.EqualValues(t, 2, total)
 	require.Len(t, rows, 1)
 	require.Equal(t, want.ID, rows[0].ID)
 
@@ -698,7 +702,7 @@ func TestUserVisibleAccountRepository_UpdateReportsStaleAccountIDs(t *testing.T)
 // service.accountManuallyDisabled 同口径：制表符、换行、NBSP、全角空格等空白变体
 // 必须两侧一致。否则 SQL 计数会把 DTO 过滤掉的账号算进分页 total（页面数量与内容
 // 不一致），或反过来让 service 判定为可见而 SQL 已隐藏。
-func TestUserVisibleAccountRepository_StatusTrimMatchesServiceVisibility(t *testing.T) {
+func TestUserVisibleAccountRepository_DisabledStatusesStayVisible(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUserVisibleAccountRepository(client)
@@ -706,29 +710,25 @@ func TestUserVisibleAccountRepository_StatusTrimMatchesServiceVisibility(t *test
 
 	user := mustCreateUserWithUniqueEmail(t, client, "")
 
-	cases := []struct {
-		status  string
-		visible bool
-	}{
-		{status: service.StatusActive, visible: true},
-		{status: service.StatusError, visible: true},
-		{status: service.StatusExpired, visible: true},
-		{status: " disabled ", visible: false},
-		{status: "\tdisabled\t", visible: false},
-		{status: "\nInactive\r", visible: false},
-		{status: "\v\fDISABLED\v\f", visible: false},
-		{status: "\u00a0disabled", visible: false},
-		{status: "\u0085inactive", visible: false},
-		{status: "\u3000Disabled", visible: false},
-		{status: "\u1680disabled", visible: false},
-		// 零宽空格不是空白：Go 与 SQL 都必须保持可见，不得把它当成禁用变体。
-		{status: "\u200bdisabled", visible: true},
+	statuses := []string{
+		service.StatusActive,
+		service.StatusError,
+		service.StatusExpired,
+		" disabled ",
+		"\tdisabled\t",
+		"\nInactive\r",
+		"\v\fDISABLED\v\f",
+		"\u00a0disabled",
+		"\u0085inactive",
+		"\u3000Disabled",
+		"\u1680disabled",
+		"\u200bdisabled",
 	}
 
-	accountIDs := make([]int64, 0, len(cases))
-	for i, tc := range cases {
-		account := mustCreateAccount(t, client, &service.Account{Name: fmt.Sprintf("status-trim-%d", i)})
-		_, err := integrationDB.ExecContext(ctx, `UPDATE accounts SET status = $1 WHERE id = $2`, tc.status, account.ID)
+	accountIDs := make([]int64, 0, len(statuses))
+	for i, status := range statuses {
+		account := mustCreateAccount(t, client, &service.Account{Name: fmt.Sprintf("status-visible-%d", i)})
+		_, err := integrationDB.ExecContext(ctx, `UPDATE accounts SET status = $1 WHERE id = $2`, status, account.ID)
 		require.NoError(t, err, "写入状态变体")
 		accountIDs = append(accountIDs, account.ID)
 	}
@@ -741,32 +741,22 @@ func TestUserVisibleAccountRepository_StatusTrimMatchesServiceVisibility(t *test
 	enabled := true
 	require.NoError(t, repo.UpdateAccountView(ctx, user.ID, &enabled, &accountIDs, nil))
 
-	wantVisible := make([]int64, 0, len(cases))
-	for i, tc := range cases {
-		if tc.visible {
-			wantVisible = append(wantVisible, accountIDs[i])
-		}
-	}
-
 	page, err := svc.List(ctx, user.ID, service.VisibleAccountFilter{Page: 1, PageSize: 100})
 	require.NoError(t, err)
 	gotVisible := make([]int64, 0, len(page.Items))
 	for _, item := range page.Items {
 		gotVisible = append(gotVisible, item.ID)
 	}
-	require.ElementsMatch(t, wantVisible, gotVisible, "空白变体的可见性必须与 service 判定一致")
-	require.EqualValues(t, len(wantVisible), page.Total, "分页计数必须与返回内容同口径")
+	require.ElementsMatch(t, accountIDs, gotVisible, "已授权账号无论状态（含各类停用变体）都必须保持可见")
+	require.EqualValues(t, len(accountIDs), page.Total, "分页计数必须与返回内容同口径")
 	require.EqualValues(t, len(page.Items), page.Total, "页面计数与 DTO 数量必须一致")
 
-	// 详情与列表同口径：列表隐藏的账号按 ID 读取也必须 404。
-	for i, tc := range cases {
-		view, err := svc.Get(ctx, user.ID, accountIDs[i])
-		if tc.visible {
-			require.NoError(t, err, "可见账号 %d 必须能按 ID 读取", accountIDs[i])
-			require.Equal(t, accountIDs[i], view.ID)
-			continue
-		}
-		require.ErrorIs(t, err, service.ErrVisibleAccountNotFound, "账号 %d 不得按 ID 读取", accountIDs[i])
+	// 详情与列表同口径：每个账号都能按 ID 读取，且状态原样展示。
+	for i, id := range accountIDs {
+		view, err := svc.Get(ctx, user.ID, id)
+		require.NoError(t, err, "可见账号 %d 必须能按 ID 读取", id)
+		require.Equal(t, id, view.ID)
+		require.Equal(t, statuses[i], view.Status)
 	}
 }
 
@@ -843,4 +833,115 @@ func readVisibleGrant(t *testing.T, ctx context.Context, userID, accountID int64
 		`SELECT granted_by, created_at FROM user_visible_accounts WHERE user_id = $1 AND account_id = $2`,
 		userID, accountID).Scan(&row.GrantedBy, &row.CreatedAt), "读取分配行的授予来源")
 	return row
+}
+
+// TestUserVisibleAccountRepository_FiltersGroupsAndBatchScope 在真实 PostgreSQL 上验证
+// 新增范围能力的 SQL 口径：名称/状态/分组过滤都只作用于已授权集合内部；
+// 分组目录只来自已授权账号实际绑定的分组；批量交集只返回授权 id。
+func TestUserVisibleAccountRepository_FiltersGroupsAndBatchScope(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUserVisibleAccountRepository(client)
+
+	user := mustCreateUserWithUniqueEmail(t, client, "")
+	other := mustCreateUserWithUniqueEmail(t, client, "")
+
+	acctA := mustCreateAccount(t, client, &service.Account{Name: "filter-alpha", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive})
+	acctB := mustCreateAccount(t, client, &service.Account{Name: "filter-beta", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusDisabled})
+	// 历史脏值：大小写/空白变体的 disabled 在 status=inactive 过滤下也必须命中。
+	acctC := mustCreateAccount(t, client, &service.Account{Name: "filter-gamma", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive})
+	_, err := integrationDB.ExecContext(ctx, `UPDATE accounts SET status = $1 WHERE id = $2`, "  Disabled ", acctC.ID)
+	require.NoError(t, err)
+	groupA := mustCreateGroup(t, client, &service.Group{Name: "vis-filter-group-a-" + uuid.NewString(), Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeStandard})
+	groupB := mustCreateGroup(t, client, &service.Group{Name: "vis-filter-group-b-" + uuid.NewString(), Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeSubscription})
+	// 已软删除的分组：即使账号仍绑着，也不得出现在分组目录或账号分组里。
+	groupDeleted := mustCreateGroup(t, client, &service.Group{Name: "vis-filter-group-deleted-" + uuid.NewString(), Platform: service.PlatformOpenAI})
+	mustBindAccountToGroup(t, client, acctA.ID, groupA.ID, 1)
+	mustBindAccountToGroup(t, client, acctA.ID, groupDeleted.ID, 1)
+	mustBindAccountToGroup(t, client, acctB.ID, groupA.ID, 1)
+	mustBindAccountToGroup(t, client, acctB.ID, groupB.ID, 1)
+	_, err = integrationDB.ExecContext(ctx, `UPDATE groups SET deleted_at = NOW() WHERE id = $1`, groupDeleted.ID)
+	require.NoError(t, err)
+
+	accountIDs := []int64{acctA.ID, acctB.ID, acctC.ID}
+	t.Cleanup(func() {
+		_, _ = integrationDB.Exec(`DELETE FROM user_visible_accounts WHERE user_id IN ($1, $2)`, user.ID, other.ID)
+		_, _ = integrationDB.Exec(`DELETE FROM account_groups WHERE account_id = ANY($1)`, pq.Array(accountIDs))
+		_, _ = integrationDB.Exec(`DELETE FROM accounts WHERE id = ANY($1)`, pq.Array(accountIDs))
+		_, _ = integrationDB.Exec(`DELETE FROM groups WHERE id = ANY($1)`, pq.Array([]int64{groupA.ID, groupB.ID, groupDeleted.ID}))
+		_, _ = integrationDB.Exec(`DELETE FROM users WHERE id IN ($1, $2)`, user.ID, other.ID)
+	})
+
+	scope, ok := repo.(service.VisibleAccountScopeRepository)
+	require.True(t, ok, "仓储必须实现扩展的范围接口")
+
+	enabled := true
+	require.NoError(t, repo.UpdateAccountView(ctx, user.ID, &enabled, &accountIDs, nil))
+	require.NoError(t, repo.UpdateAccountView(ctx, other.ID, &enabled, nil, nil))
+
+	// 名称搜索只在授权集合内命中；未分配用户搜到空。
+	rows, total, err := repo.ListVisibleAccounts(ctx, user.ID, service.VisibleAccountFilter{Search: "alpha", Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	require.Equal(t, acctA.ID, rows[0].ID)
+	_, total, err = repo.ListVisibleAccounts(ctx, other.ID, service.VisibleAccountFilter{Search: "alpha", Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Zero(t, total, "未授权用户搜索不得扩大范围")
+
+	// 状态过滤：status=inactive 是归一化「停用」语义，必须同时命中 disabled 与
+	// inactive（含大小写/空白脏值），因为面向用户的下拉只暴露 inactive。
+	rows, total, err = repo.ListVisibleAccounts(ctx, user.ID, service.VisibleAccountFilter{Status: "inactive", Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	statusIDs := make([]int64, 0, len(rows))
+	for _, account := range rows {
+		statusIDs = append(statusIDs, account.ID)
+	}
+	require.ElementsMatch(t, []int64{acctB.ID, acctC.ID}, statusIDs)
+
+	// 其它状态保持精确等值匹配。
+	rows, total, err = repo.ListVisibleAccounts(ctx, user.ID, service.VisibleAccountFilter{Status: "active", Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	require.Equal(t, acctA.ID, rows[0].ID)
+
+	// 分组过滤：只在授权集合内。
+	rows, total, err = repo.ListVisibleAccounts(ctx, user.ID, service.VisibleAccountFilter{GroupID: groupB.ID, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Equal(t, acctB.ID, rows[0].ID)
+	rows, total, err = repo.ListVisibleAccounts(ctx, user.ID, service.VisibleAccountFilter{GroupID: groupA.ID, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	require.Len(t, rows, 2)
+
+	// 分组目录只来自已授权账号实际绑定的分组，按 id 升序。
+	groups, err := scope.ListVisibleAccountGroups(ctx, user.ID)
+	require.NoError(t, err)
+	require.Len(t, groups, 2)
+	require.Equal(t, groupA.ID, groups[0].ID)
+	require.Equal(t, groupB.ID, groups[1].ID)
+	require.Equal(t, service.SubscriptionTypeSubscription, groups[1].SubscriptionType)
+	for _, group := range groups {
+		require.NotEqual(t, groupDeleted.ID, group.ID, "软删除分组不得出现在分组目录")
+	}
+
+	groups, err = scope.ListVisibleAccountGroups(ctx, other.ID)
+	require.NoError(t, err)
+	require.Empty(t, groups, "未授权用户没有分组目录")
+
+	// 批量交集：未授权 id 静默缺席。
+	scoped, err := scope.ListVisibleAccountsByIDs(ctx, user.ID, []int64{acctA.ID, acctB.ID + 999999})
+	require.NoError(t, err)
+	require.Len(t, scoped, 1)
+	require.Equal(t, acctA.ID, scoped[0].ID)
+	// 分组随批量结果一并带出。
+	require.Len(t, scoped[0].Groups, 1)
+	require.Equal(t, groupA.ID, scoped[0].Groups[0].ID)
+
+	scoped, err = scope.ListVisibleAccountsByIDs(ctx, other.ID, []int64{acctA.ID})
+	require.NoError(t, err)
+	require.Empty(t, scoped, "未授权用户的批量交集为空")
 }

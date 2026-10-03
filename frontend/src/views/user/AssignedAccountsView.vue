@@ -2,8 +2,8 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <div class="flex flex-col gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="space-y-4">
+          <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
                 {{ t("nav.assignedAccounts") }}
@@ -13,144 +13,112 @@
               </p>
             </div>
             <button
-              @click="loadAccounts"
-              :disabled="loading"
+              type="button"
               class="btn btn-secondary"
-              :title="t('common.refresh')"
+              :disabled="loading"
               data-test="refresh-accounts"
+              @click="loadAccounts"
             >
               <Icon
                 name="refresh"
-                size="md"
+                size="sm"
                 :class="loading ? 'animate-spin' : ''"
-              />
+              />{{ t("common.refresh") }}
             </button>
           </div>
-          <div class="flex flex-wrap items-center gap-3">
-            <input
-              data-test="filter-search"
-              :value="searchQuery"
-              :placeholder="t('assignedAccounts.filters.search')"
-              class="input w-full sm:w-64"
-              @input="handleSearchInput"
-            />
-            <select
-              data-test="filter-platform"
-              :value="platformFilter"
-              class="input w-40"
-              @change="handlePlatformChange"
-            >
-              <option value="">
-                {{ t("assignedAccounts.filters.allPlatforms") }}
-              </option>
-              <option
-                v-for="option in CONCRETE_PLATFORM_OPTIONS"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </select>
-            <select
-              data-test="filter-account-type"
-              :value="typeFilter"
-              class="input w-40"
-              @change="handleTypeChange"
-            >
-              <option value="">
-                {{ t("assignedAccounts.filters.allTypes") }}
-              </option>
-              <option
-                v-for="option in ACCOUNT_TYPE_OPTIONS"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ t(option.labelKey) }}
-              </option>
-            </select>
-          </div>
-          <p
-            class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-dark-800 dark:text-gray-400"
-          >
+          <AccountTableFilters
+            :search-query="searchQuery"
+            :filters="filters"
+            :groups="groups"
+            :visible-fields="['platform', 'type', 'status', 'group']"
+            :type-options="typeOptions"
+            :status-options="statusOptions"
+            :show-ungrouped="false"
+            @update:search-query="updateSearch"
+            @update:filters="filters = $event"
+            @change="refreshFilteredAccounts"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
             {{ t("assignedAccounts.readOnlyNotice") }}
             {{ t("assignedAccounts.identityMaskedNotice") }}
           </p>
+          <p
+            v-if="groupsError"
+            data-test="groups-error"
+            role="alert"
+            class="text-xs text-amber-700 dark:text-amber-300"
+          >
+            {{ t("admin.groups.failedToLoad") }}
+            <button
+              type="button"
+              data-test="retry-groups"
+              class="underline"
+              @click="loadGroups"
+            >
+              {{ t("assignedAccounts.retry") }}
+            </button>
+          </p>
+          <p
+            v-if="runtimeError"
+            role="alert"
+            class="text-xs text-amber-700 dark:text-amber-300"
+          >
+            {{ t("assignedAccounts.loadFailed") }}
+            <button type="button" class="underline" @click="loadAccounts">
+              {{ t("assignedAccounts.retry") }}
+            </button>
+          </p>
         </div>
       </template>
-
       <template #table>
-        <DataTable :columns="columns" :data="accounts" :loading="loading">
-          <template #cell-platform="{ value }">
-            <span class="text-sm text-gray-900 dark:text-gray-100">{{
-              value
-            }}</span>
-          </template>
-
-          <template #cell-account_type="{ value }">
-            <span class="text-sm text-gray-900 dark:text-gray-100">{{
-              value
-            }}</span>
-          </template>
-
-          <template #cell-email_masked="{ value }">
-            <span
-              class="text-sm text-gray-700 dark:text-gray-300"
-              data-test="cell-email"
-              >{{ displayIdentity(value) }}</span
-            >
-          </template>
-
-          <template #cell-username_masked="{ value }">
-            <span
-              class="text-sm text-gray-700 dark:text-gray-300"
-              data-test="cell-username"
-              >{{ displayIdentity(value) }}</span
-            >
-          </template>
-
-          <template #cell-upstream_account_id_masked="{ value }">
-            <span
-              class="text-sm text-gray-700 dark:text-gray-300"
-              data-test="cell-upstream-id"
-              >{{ displayIdentity(value) }}</span
-            >
-          </template>
-
-          <template #cell-actions="{ row }">
-            <button
-              @click="openDetail(row)"
-              class="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
-              data-test="view-detail"
-            >
-              <Icon name="eye" size="sm" />
-              <span>{{ t("assignedAccounts.viewDetail") }}</span>
-            </button>
-          </template>
-
-          <template #empty>
-            <EmptyState
+        <AccountTable
+          :columns="columns"
+          :data="displayAccounts"
+          :loading="loading"
+          :runtime-by-id="runtime"
+          :runtime-loading="runtimeLoading"
+          :runtime-error="runtimeError"
+        >
+          <template #cell-actions="{ row }"
+            ><div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                data-test="view-detail"
+                @click="openDetail(row)"
+              >
+                {{ t("assignedAccounts.viewDetail") }}</button
+              ><button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                data-test="view-stats"
+                @click="openStats(row)"
+              >
+                {{ t("admin.accounts.viewStats") }}
+              </button>
+            </div></template
+          >
+          <template #empty
+            ><EmptyState
               :title="t('assignedAccounts.empty')"
               :description="t('assignedAccounts.emptyHint')"
-            />
-          </template>
-        </DataTable>
+          /></template>
+        </AccountTable>
       </template>
-
-      <template #pagination>
-        <Pagination
+      <template #pagination
+        ><Pagination
           v-if="pagination.total > 0"
           :page="pagination.page"
           :total="pagination.total"
           :page-size="pagination.page_size"
           @update:page="handlePageChange"
-          @update:pageSize="handlePageSizeChange"
-        />
-      </template>
+          @update:page-size="handlePageSizeChange"
+      /></template>
     </TablePageLayout>
-
     <BaseDialog
       :show="showDetail"
       :title="t('assignedAccounts.detail.title')"
+      width="extra-wide"
       @close="closeDetail"
     >
       <div v-if="detailLoading" class="flex justify-center py-10">
@@ -158,100 +126,71 @@
       </div>
       <p
         v-else-if="detailUnavailable"
-        class="rounded-lg bg-gray-50 px-4 py-6 text-center text-sm text-gray-500 dark:bg-dark-800 dark:text-gray-400"
         data-test="detail-unavailable"
+        class="py-6 text-sm text-gray-500"
       >
         {{ t("assignedAccounts.detail.notVisible") }}
       </p>
-      <!-- 网络/服务端故障不是「无权查看」，必须如实提示并提供重试。 -->
       <div
         v-else-if="detailFailed"
-        class="space-y-3 rounded-lg bg-gray-50 px-4 py-6 text-center dark:bg-dark-800"
         data-test="detail-failed"
+        class="space-y-3 py-6 text-sm text-gray-600 dark:text-gray-300"
       >
-        <p class="text-sm text-gray-600 dark:text-gray-300">
-          {{ t("assignedAccounts.detail.loadFailed") }}
-        </p>
+        <p>{{ t("assignedAccounts.detail.loadFailed") }}</p>
         <button
           type="button"
-          class="btn btn-secondary px-4"
+          class="btn btn-secondary"
           data-test="retry-detail"
           @click="retryDetail"
         >
           {{ t("assignedAccounts.retry") }}
         </button>
       </div>
-      <dl v-else-if="detail" class="space-y-3" data-test="detail-fields">
-        <div class="flex items-start justify-between gap-4">
-          <dt class="text-sm text-gray-500 dark:text-gray-400">
-            {{ t("assignedAccounts.columns.platform") }}
-          </dt>
-          <dd class="text-sm text-gray-900 dark:text-gray-100">
-            {{ detail.platform }}
-          </dd>
-        </div>
-        <div class="flex items-start justify-between gap-4">
-          <dt class="text-sm text-gray-500 dark:text-gray-400">
-            {{ t("assignedAccounts.columns.accountType") }}
-          </dt>
-          <dd class="text-sm text-gray-900 dark:text-gray-100">
-            {{ detail.account_type }}
-          </dd>
-        </div>
-        <div class="flex items-start justify-between gap-4">
-          <dt class="text-sm text-gray-500 dark:text-gray-400">
-            {{ t("assignedAccounts.columns.email") }}
-          </dt>
-          <dd
-            class="text-sm text-gray-900 dark:text-gray-100"
-            data-test="detail-email"
-          >
-            {{ displayIdentity(detail.email_masked) }}
-          </dd>
-        </div>
-        <div class="flex items-start justify-between gap-4">
-          <dt class="text-sm text-gray-500 dark:text-gray-400">
-            {{ t("assignedAccounts.columns.username") }}
-          </dt>
-          <dd
-            class="text-sm text-gray-900 dark:text-gray-100"
-            data-test="detail-username"
-          >
-            {{ displayIdentity(detail.username_masked) }}
-          </dd>
-        </div>
-        <div class="flex items-start justify-between gap-4">
-          <dt class="text-sm text-gray-500 dark:text-gray-400">
-            {{ t("assignedAccounts.columns.upstreamAccountId") }}
-          </dt>
-          <dd
-            class="text-sm text-gray-900 dark:text-gray-100"
-            data-test="detail-upstream-id"
-          >
-            {{ displayIdentity(detail.upstream_account_id_masked) }}
-          </dd>
-        </div>
-        <p class="pt-2 text-xs text-gray-400 dark:text-dark-500">
-          {{ t("assignedAccounts.identityMaskedNotice") }}
-        </p>
-      </dl>
+      <div v-else-if="detail" data-test="detail-fields">
+        <AccountTable
+          :data="[toDisplay(detail)]"
+          :columns="detailColumns"
+          :runtime-by-id="runtime"
+          :runtime-loading="runtimeLoading"
+          :runtime-error="runtimeError"
+        />
+      </div>
     </BaseDialog>
+    <AccountStatsModal
+      :show="showStats"
+      :account="statsAccount"
+      read-only
+      :stats-fetcher="fetchStats"
+      @close="showStats = false"
+    />
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
-import DataTable from "@/components/common/DataTable.vue";
+import AccountTable from "@/components/account/AccountTable.vue";
+import AccountTableFilters from "@/components/admin/account/AccountTableFilters.vue";
+import AccountStatsModal from "@/components/account/AccountStatsModal.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import Pagination from "@/components/common/Pagination.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import LoadingSpinner from "@/components/common/LoadingSpinner.vue";
 import Icon from "@/components/icons/Icon.vue";
 import type { Column } from "@/components/common/types";
+import {
+  accountReadColumns,
+  normalizeAccountStatus,
+  type AccountDisplayRow,
+  type AccountRuntimeSnapshot,
+} from "@/components/account/accountDisplay";
+import type {
+  AccountCellGroup,
+  ReadonlyStatsAccount,
+} from "@/components/account/accountCellTypes";
 import assignedAccountsAPI, {
   isAssignedAccountNotFound,
   isAssignedAccountsAccessDenied,
@@ -265,96 +204,201 @@ import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
 import { extractApiErrorMessage } from "@/utils/apiError";
 import { ASSIGNED_ACCOUNTS_FALLBACK_PATH } from "@/router/assignedAccountsAccess";
-import { CONCRETE_PLATFORM_OPTIONS } from "@/constants/platforms";
 import { ACCOUNT_TYPE_OPTIONS } from "@/constants/accountTypes";
 
 const { t } = useI18n();
 const router = useRouter();
 const appStore = useAppStore();
 const authStore = useAuthStore();
-
 const accounts = ref<AssignedAccount[]>([]);
 const loading = ref(false);
-const platformFilter = ref("");
-const typeFilter = ref("");
+const filters = ref({ platform: "", type: "", status: "", group: "" });
 const searchQuery = ref("");
-let searchTimer: ReturnType<typeof setTimeout> | undefined;
-const pagination = ref({
+const groups = ref<AccountCellGroup[]>([]);
+const groupsError = ref(false);
+const runtime = ref<Record<string, AccountRuntimeSnapshot>>({});
+const runtimeLoading = ref(false);
+const runtimeError = ref(false);
+const pagination = reactive({
   page: 1,
   page_size: getPersistedPageSize(),
   total: 0,
 });
-
-const showDetail = ref(false);
-const detailLoading = ref(false);
-const detailUnavailable = ref(false);
-const detailFailed = ref(false);
-const detail = ref<AssignedAccount | null>(null);
-const detailAccountId = ref<number | null>(null);
-
-// 请求代次：重叠的列表/详情响应一律以最新一次为准，避免旧响应覆盖新状态。
 let listGeneration = 0;
 let listController: AbortController | null = null;
-let detailGeneration = 0;
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+const typeOptions = computed(() => [
+  { value: "", label: t("admin.accounts.allTypes") },
+  ...ACCOUNT_TYPE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: t(option.labelKey),
+  })),
+]);
 
-const columns = computed((): Column[] => [
-  { key: "platform", label: t("assignedAccounts.columns.platform") },
-  { key: "account_type", label: t("assignedAccounts.columns.accountType") },
+const statusOptions = computed(() => [
+  { value: "", label: t("admin.accounts.allStatus") },
+  ...["active", "inactive", "error", "expired"].map((value) => ({
+    value,
+    label: t(`admin.accounts.status.${value}`),
+  })),
+]);
+
+const identityColumns = computed<Column[]>(() => [
   { key: "email_masked", label: t("assignedAccounts.columns.email") },
   { key: "username_masked", label: t("assignedAccounts.columns.username") },
   {
     key: "upstream_account_id_masked",
     label: t("assignedAccounts.columns.upstreamAccountId"),
   },
+]);
+const columns = computed(() => [
+  ...accountReadColumns(t).filter((column) => column.key !== "actions"),
+  ...identityColumns.value,
   { key: "actions", label: t("assignedAccounts.columns.actions") },
 ]);
+const detailColumns = computed(() =>
+  columns.value.filter((column) => column.key !== "actions"),
+);
 
-// 服务端对无法安全展示的身份返回空串，界面统一显示占位符，不回退到任何原始名称。
-function displayIdentity(value: string | null | undefined): string {
-  const text = typeof value === "string" ? value.trim() : "";
-  return text === "" ? "—" : text;
+// 明确投影允许字段；即使响应夹带额外数据，也不把凭据送入共享展示模块。
+function toDisplay(account: AssignedAccount): AccountDisplayRow {
+  const snapshot = runtime.value[String(account.id)];
+  return {
+    id: account.id,
+    name: account.name,
+    platform: account.platform,
+    type: account.account_type,
+    status: normalizeAccountStatus(account.status),
+    schedulable: account.schedulable,
+    concurrency: account.concurrency,
+    current_concurrency: snapshot?.current_concurrency ?? null,
+    groups: account.groups,
+    email_masked: account.email_masked,
+    username_masked: account.username_masked,
+    upstream_account_id_masked: account.upstream_account_id_masked,
+    rate_limit_reset_at: account.rate_limit_reset_at,
+    overload_until: account.overload_until,
+    temp_unschedulable_until: account.temp_unschedulable_until,
+    window_cost_limit: account.window_cost_limit,
+    window_cost_sticky_reserve: account.window_cost_sticky_reserve,
+    max_sessions: account.max_sessions,
+    session_idle_timeout_minutes: account.session_idle_timeout_minutes,
+    base_rpm: account.base_rpm,
+    rpm_strategy: account.rpm_strategy,
+    quota_limit: account.quota_limit,
+    quota_used: account.quota_used,
+    quota_daily_limit: account.quota_daily_limit,
+    quota_daily_used: account.quota_daily_used,
+    quota_weekly_limit: account.quota_weekly_limit,
+    quota_weekly_used: account.quota_weekly_used,
+  };
 }
+const displayAccounts = computed(() => accounts.value.map(toDisplay));
+const showDetail = ref(false);
+const detailLoading = ref(false);
+const detailUnavailable = ref(false);
+const detailFailed = ref(false);
+const detail = ref<AssignedAccount | null>(null);
+const detailAccountId = ref<number | null>(null);
+let detailGeneration = 0;
+let groupsGeneration = 0;
+let groupsController: AbortController | null = null;
+let accessRevoked = false;
+const showStats = ref(false);
+const statsAccount = ref<ReadonlyStatsAccount | null>(null);
 
-/**
- * 能力被撤销（或从未授权）时，后端返回 403：立刻刷新本地资料让菜单消失，
- * 并离开这个页面。缓存状态不构成访问依据。
- */
-async function handleAccessRevoked(): Promise<void> {
-  authStore.refreshUser().catch((error) => {
-    console.warn(
-      "Failed to refresh user after account view revocation:",
-      error,
-    );
-  });
+async function handleAccessRevoked() {
+  if (accessRevoked) return;
+  accessRevoked = true;
+  listGeneration++;
+  groupsGeneration++;
+  listController?.abort();
+  groupsController?.abort();
+  loading.value = false;
+  runtimeLoading.value = false;
+  pagination.total = 0;
+  accounts.value = [];
+  runtime.value = {};
+  groups.value = [];
+  closeDetail();
+  showStats.value = false;
+  void authStore.refreshUser().catch(() => undefined);
   await router.replace(ASSIGNED_ACCOUNTS_FALLBACK_PATH);
 }
 
-async function loadAccounts(): Promise<void> {
-  // 翻页/刷新可能重叠：只有最新一次请求可以写入列表与计数。
+async function loadAccounts() {
+  if (accessRevoked) return;
   const generation = ++listGeneration;
   listController?.abort();
   const controller = new AbortController();
   listController = controller;
   loading.value = true;
+  runtimeError.value = false;
   try {
     const page = await assignedAccountsAPI.list(
-      pagination.value.page,
-      pagination.value.page_size,
+      pagination.page,
+      pagination.page_size,
       {
-        platform: platformFilter.value,
-        account_type: typeFilter.value,
+        platform: filters.value.platform,
+        account_type: filters.value.type,
+        status: filters.value.status,
+        group: filters.value.group,
         search: searchQuery.value.trim(),
       },
       { signal: controller.signal },
     );
     if (generation !== listGeneration) return;
     accounts.value = page.items;
-    pagination.value.total = page.total;
-    pagination.value.page_size = page.page_size;
+    pagination.total = page.total;
+    pagination.page_size = page.page_size;
+    runtime.value = {};
+    runtimeLoading.value = page.items.length > 0;
+    try {
+      const snapshots = page.items.length
+        ? await assignedAccountsAPI.getRuntime(
+            page.items.map((account) => account.id),
+            { signal: controller.signal },
+          )
+        : {};
+      if (generation !== listGeneration) return;
+      runtime.value = snapshots;
+      // 批量接口省略失去授权的账号；快照为空与未获授权是两种不同状态。
+      const revoked = page.items.filter(
+        (account) =>
+          !Object.prototype.hasOwnProperty.call(snapshots, String(account.id)),
+      );
+      if (revoked.length) {
+        const revokedIDs = new Set(revoked.map((account) => account.id));
+        accounts.value = accounts.value.filter(
+          (account) => !revokedIDs.has(account.id),
+        );
+        pagination.total = Math.max(0, pagination.total - revoked.length);
+        if (
+          detailAccountId.value !== null &&
+          revokedIDs.has(detailAccountId.value)
+        )
+          closeDetail();
+        if (statsAccount.value && revokedIDs.has(statsAccount.value.id)) {
+          showStats.value = false;
+          statsAccount.value = null;
+        }
+        void loadGroups();
+      }
+    } catch (error) {
+      if (generation !== listGeneration) return;
+      if (isAssignedAccountsAccessDenied(error)) {
+        await handleAccessRevoked();
+        return;
+      }
+      runtimeError.value = true;
+    } finally {
+      if (generation === listGeneration) runtimeLoading.value = false;
+    }
   } catch (error) {
-    // 过期响应不得据此判定权限：更新的请求若已成功，说明能力仍在。
-    // 当前代次仍以服务端为准，403 照常按撤销处理（fail-closed）。
     if (generation !== listGeneration) return;
+    accounts.value = [];
+    runtime.value = {};
+    runtimeLoading.value = false;
     if (isAssignedAccountsAccessDenied(error)) {
       await handleAccessRevoked();
       return;
@@ -363,62 +407,69 @@ async function loadAccounts(): Promise<void> {
       extractApiErrorMessage(error, t("assignedAccounts.loadFailed")),
     );
   } finally {
-    if (generation === listGeneration) {
-      loading.value = false;
-    }
+    if (generation === listGeneration) loading.value = false;
   }
 }
 
-async function openDetail(row: AssignedAccount): Promise<void> {
+async function loadGroups() {
+  if (accessRevoked) return;
+  const generation = ++groupsGeneration;
+  groupsController?.abort();
+  const controller = new AbortController();
+  groupsController = controller;
+  groupsError.value = false;
+  try {
+    const result = await assignedAccountsAPI.getGroups({
+      signal: controller.signal,
+    });
+    if (generation === groupsGeneration) groups.value = result;
+  } catch (error) {
+    if (generation !== groupsGeneration) return;
+    if (isAssignedAccountsAccessDenied(error)) await handleAccessRevoked();
+    else groupsError.value = true;
+  }
+}
+
+async function openDetail(row: AccountDisplayRow) {
   showDetail.value = true;
   await loadDetail(row.id);
 }
-
-async function loadDetail(id: number): Promise<void> {
+async function loadDetail(id: number) {
   detailAccountId.value = id;
   detailLoading.value = true;
   detailUnavailable.value = false;
   detailFailed.value = false;
   detail.value = null;
-
-  // 连续点击不同账号时，先发出的响应不得覆盖后打开的账号。
   const generation = ++detailGeneration;
   try {
     const account = await assignedAccountsAPI.getById(id);
-    if (generation !== detailGeneration) return;
-    detail.value = account;
+    if (generation === detailGeneration) detail.value = account;
   } catch (error) {
-    // 过期响应不得关闭当前详情或把用户踢出页面；当前代次的 403 仍按撤销处理。
     if (generation !== detailGeneration) return;
     if (isAssignedAccountsAccessDenied(error)) {
-      closeDetail();
       await handleAccessRevoked();
       return;
     }
-    // 未分配、已禁用、已删除与不存在都返回同一个 404：统一提示，不区分存在性。
-    // 只有 404 表示「不可见」；网络或服务端故障如实报错，不能谎称无权查看。
     if (isAssignedAccountNotFound(error)) {
       detailUnavailable.value = true;
-    } else {
-      detailFailed.value = true;
-    }
+      const previousCount = accounts.value.length;
+      accounts.value = accounts.value.filter((account) => account.id !== id);
+      pagination.total = Math.max(
+        0,
+        pagination.total - (previousCount - accounts.value.length),
+      );
+      delete runtime.value[String(id)];
+      void loadGroups();
+    } else detailFailed.value = true;
   } finally {
-    if (generation === detailGeneration) {
-      detailLoading.value = false;
-    }
+    if (generation === detailGeneration) detailLoading.value = false;
   }
 }
-
-function retryDetail(): void {
-  if (detailAccountId.value === null) {
-    return;
-  }
-  void loadDetail(detailAccountId.value);
+function retryDetail() {
+  if (detailAccountId.value !== null) void loadDetail(detailAccountId.value);
 }
-
-function closeDetail(): void {
-  // 关闭即让在途的详情响应过期。
-  detailGeneration += 1;
+function closeDetail() {
+  detailGeneration++;
   showDetail.value = false;
   detailLoading.value = false;
   detail.value = null;
@@ -426,50 +477,57 @@ function closeDetail(): void {
   detailFailed.value = false;
   detailAccountId.value = null;
 }
-
-function refreshFilteredAccounts(): void {
+function openStats(row: AccountDisplayRow) {
+  statsAccount.value = { id: row.id, name: row.name, status: row.status };
+  showStats.value = true;
+}
+async function fetchStats(account: ReadonlyStatsAccount) {
+  try {
+    return await assignedAccountsAPI.getStats(account.id);
+  } catch (error) {
+    if (
+      showStats.value &&
+      statsAccount.value?.id === account.id &&
+      isAssignedAccountsAccessDenied(error)
+    )
+      await handleAccessRevoked();
+    throw error;
+  }
+}
+function refreshFilteredAccounts() {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = undefined;
-  pagination.value.page = 1;
+  pagination.page = 1;
   void loadAccounts();
 }
-
-function handlePlatformChange(event: Event): void {
-  platformFilter.value = (event.target as HTMLSelectElement).value;
-  refreshFilteredAccounts();
-}
-
-function handleTypeChange(event: Event): void {
-  typeFilter.value = (event.target as HTMLSelectElement).value;
-  refreshFilteredAccounts();
-}
-
-function handleSearchInput(event: Event): void {
-  searchQuery.value = (event.target as HTMLInputElement).value;
-  // An old response must not render while the new keyword is still debouncing.
-  listGeneration += 1;
+function updateSearch(value: string) {
+  searchQuery.value = value;
+  listGeneration++;
   listController?.abort();
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(refreshFilteredAccounts, 300);
 }
-
-function handlePageChange(page: number): void {
-  pagination.value.page = page;
-  loadAccounts();
+function handlePageChange(page: number) {
+  pagination.page = page;
+  void loadAccounts();
 }
-
-function handlePageSizeChange(pageSize: number): void {
-  pagination.value.page_size = pageSize;
-  pagination.value.page = 1;
-  setPersistedPageSize(pageSize);
-  loadAccounts();
+function handlePageSizeChange(size: number) {
+  pagination.page_size = size;
+  pagination.page = 1;
+  setPersistedPageSize(size);
+  void loadAccounts();
 }
-
-onMounted(loadAccounts);
+onMounted(() => {
+  void loadAccounts();
+  void loadGroups();
+});
 onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer);
   listController?.abort();
-  listGeneration += 1;
-  detailGeneration += 1;
+  listGeneration++;
+  detailGeneration++;
+  groupsGeneration++;
+  groupsController?.abort();
+  accessRevoked = true;
 });
 </script>
